@@ -1,20 +1,22 @@
 const customerService = require('../Service/index');
+const accountService = require('../../Account/Service/index')
 require('dotenv').config()
 const bcrypt = require('bcrypt')
 
 
     const registerCustomer = async (req, res) => {
         try {
+          const staffId = req.staff.staffId;
         const salt = await bcrypt.genSalt()
-        const account = "002" + Math.floor(Math.random() * 10000000);
         req.body.password = await bcrypt.hash(req.body.password,salt)
-          const { name, phone, email, address, password,branch } = req.body;
+          const { name, phone, email, address, password,branchId,accountManagerId } = req.body;
           const existingCustomer = await customerService.getCustomerByEmail(email);
           if (existingCustomer) {
             return res.status(400).json({ message: 'User already exists' });
           }
-          const newCustomer = await customerService.createCustomer({ name, phone, email,address, password,branch,account });
-          res.status(201).json({ message: 'Customer registered successfully', user: newCustomer });
+          const newCustomer = await customerService.createCustomer({ name, phone, email,address, password,branchId });
+          const accountNumber = await accountService.createAccount({customerId:newCustomer._id,staffId:staffId,branchId,accountManagerId})
+          res.status(201).json({ message: 'Customer registered successfully', user: newCustomer,accountNumber:accountNumber });
         } catch (error) {
           res.status(500).json({ message: 'Server error', error: error.message });
         }

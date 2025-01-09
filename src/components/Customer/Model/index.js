@@ -18,15 +18,11 @@ const customerSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
-  account: {
-    type: String,
-    required: true,
-  },
   password: {
     type: String,
     required: true
   },
-  branch: { 
+  branchId: { 
     type: String, 
     required: true
 
