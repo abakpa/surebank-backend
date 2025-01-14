@@ -23,6 +23,15 @@ require('dotenv').config()
             res.status(500).json({ message: error.message });
         }
       }
+      const getCustomerDSAccountById = async (req, res) => {
+        try {
+          const customerId = req.params.id
+            const DSAccounts = await DSAccountService.getCustomerDSAccountById(customerId);
+            res.status(200).json(DSAccounts);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
       const saveDailyContribution = async (req, res) => {
         const contributionInput = req.body;
         const createdBy = req.staff.staffId;
@@ -34,5 +43,6 @@ require('dotenv').config()
   module.exports = {
     createDSAccount,
     getDSAccount,
-    saveDailyContribution
+    saveDailyContribution,
+    getCustomerDSAccountById
   };

@@ -33,10 +33,24 @@ const createAccount = async (customerData) => {
   };
 
 const checkAccount = async (account) => {
-    return await Account.findOne({ account });
+    return await Account.findOne({ accountNumber:account });
   };
+
+  const getCustomerAccount = async (account) =>{
+    const existingAccount = await checkAccount(account);
+    
+    if (!existingAccount) {
+      return "Invalid account number";
+    }
+    try {
+        return await Account.findOne({accountNumber:account});
+    } catch (error) {
+        throw error;
+    }
+  }
 module.exports = {
     createAccount,
-    checkAccount
+    checkAccount,
+    getCustomerAccount
     
   };

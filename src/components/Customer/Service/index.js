@@ -15,9 +15,17 @@ const getCustomers = async () =>{
         throw error;
     }
   }
+const getCustomerById = async (customerId) =>{
+    try {
+        return await Customer.findOne({_id:customerId});
+    } catch (error) {
+        throw error;
+    }
+  }
 
   module.exports = {
     createCustomer,
     getCustomerByEmail,
     getCustomers,
+    getCustomerById
   };

@@ -5,6 +5,7 @@ const {staffAuth} = require('../../Middleware/index')
 
 router.post('/', staffAuth, customerController.registerCustomer);
 router.get('/', customerController.getCustomer);
+router.get('/:id', customerController.getCustomerById);
 
 
 module.exports = router;

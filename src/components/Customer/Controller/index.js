@@ -29,8 +29,18 @@ const bcrypt = require('bcrypt')
             res.status(500).json({ message: error.message });
         }
       }
+      const getCustomerById = async (req, res) => {
+        try {
+          const customerId = req.params.id
+            const customer = await customerService.getCustomerById(customerId);
+            res.status(200).json(customer);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
 
   module.exports = {
     registerCustomer,
     getCustomer,
+    getCustomerById
   };

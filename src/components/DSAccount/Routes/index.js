@@ -5,6 +5,7 @@ const {staffAuth} = require('../../Middleware/index')
 
 router.post('/', staffAuth, DSAccountController.createDSAccount);
 router.get('/', DSAccountController.getDSAccount);
+router.get('/:id', DSAccountController.getCustomerDSAccountById);
 router.post('/deposit', staffAuth, DSAccountController.saveDailyContribution);
 
 

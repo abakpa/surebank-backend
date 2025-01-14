@@ -33,6 +33,13 @@ const getDSAccounts = async () =>{
         throw error;
     }
   }
+const getCustomerDSAccountById = async (customerId) =>{
+    try {
+        return await DSAccount.findOne({customerId:customerId,status:'open'});
+    } catch (error) {
+        throw error;
+    }
+  }
 
   const saveDailyContribution = async (contributionInput) => {
     // const PackageModel = await Package();
@@ -186,5 +193,6 @@ const getDSAccounts = async () =>{
     createDSAccount,
     getDSAccountByAccountNumber,
     getDSAccounts,
-    saveDailyContribution
+    saveDailyContribution,
+    getCustomerDSAccountById
   };
