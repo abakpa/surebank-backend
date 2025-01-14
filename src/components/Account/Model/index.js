@@ -10,11 +10,11 @@ const accountSchema = new mongoose.Schema({
     required: true 
 },
   availableBalance: {
-    type: String,
+    type: Number,
     required: true,
   },
   ledgerBalance: {
-    type: String,
+    type: Number,
     required: true,
   },
   createdBy: {
