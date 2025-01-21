@@ -18,9 +18,16 @@ const getBranch = async () => {
         throw error;
     }
 };
+const getBranchById = async (branchId) =>{
+    try {
+        return await Branch.findOne({_id:branchId});
+    } catch (error) {
+        throw error;
+    }
+  }
 
 module.exports = {
     createBranch,
     getBranch,
- 
+    getBranchById
 };

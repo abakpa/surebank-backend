@@ -1,15 +1,15 @@
 const Account = require("../Model/index");
 
 const createAccount = async (customerData) => {
-     const account = "002" + Math.floor(Math.random() * 10000000);
-    
-        const existingAccount = await checkAccount(account);
+    //  const account = "002" + Math.floor(Math.random() * 10000000);
+    console.log("account",customerData.phone)
+        const existingAccount = await checkAccount(customerData.phone);
     
         if (existingAccount) {
           return sendApiError(res, "Account already exist");
         }
     
-        const accountNumber = account;
+        const accountNumber = customerData.phone;
         const customerId  = customerData.customerId
         const createdBy = customerData.staffId;
         const status = "active";
@@ -32,22 +32,28 @@ const createAccount = async (customerData) => {
     return await customerAccount.save();
   };
 
-const checkAccount = async (account) => {
-    return await Account.findOne({ accountNumber:account });
-  };
-
-  const getCustomerAccount = async (account) =>{
-    const existingAccount = await checkAccount(account);
-    
-    if (!existingAccount) {
-      return "Invalid account number";
-    }
+  const checkAccount = async (customerId) => {
     try {
-        return await Account.findOne({accountNumber:account});
+      return await Account.findOne({ customerId });
     } catch (error) {
-        throw error;
+      throw new Error("Error checking account: " + error.message);
     }
-  }
+  };
+  
+  const getCustomerAccount = async (customerId) => {
+    try {
+      const existingAccount = await checkAccount(customerId);
+  
+      if (!existingAccount) {
+        return "Invalid account number";
+      }
+  
+      return existingAccount;
+    } catch (error) {
+      throw new Error("Error retrieving customer account: " + error.message);
+    }
+  };
+  
 module.exports = {
     createAccount,
     checkAccount,

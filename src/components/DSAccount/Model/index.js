@@ -27,6 +27,10 @@ DSAccountNumber: {
     type: String, 
     required: true
   },
+  accountType: { 
+    type: String, 
+    required: true
+  },
   startDate: { 
     type: String, 
     required: true

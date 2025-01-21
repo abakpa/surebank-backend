@@ -8,8 +8,8 @@ require('dotenv').config()
         const startDate = new Date().getTime();
         const status = 'open';
         const hasBeenCharged = "false"
-          const { accountNumber, amountPerDay, accountManagerId } = req.body;
-          const newDSAccount = await DSAccountService.createDSAccount({ accountNumber,amountPerDay,createdBy,startDate,status,accountManagerId,hasBeenCharged });
+          const { accountNumber, amountPerDay, accountManagerId,accountType } = req.body;
+          const newDSAccount = await DSAccountService.createDSAccount({ accountNumber,amountPerDay,createdBy,startDate,status,accountManagerId,hasBeenCharged, accountType });
           res.status(201).json({ message: newDSAccount.message, DSAccount: newDSAccount.newDSAccount });
         } catch (error) {
           res.status(500).json({ message: 'Server error', error: error.message });

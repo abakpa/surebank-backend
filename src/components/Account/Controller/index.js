@@ -36,9 +36,10 @@ const createAccount = async (req,res) => {
 };
 
 const getCustomerAccount = async (req, res) => {
+  const customerId = req.params.id
   try {
-    const {accountNumber} = req.body
-      const customerAccount = await accountService.getCustomerAccount(accountNumber);
+    // const {accountNumber} = req.body
+      const customerAccount = await accountService.getCustomerAccount(customerId);
       res.status(200).json(customerAccount);
   } catch (error) {
       res.status(500).json({ message: error.message });
