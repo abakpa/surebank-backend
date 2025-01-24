@@ -21,6 +21,39 @@ const createDSAccount = async (DSAccountData) => {
   const newDSAccount = await dsaccount.save();
   return ({message:"Account created successfilly", newDSAccount})
 };
+const updateDSAccountAmount = async (details) => {
+  const {DSAccountNumber,amountPerDay} = details
+  try {
+    // Validate input
+    if (!DSAccountNumber || !amountPerDay || typeof amountPerDay !== 'number' || amountPerDay <= 0) {
+      return { success: false, message: 'Invalid account number or amount' };
+    }
+
+    const dsaccount = await DSAccount.findOne({
+      DSAccountNumber: DSAccountNumber,
+      // accountType: contributionInput.accountType,
+    });
+    if (dsaccount.totalContribution !==0 && dsaccount.totalCount !==0) {
+      return { success: false, message: 'You cannot edit amount while package is running' };
+    }
+    // Find and update the DSAccount by DSAccount
+    const updatedDSAccount = await DSAccount.findOneAndUpdate(
+      { DSAccountNumber }, // Find the account by accountNumber
+      { $set: { amountPerDay: amountPerDay } }, // Update only the amount field
+      { new: true } // Return the updated document
+    );
+
+    // Check if the account was found and updated
+    if (!updatedDSAccount) {
+      return { success: false, message: 'DSAccount not found or update failed' };
+    }
+
+    return { success: true, message: 'Amount updated successfully', updatedDSAccount };
+  } catch (error) {
+    console.error('Error updating DSAccount amount:', error);
+    return { success: false, message: 'An error occurred while updating the amount', error };
+  }
+};
 const getAccountByAccountNumber = async (accountNumber) => {
     return await Account.findOne({ accountNumber });
   };
@@ -41,14 +74,13 @@ const getCustomerDSAccountById = async (customerId) =>{
   }
 
   const saveDailyContribution = async (contributionInput) => {
-    // const PackageModel = await Package();
-    // const ContributionModel = await Contribution();
-    // const AccountModel = await Account();
-    // const AccountTransactionModel = await AccountTransaction();
+    // Retrieve customer account using the DS account number
     const customerAccount = await getDSAccountByAccountNumber(contributionInput.DSAccountNumber);
     if (!customerAccount) {
       return 'Account number does not exist.';
     }
+  
+    // Check for an active package with the given account type
     const dsaccount = await DSAccount.findOne({
       DSAccountNumber: contributionInput.DSAccountNumber,
       accountType: contributionInput.accountType,
@@ -58,6 +90,7 @@ const getCustomerDSAccountById = async (customerId) =>{
       return 'Customer does not have an active package';
     }
   
+    // Validate contribution amount against the daily savings package
     if (contributionInput.amountPerDay % dsaccount.amountPerDay !== 0) {
       return `Amount is not valid for ${dsaccount.amountPerDay} daily savings package`;
     }
@@ -65,151 +98,173 @@ const getCustomerDSAccountById = async (customerId) =>{
     const DSAccountId = dsaccount._id;
     const contributionDaysCount = contributionInput.amountPerDay / dsaccount.amountPerDay;
     const currentDate = new Date().getTime();
+    const formattedDate = new Date(currentDate).toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
   
     if (contributionInput.amountPerDay < dsaccount.amountPerDay) {
       return `Amount cannot be less than ${dsaccount.amountPerDay}`;
     }
   
     if (dsaccount.status === 'closed') {
-    return 'This account has been closed';
+      return 'This account has been closed';
     }
   
-    // Calculate the new total count by adding contributionDaysCount to the existing value
+    // Calculate the new total count
     const totalCount = dsaccount.totalCount + contributionDaysCount;
-
-  
     if (totalCount > 31) {
       return 'Total daily amount contribution cannot exceed 31';
     }
   
-    // const branch = await AccountModel.findOne({ accountNumber: contributionInput.accountNumber });
+    // Retrieve and update ledger balance
+    const updateLedgerBalance = await Account.findOne({ accountNumber: dsaccount.accountNumber });
   
-    const formattedDate = new Date(currentDate).toLocaleDateString("en-GB", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    });
-    
-    const newContribution = await AccountTransaction.DepositTransactionAccount({
-      createdBy: contributionInput.createdBy,
-      amount: contributionInput.amountPerDay,
-      branchId: dsaccount.branchId,
-      accountManagerId: dsaccount.accountManagerId,
-      accountNumber: dsaccount.accountNumber,
-      accountTypeId: DSAccountId,
-      // count: contributionDaysCount,
-      date: formattedDate, // Use the formatted date
-      narration: "Daily contribution",
-      direction: "Credit",
-    });
-    
-    dsaccount.totalContribution += contributionInput.amountPerDay;
-    const updateLedgerBalance = await Account.findOne({accountNumber:dsaccount.accountNumber})
-    if (dsaccount.hasBeenCharged === 'true') {
-    await Account.findOneAndUpdate(
-        { accountNumber: dsaccount.accountNumber }, // Convert accountNumber into a query object
-        {
-          $set: { 
-            ledgerBalance: updateLedgerBalance.ledgerBalance + contributionInput.amountPerDay, // Update ledger balance
-          }
-        }
-      );
+    if (!updateLedgerBalance) {
+      return 'Account not found for ledger update';
     }
-    if (dsaccount.hasBeenCharged === 'false') {
-      dsaccount.totalContribution -= dsaccount.amountPerDay;
-      
 
-      const newContribution = await AccountTransaction.DepositTransactionAccount({
-        createdBy: contributionInput.createdBy,
-        amount: dsaccount.amountPerDay,
-        branchId: dsaccount.branchId,
-        accountManagerId: dsaccount.accountManagerId,
+    if (totalCount === 31) {
+      const chargeAmount = dsaccount.amountPerDay;
+
+      await AccountTransaction.DepositTransactionAccount({
+       createdBy: contributionInput.createdBy,
+       amount: contributionInput.amountPerDay,
+       balance: dsaccount.totalContribution + contributionInput.amountPerDay,
+       branchId: dsaccount.branchId,
+       accountManagerId: dsaccount.accountManagerId,
+       accountNumber: dsaccount.accountNumber,
+       accountTypeId: DSAccountId,
+       date: formattedDate,
+       narration: "Daily contribution",
+       direction: "Credit",
+     });
+      const finalContribution = await AccountTransaction.DepositTransactionAccount({
         accountNumber: dsaccount.accountNumber,
+        amount: dsaccount.totalContribution + contributionInput.amountPerDay,
+        balance: 0,
+        createdBy: dsaccount.createdBy,
+        narration: "Total contribution",
         accountTypeId: DSAccountId,
-        // count: contributionDaysCount,
-        date: formattedDate, // Use the formatted date
-        narration: "Contribution Charge",
+        accountManagerId: dsaccount.accountManagerId,
+        branchId: dsaccount.branchId,
+        date: formattedDate,
         direction: "Debit",
       });
+  
       await Account.findOneAndUpdate(
-        { accountNumber: dsaccount.accountNumber }, // Convert accountNumber into a query object
+        { accountNumber: dsaccount.accountNumber },
         {
-          $set: { 
-            ledgerBalance: updateLedgerBalance.ledgerBalance + dsaccount.amountPerDay, // Update ledger balance
-          }
-        }
-      );
-      await DSAccount.findByIdAndUpdate(DSAccountId, {
-        hasBeenCharged: "true",
-      });
-  
-      const addLedgerEntryInput = await SureBankAccount.DepositTransactionAccount({
-        type: 'dsa',
-        direction: 'credit',
-        date: currentDate,
-        narration: 'Daily contribution',
-        amount: dsaccount.amountPerDay,
-        customerId: dsaccount.customerId,
-        branchId: dsaccount.branchId,
-      });
-    //   await addLedgerEntry(addLedgerEntryInput);
-    }
-  
-    await DSAccount.findByIdAndUpdate(DSAccountId, {
-      totalContribution: dsaccount.totalContribution,
-    });
- 
-    // Update the total contribution count in the Package model
-    await DSAccount.findByIdAndUpdate(DSAccountId, {
-      $set: { totalCount }, // Update the totalCount field with the new value
-    });
-  
-    if (totalCount === 31) {
-      const depositDetail = await AccountTransaction.DepositTransactionAccount({
-        accountNumber: dsaccount.accountNumber,
-        amount: dsaccount.totalContribution,
-        createdBy: dsaccount.createdBy,
-        narration:'Total contribution',
-        accountTypeId:DSAccountId,
-        accountManagerId:dsaccount.accountManagerId,
-        branchId:dsaccount.branchId,
-        date:formattedDate,
-        direction:'Debit'
-      });
-
-      await Account.findOneAndUpdate(
-        { accountNumber: dsaccount.accountNumber }, // Convert accountNumber into a query object
-        {
-          $set: { 
-            availableBalance: updateLedgerBalance.availableBalance + dsaccount.totalContribution, // Update ledger balance
-          }
+          $set: {
+            availableBalance: updateLedgerBalance.availableBalance + dsaccount.totalContribution + contributionInput.amountPerDay,
+            ledgerBalance: updateLedgerBalance.ledgerBalance + contributionInput.amountPerDay,
+          },
         }
       );
   
-    //   await makeCustomerDeposit(depositDetail);
-  
-      // Close the package and reset total contribution count to 0
+      // Close the package and reset contribution data
       await DSAccount.findByIdAndUpdate(DSAccountId, {
         hasBeenCharged: 'false',
         totalContribution: 0,
         totalCount: 0,
       });
-    } else {
-    //   const transactionDate = new Date().getTime();
   
-    //   const contributionTransaction = await AccountTransaction.create({
-    //     accountNumber: contributionInput.accountNumber,
-    //     amount: contributionInput.amount,
-    //     createdBy: contributionInput.createdBy,
-    //     branchId: branch.branchId,
-    //     date: transactionDate,
-    //     direction: 'inflow',
-    //     narration: "Daily contribution",
-    //   });
-  
-      return { newContribution, };
+      return { finalContribution };
     }
+  
+    if (dsaccount.hasBeenCharged === 'true') {
+      await Account.findOneAndUpdate(
+        { accountNumber: dsaccount.accountNumber },
+        {
+          $set: {
+            ledgerBalance: updateLedgerBalance.ledgerBalance + contributionInput.amountPerDay,
+          },
+        }
+      );
+  
+      await DSAccount.findByIdAndUpdate(DSAccountId, {
+        totalContribution: dsaccount.totalContribution + contributionInput.amountPerDay,
+      });
+  
+      const newContribution = await AccountTransaction.DepositTransactionAccount({
+        createdBy: contributionInput.createdBy,
+        amount: contributionInput.amountPerDay,
+        balance: dsaccount.totalContribution + contributionInput.amountPerDay,
+        branchId: dsaccount.branchId,
+        accountManagerId: dsaccount.accountManagerId,
+        accountNumber: dsaccount.accountNumber,
+        accountTypeId: DSAccountId,
+        date: formattedDate,
+        narration: "Daily contribution",
+        direction: "Credit",
+      });
+      // Update total contribution count
+      await DSAccount.findByIdAndUpdate(DSAccountId, {
+        $set: { totalCount },
+      });
+  
+      return { newContribution };
+    }
+  
+    if (dsaccount.hasBeenCharged === 'false') {
+      const chargeAmount = dsaccount.amountPerDay;
+
+       await AccountTransaction.DepositTransactionAccount({
+        createdBy: contributionInput.createdBy,
+        amount: contributionInput.amountPerDay,
+        balance: dsaccount.totalContribution + contributionInput.amountPerDay,
+        branchId: dsaccount.branchId,
+        accountManagerId: dsaccount.accountManagerId,
+        accountNumber: dsaccount.accountNumber,
+        accountTypeId: DSAccountId,
+        date: formattedDate,
+        narration: "Daily contribution",
+        direction: "Credit",
+      });
+  
+      // Log the charge as a new contribution
+      const newContribution = await AccountTransaction.DepositTransactionAccount({
+        createdBy: contributionInput.createdBy,
+        amount: chargeAmount,
+        balance: contributionInput.amountPerDay - chargeAmount,
+        branchId: dsaccount.branchId,
+        accountManagerId: dsaccount.accountManagerId,
+        accountNumber: dsaccount.accountNumber,
+        accountTypeId: DSAccountId,
+        date: formattedDate,
+        narration: "Contribution Charge",
+        direction: "Debit",
+      });
+      const newBalance = contributionInput.amountPerDay - chargeAmount
+  
+      await Account.findOneAndUpdate(
+        { accountNumber: dsaccount.accountNumber },
+        {
+          $set: {
+            ledgerBalance: updateLedgerBalance.ledgerBalance + newBalance,
+          },
+        }
+      );
+  
+      await DSAccount.findByIdAndUpdate(DSAccountId, {
+        hasBeenCharged: "true",
+        totalContribution: contributionInput.amountPerDay - chargeAmount,
+      });
+      // Update total contribution count
+      await DSAccount.findByIdAndUpdate(DSAccountId, {
+        $set: { totalCount },
+      });
+  
+      return { newContribution };
+    }
+ 
+  
+   
+  
+    return { message: "Contribution processed successfully" };
   };
+  
 
   const getDSAccountByAccountNumber = async (DSAccountNumber) => {
     return await DSAccount.findOne({ DSAccountNumber:DSAccountNumber });
@@ -220,5 +275,6 @@ const getCustomerDSAccountById = async (customerId) =>{
     getDSAccountByAccountNumber,
     getDSAccounts,
     saveDailyContribution,
-    getCustomerDSAccountById
+    getCustomerDSAccountById,
+    updateDSAccountAmount
   };

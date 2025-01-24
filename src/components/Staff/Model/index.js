@@ -27,7 +27,7 @@ const staffSchema = new mongoose.Schema({
     required: true
 
   },
-  branch: { 
+  branchId: { 
     type: String, 
     required: true
 

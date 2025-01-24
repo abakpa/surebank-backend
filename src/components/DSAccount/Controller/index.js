@@ -15,6 +15,18 @@ require('dotenv').config()
           res.status(500).json({ message: 'Server error', error: error.message });
         }
       };
+      const updateDSAccountAmount = async (req,res) => {
+        const {DSAccountNumber,amountPerDay} = req.body
+        try {
+      
+      const newAmountPerDay = await DSAccountService.updateDSAccountAmount({DSAccountNumber,amountPerDay})
+          res.status(201).json({ data: newAmountPerDay });
+        } catch (error) {
+          console.error('Error updating DSAccount amount:', error);
+          return { success: false, message: 'An error occurred while updating the amount', error };
+        }
+      };
+      
       const getDSAccount = async (req, res) => {
         try {
             const DSAccounts = await DSAccountService.getDSAccounts();
@@ -44,5 +56,6 @@ require('dotenv').config()
     createDSAccount,
     getDSAccount,
     saveDailyContribution,
-    getCustomerDSAccountById
+    getCustomerDSAccountById,
+    updateDSAccountAmount
   };

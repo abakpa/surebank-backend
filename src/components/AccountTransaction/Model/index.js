@@ -28,6 +28,10 @@ const accountTransactionSchema = new mongoose.Schema({
     type: Number, 
     required: true
   },
+  balance: { 
+    type: Number, 
+    required: true
+  },
   direction: { 
     type: String, 
     required:true
