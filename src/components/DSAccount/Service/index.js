@@ -7,14 +7,14 @@ const SureBankAccount = require('../../SureBankAccount/Service/index')
 const createDSAccount = async (DSAccountData) => {
           const existingDSAccountNumber = await getAccountByAccountNumber(DSAccountData.accountNumber);
           if (!existingDSAccountNumber) {
-            return ({ message: 'Account number does not exists' });
+            throw new Error('Account number does not exists');
           }
           const existingDSAccount = await DSAccount.findOne({
             accountNumber: DSAccountData.accountNumber,
             accountType: DSAccountData.accountType,
 });
           if (existingDSAccount) {
-            return ({ message: `Customer has an active ${DSAccountData.accountType} DS account running` });
+            throw new Error(`Customer has an active ${DSAccountData.accountType} DS account running`);
           }
           const DSAccountNumber = await generateUniqueAccountNumber('DSA')
   const dsaccount = new DSAccount({...DSAccountData,customerId:existingDSAccountNumber.customerId,branchId:existingDSAccountNumber.branchId,DSAccountNumber});
@@ -22,11 +22,11 @@ const createDSAccount = async (DSAccountData) => {
   return ({message:"Account created successfilly", newDSAccount})
 };
 const updateDSAccountAmount = async (details) => {
-  const {DSAccountNumber,amountPerDay} = details
+  const {DSAccountNumber,amountPerDay,editedBy} = details
   try {
     // Validate input
     if (!DSAccountNumber || !amountPerDay || typeof amountPerDay !== 'number' || amountPerDay <= 0) {
-      return { success: false, message: 'Invalid account number or amount' };
+      throw new Error('Invalid account number or amount');
     }
 
     const dsaccount = await DSAccount.findOne({
@@ -34,24 +34,23 @@ const updateDSAccountAmount = async (details) => {
       // accountType: contributionInput.accountType,
     });
     if (dsaccount.totalContribution !==0 && dsaccount.totalCount !==0) {
-      return { success: false, message: 'You cannot edit amount while package is running' };
+      throw new Error('You cannot edit amount while package is running');
     }
     // Find and update the DSAccount by DSAccount
     const updatedDSAccount = await DSAccount.findOneAndUpdate(
       { DSAccountNumber }, // Find the account by accountNumber
-      { $set: { amountPerDay: amountPerDay } }, // Update only the amount field
+      { $set: { amountPerDay: amountPerDay, editedBy:editedBy } }, // Update only the amount field
       { new: true } // Return the updated document
     );
 
     // Check if the account was found and updated
     if (!updatedDSAccount) {
-      return { success: false, message: 'DSAccount not found or update failed' };
+      throw new Error('DSAccount not found or update failed');
     }
 
     return { success: true, message: 'Amount updated successfully', updatedDSAccount };
   } catch (error) {
-    console.error('Error updating DSAccount amount:', error);
-    return { success: false, message: 'An error occurred while updating the amount', error };
+    throw new Error('An error occurred while updating the amount', error );
   }
 };
 const getAccountByAccountNumber = async (accountNumber) => {
@@ -77,7 +76,7 @@ const getCustomerDSAccountById = async (customerId) =>{
     // Retrieve customer account using the DS account number
     const customerAccount = await getDSAccountByAccountNumber(contributionInput.DSAccountNumber);
     if (!customerAccount) {
-      return 'Account number does not exist.';
+      throw new Error  ('Account number does not exist.');
     }
   
     // Check for an active package with the given account type
@@ -87,12 +86,12 @@ const getCustomerDSAccountById = async (customerId) =>{
     });
   
     if (!dsaccount) {
-      return 'Customer does not have an active package';
+      throw new error('Customer does not have an active package');
     }
   
     // Validate contribution amount against the daily savings package
     if (contributionInput.amountPerDay % dsaccount.amountPerDay !== 0) {
-      return `Amount is not valid for ${dsaccount.amountPerDay} daily savings package`;
+      throw new Error(`Amount is not valid for ${dsaccount.amountPerDay} daily savings package`);
     }
   
     const DSAccountId = dsaccount._id;
@@ -105,24 +104,24 @@ const getCustomerDSAccountById = async (customerId) =>{
     });
   
     if (contributionInput.amountPerDay < dsaccount.amountPerDay) {
-      return `Amount cannot be less than ${dsaccount.amountPerDay}`;
+      throw new Error(`Amount cannot be less than ${dsaccount.amountPerDay}`);
     }
   
     if (dsaccount.status === 'closed') {
-      return 'This account has been closed';
+      throw new Error('This account has been closed');
     }
   
     // Calculate the new total count
     const totalCount = dsaccount.totalCount + contributionDaysCount;
     if (totalCount > 31) {
-      return 'Total daily amount contribution cannot exceed 31';
+      throw new Error('Total daily amount contribution cannot exceed 31');
     }
   
     // Retrieve and update ledger balance
     const updateLedgerBalance = await Account.findOne({ accountNumber: dsaccount.accountNumber });
   
     if (!updateLedgerBalance) {
-      return 'Account not found for ledger update';
+      throw new Error('Account not found for ledger update');
     }
 
     if (totalCount === 31) {
@@ -204,7 +203,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         $set: { totalCount },
       });
   
-      return { newContribution };
+      return { data:newContribution, message:"Contribution successfull" };
     }
   
     if (dsaccount.hasBeenCharged === 'false') {
@@ -256,7 +255,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         $set: { totalCount },
       });
   
-      return { newContribution };
+      return { data:newContribution, message:"Contribution successfull" };
     }
  
   
@@ -264,6 +263,142 @@ const getCustomerDSAccountById = async (customerId) =>{
   
     return { message: "Contribution processed successfully" };
   };
+  const withdrawDailyContribution = async (contributionInput) => {
+    // Retrieve customer account using the DS account number
+    const customerAccount = await getDSAccountByAccountNumber(contributionInput.DSAccountNumber);
+    if (!customerAccount) {
+      throw new Error('Account number does not exist.');
+    }
+  
+    // Check for an active package with the given account type
+    const dsaccount = await DSAccount.findOne({
+      DSAccountNumber: contributionInput.DSAccountNumber,
+      accountType: contributionInput.accountType,
+    });
+  
+    if (!dsaccount) {
+      throw new Error('Customer does not have an active package');
+    }
+  
+    const DSAccountId = dsaccount._id;
+    const currentDate = new Date().getTime();
+    const formattedDate = new Date(currentDate).toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+  
+    if (contributionInput.amountPerDay > dsaccount.totalContribution) {
+      throw new Error("Insuffitient balance");
+    }
+  
+    // Retrieve and update ledger balance
+    const account = await Account.findOne({ accountNumber: dsaccount.accountNumber });
+  
+    if (!account) {
+      throw new Error('Account not found for ledger update');
+    }
+    const newBalance = dsaccount.totalContribution - contributionInput.amountPerDay;
+  
+      const newContribution = await AccountTransaction.DepositTransactionAccount({
+        createdBy: contributionInput.createdBy,
+        amount: contributionInput.amountPerDay,
+        balance: 0,
+        branchId: dsaccount.branchId,
+        accountManagerId: dsaccount.accountManagerId,
+        accountNumber: dsaccount.accountNumber,
+        accountTypeId: DSAccountId,
+        date: formattedDate,
+        narration: "Withdrawal",
+        direction: "Debit",
+      });
+      await AccountTransaction.DepositTransactionAccount({
+        createdBy: contributionInput.createdBy,
+        amount:  newBalance,
+        balance: account.availableBalance + newBalance,
+        branchId: account.branchId,
+        accountManagerId: account.accountManagerId,
+        accountNumber: account.accountNumber,
+        accountTypeId: account._id,
+        date: formattedDate,
+        narration: "Withdrawal",
+        direction: "Credit",
+      });
+  
+      await Account.findOneAndUpdate(
+        { accountNumber: dsaccount.accountNumber },
+        {
+          $set: {
+            availableBalance: account.availableBalance + newBalance,
+            ledgerBalance: account.ledgerBalance - contributionInput.amountPerDay,
+          },
+        }
+      );
+  
+      await DSAccount.findByIdAndUpdate(DSAccountId, {
+        hasBeenCharged: 'false',
+        totalContribution: 0,
+        totalCount: 0,
+      });
+  
+      return { newContribution };
+    }
+  const mainWithdrawal = async (contributionInput) => {
+    // Retrieve customer account using the DS account number
+    const customerAccount = await getAccountByAccountNumber(contributionInput.accountNumber);
+    if (!customerAccount) {
+      throw new Error('Account number does not exist.');
+    }
+  
+    const currentDate = new Date().getTime();
+    const formattedDate = new Date(currentDate).toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+
+    const account = await Account.findOne({ accountNumber: contributionInput.accountNumber });
+  
+    if (contributionInput.amountPerDay > account.availableBalance) {
+      throw new Error("Insuffitient balance");
+    }
+  
+  
+    // Retrieve and update ledger balance
+    const updateLedgerBalance = await Account.findOne({ accountNumber: contributionInput.accountNumber });
+  
+    if (!updateLedgerBalance) {
+      throw new Error('Account not found for ledger update');
+    }
+  
+      const newContribution = await AccountTransaction.DepositTransactionAccount({
+        createdBy: contributionInput.createdBy,
+        amount: contributionInput.amountPerDay,
+        balance: account.availableBalance - contributionInput.amountPerDay,
+        branchId: account.branchId,
+        accountManagerId: account.accountManagerId,
+        accountNumber: account.accountNumber,
+        accountTypeId: account._id,
+        date: formattedDate,
+        narration: "Withdrawal",
+        direction: "Debit",
+      });
+      // const newBalance = dsaccount.totalContribution - contributionInput.amountPerDay;
+  
+      await Account.findOneAndUpdate(
+        { accountNumber: contributionInput.accountNumber },
+        {
+          $set: {
+            availableBalance: updateLedgerBalance.availableBalance - contributionInput.amountPerDay ,
+            ledgerBalance: updateLedgerBalance.ledgerBalance - contributionInput.amountPerDay,
+          },
+        }
+      );
+  
+      return { newContribution };
+    }
+ 
+
   
 
   const getDSAccountByAccountNumber = async (DSAccountNumber) => {
@@ -276,5 +411,7 @@ const getCustomerDSAccountById = async (customerId) =>{
     getDSAccounts,
     saveDailyContribution,
     getCustomerDSAccountById,
-    updateDSAccountAmount
+    updateDSAccountAmount,
+    withdrawDailyContribution,
+    mainWithdrawal
   };

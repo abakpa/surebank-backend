@@ -17,6 +17,10 @@ DSAccountNumber: {
     type: String,
     required: true,
   },
+  editedBy: {
+    type: String,
+    default:"No edit",
+  },
   accountManagerId: {
     type: String,
   },

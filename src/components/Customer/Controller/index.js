@@ -10,15 +10,11 @@ const bcrypt = require('bcrypt')
         const salt = await bcrypt.genSalt()
         req.body.password = await bcrypt.hash(req.body.password,salt)
           const { name, phone, email, address, password,branchId,accountManagerId } = req.body;
-          const existingCustomer = await customerService.getCustomerByEmail(email);
-          if (existingCustomer) {
-            return res.status(400).json({ message: 'User already exists' });
-          }
           const newCustomer = await customerService.createCustomer({ name, phone, email,address, password,branchId });
           const accountNumber = await accountService.createAccount({customerId:newCustomer._id,staffId:staffId,branchId,accountManagerId,phone:phone})
           res.status(201).json({ message: 'Customer registered successfully', user: newCustomer,accountNumber:accountNumber });
         } catch (error) {
-          res.status(500).json({ message: 'Server error', error: error.message });
+          res.status(500).json({ error: error.message });
         }
       };
       const getCustomer = async (req, res) => {

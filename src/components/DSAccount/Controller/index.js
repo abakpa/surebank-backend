@@ -12,14 +12,15 @@ require('dotenv').config()
           const newDSAccount = await DSAccountService.createDSAccount({ accountNumber,amountPerDay,createdBy,startDate,status,accountManagerId,hasBeenCharged, accountType });
           res.status(201).json({ message: newDSAccount.message, DSAccount: newDSAccount.newDSAccount });
         } catch (error) {
-          res.status(500).json({ message: 'Server error', error: error.message });
+          res.status(500).json({error: error.message });
         }
       };
       const updateDSAccountAmount = async (req,res) => {
+        const editedBy = req.staff.staffId;
         const {DSAccountNumber,amountPerDay} = req.body
         try {
       
-      const newAmountPerDay = await DSAccountService.updateDSAccountAmount({DSAccountNumber,amountPerDay})
+      const newAmountPerDay = await DSAccountService.updateDSAccountAmount({DSAccountNumber,amountPerDay,editedBy})
           res.status(201).json({ data: newAmountPerDay });
         } catch (error) {
           console.error('Error updating DSAccount amount:', error);
@@ -44,18 +45,47 @@ require('dotenv').config()
             res.status(500).json({ message: error.message });
         }
       }
+      
       const saveDailyContribution = async (req, res) => {
+        try{
         const contributionInput = req.body;
         const createdBy = req.staff.staffId;
         // const packageId = req.query;
         const result = await DSAccountService.saveDailyContribution({ ...contributionInput, createdBy});
-        res.status(200).json(result);
-      };
+        res.status(200).json({data:result.data,message:result.message});
+      }catch(error){
+        res.status(500).json({ message: error.message });
+      }
+    }
+      const withdrawDailyContribution = async (req, res) => {
+        try{
+        const contributionInput = req.body;
+        const createdBy = req.staff.staffId;
+        // const packageId = req.query;
+        const result = await DSAccountService.withdrawDailyContribution({ ...contributionInput, createdBy});
+        res.status(200).json({data:result,message:'Withdrawal successful'});
+      }catch(error){
+        res.status(500).json({ message: error.message });
+      }
+    }
+      const mainWithdrawal = async (req, res) => {
+        try{
+        const contributionInput = req.body;
+        const createdBy = req.staff.staffId;
+        // const packageId = req.query;
+        const result = await DSAccountService.mainWithdrawal({ ...contributionInput, createdBy});
+        res.status(200).json({data:result,message:'Withdrawal successful'});
+      }catch(error){
+        res.status(500).json({ message: error.message });
+      }
+    }
 
   module.exports = {
     createDSAccount,
     getDSAccount,
     saveDailyContribution,
     getCustomerDSAccountById,
-    updateDSAccountAmount
+    updateDSAccountAmount,
+    withdrawDailyContribution,
+    mainWithdrawal
   };
