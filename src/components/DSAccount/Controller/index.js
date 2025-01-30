@@ -12,7 +12,7 @@ require('dotenv').config()
           const newDSAccount = await DSAccountService.createDSAccount({ accountNumber,amountPerDay,createdBy,startDate,status,accountManagerId,hasBeenCharged, accountType });
           res.status(201).json({ message: newDSAccount.message, DSAccount: newDSAccount.newDSAccount });
         } catch (error) {
-          res.status(500).json({error: error.message });
+          res.status(500).json({ message: 'Server error', error: error.message });
         }
       };
       const updateDSAccountAmount = async (req,res) => {

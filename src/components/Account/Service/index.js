@@ -2,7 +2,6 @@ const Account = require("../Model/index");
 
 const createAccount = async (customerData) => {
     //  const account = "002" + Math.floor(Math.random() * 10000000);
-    console.log("account",customerData.phone)
         const existingAccount = await checkAccount(customerData.phone);
     
         if (existingAccount) {

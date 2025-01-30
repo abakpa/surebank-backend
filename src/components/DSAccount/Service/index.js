@@ -126,7 +126,7 @@ const getCustomerDSAccountById = async (customerId) =>{
 
     if (totalCount === 31) {
       const chargeAmount = dsaccount.amountPerDay;
-
+      const account = await Account.findOne({ accountNumber: dsaccount.accountNumber });
       await AccountTransaction.DepositTransactionAccount({
        createdBy: contributionInput.createdBy,
        amount: contributionInput.amountPerDay,
@@ -150,6 +150,18 @@ const getCustomerDSAccountById = async (customerId) =>{
         branchId: dsaccount.branchId,
         date: formattedDate,
         direction: "Debit",
+      });
+      const toAvailableBalance = await AccountTransaction.DepositTransactionAccount({
+        createdBy: contributionInput.createdBy,
+        amount:  dsaccount.totalContribution + contributionInput.amountPerDay,
+        balance: account.availableBalance + dsaccount.totalContribution + contributionInput.amountPerDay,
+        branchId: account.branchId,
+        accountManagerId: account.accountManagerId,
+        accountNumber: account.accountNumber,
+        accountTypeId: account._id,
+        date: formattedDate,
+        narration: "Deposit from DS account",
+        direction: "Credit",
       });
   
       await Account.findOneAndUpdate(
@@ -236,6 +248,17 @@ const getCustomerDSAccountById = async (customerId) =>{
         direction: "Debit",
       });
       const newBalance = contributionInput.amountPerDay - chargeAmount
+      const sureBankDeposit = {
+        date: formattedDate,
+        direction: "Credit",
+        narration: "Contribution Charge",
+        branchId: dsaccount.branchId,
+        amount: chargeAmount,
+        customerId:dsaccount.customerId,
+        type:DSAccountId
+      }
+
+      await SureBankAccount.DepositTransactionAccount({...sureBankDeposit});
   
       await Account.findOneAndUpdate(
         { accountNumber: dsaccount.accountNumber },
@@ -321,7 +344,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountNumber: account.accountNumber,
         accountTypeId: account._id,
         date: formattedDate,
-        narration: "Withdrawal",
+        narration: "Deposit from DS account",
         direction: "Credit",
       });
   
