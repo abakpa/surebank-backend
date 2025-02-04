@@ -9,8 +9,8 @@ const bcrypt = require('bcrypt')
           const staffId = req.staff.staffId;
         const salt = await bcrypt.genSalt()
         req.body.password = await bcrypt.hash(req.body.password,salt)
-          const { name, phone, email, address, password,branchId,accountManagerId } = req.body;
-          const newCustomer = await customerService.createCustomer({ name, phone, email,address, password,branchId });
+          const { name, phone, address, password,branchId,accountManagerId } = req.body;
+          const newCustomer = await customerService.createCustomer({ name, phone, address, password,branchId });
           const accountNumber = await accountService.createAccount({customerId:newCustomer._id,staffId:staffId,branchId,accountManagerId,phone:phone})
           res.status(201).json({ message: 'Customer registered successfully', user: newCustomer,accountNumber:accountNumber });
         } catch (error) {

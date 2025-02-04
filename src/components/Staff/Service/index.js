@@ -5,8 +5,8 @@ const createStaff = async (staffData) => {
   return await staff.save();
 };
 
-const getStaffByEmail = async (email) => {
-  return await Staff.findOne({ email });
+const getStaffByPhone = async (phone) => {
+  return await Staff.findOne({ phone });
 };
 
 
@@ -20,7 +20,7 @@ const getStaff = async () =>{
 
 module.exports = {
     createStaff,
-    getStaffByEmail,
+    getStaffByPhone,
     getStaff,
     
   };

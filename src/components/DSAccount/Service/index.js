@@ -110,19 +110,139 @@ const getCustomerDSAccountById = async (customerId) =>{
     if (dsaccount.status === 'closed') {
       throw new Error('This account has been closed');
     }
+
+        // Retrieve and update ledger balance
+        const updateLedgerBalance = await Account.findOne({ accountNumber: dsaccount.accountNumber });
+  
+        if (!updateLedgerBalance) {
+          throw new Error('Account not found for ledger update');
+        }
   
     // Calculate the new total count
     const totalCount = dsaccount.totalCount + contributionDaysCount;
+  
     if (totalCount > 31) {
-      throw new Error('Total daily amount contribution cannot exceed 31');
+      const circle = dsaccount.totalContribution + contributionInput.amountPerDay;
+
+      const numberOfCircleBy31 = totalCount/31
+
+      const perfectCircle = Math.floor(numberOfCircleBy31);
+
+      const count = 31 * perfectCircle;
+
+      const excessCount = totalCount - count;
+      
+      let charge;
+      if (dsaccount.hasBeenCharged === 'true') {
+        charge = (numberOfCircleBy31 % 31 !== 0) 
+          ? perfectCircle * dsaccount.amountPerDay 
+          : perfectCircle * dsaccount.amountPerDay - dsaccount.amountPerDay;
+      } else {
+        charge = (numberOfCircleBy31 % 31 !== 0) 
+          ? (perfectCircle + 1) * dsaccount.amountPerDay
+          : perfectCircle * dsaccount.amountPerDay;
+      }
+      const countAmount = count * dsaccount.amountPerDay
+        let totalContribution
+        if(dsaccount.hasBeenCharged === 'true'){
+      totalContribution = countAmount - charge;
+        }else{
+      totalContribution = (countAmount + dsaccount.amountPerDay) - charge;
+        }
+
+      let excessBalance
+      if(dsaccount.hasBeenCharged === 'false'){
+      excessBalance = circle - ((countAmount + dsaccount.amountPerDay)-charge);
+      }else{
+      excessBalance = circle - (countAmount - charge);
+      }
+    
+      const account = await Account.findOne({ accountNumber: dsaccount.accountNumber });
+      
+      await AccountTransaction.DepositTransactionAccount({
+        createdBy: contributionInput.createdBy,
+        amount: contributionInput.amountPerDay,
+        balance: dsaccount.totalContribution + contributionInput.amountPerDay,
+        branchId: dsaccount.branchId,
+        accountManagerId: dsaccount.accountManagerId,
+        accountNumber: dsaccount.accountNumber,
+        accountTypeId: DSAccountId,
+        date: formattedDate,
+        narration: "DS Deposit",
+        direction: "Credit",
+      });
+    
+      await AccountTransaction.DepositTransactionAccount({
+        accountNumber: dsaccount.accountNumber,
+        amount: totalContribution,
+        balance: excessBalance,
+        createdBy: dsaccount.createdBy,
+        narration: "Total DS",
+        accountTypeId: DSAccountId,
+        accountManagerId: dsaccount.accountManagerId,
+        branchId: dsaccount.branchId,
+        date: formattedDate,
+        direction: "Debit",
+      });
+    
+      await AccountTransaction.DepositTransactionAccount({
+        createdBy: contributionInput.createdBy,
+        amount: totalContribution,
+        balance: account.availableBalance + totalContribution,
+        branchId: account.branchId,
+        accountManagerId: account.accountManagerId,
+        accountNumber: account.accountNumber,
+        accountTypeId: account._id,
+        date: formattedDate,
+        narration: "From DS account",
+        direction: "Credit",
+      });
+    
+      await Account.findOneAndUpdate(
+        { accountNumber: dsaccount.accountNumber },
+        {
+          $set: {
+            availableBalance: updateLedgerBalance.availableBalance + totalContribution,
+            ledgerBalance: updateLedgerBalance.ledgerBalance + (totalContribution - (excessBalance - charge)),
+          },
+        }
+      );
+    
+      const newContribution = await AccountTransaction.DepositTransactionAccount({
+        createdBy: contributionInput.createdBy,
+        amount: charge,
+        balance: excessBalance - charge,
+        branchId: dsaccount.branchId,
+        accountManagerId: dsaccount.accountManagerId,
+        accountNumber: dsaccount.accountNumber,
+        accountTypeId: DSAccountId,
+        date: formattedDate,
+        narration: "DS Charge",
+        direction: "Debit",
+      });
+    
+      const sureBankDeposit = {
+        date: formattedDate,
+        direction: "Credit",
+        narration: "DS Charge",
+        branchId: dsaccount.branchId,
+        amount: charge,
+        customerId: dsaccount.customerId,
+        type: DSAccountId,
+      };
+    
+      await SureBankAccount.DepositTransactionAccount({ ...sureBankDeposit });
+    
+      await DSAccount.findByIdAndUpdate(DSAccountId, {
+        hasBeenCharged: 'true',
+        totalContribution: excessBalance - charge,
+        totalCount: excessCount,
+      });
+    
+      return { data: newContribution, message: "Contribution successful" };
     }
   
-    // Retrieve and update ledger balance
-    const updateLedgerBalance = await Account.findOne({ accountNumber: dsaccount.accountNumber });
-  
-    if (!updateLedgerBalance) {
-      throw new Error('Account not found for ledger update');
-    }
+
 
     if (totalCount === 31) {
       const chargeAmount = dsaccount.amountPerDay;
@@ -136,7 +256,7 @@ const getCustomerDSAccountById = async (customerId) =>{
        accountNumber: dsaccount.accountNumber,
        accountTypeId: DSAccountId,
        date: formattedDate,
-       narration: "Daily contribution",
+       narration: "DS Deposit",
        direction: "Credit",
      });
       const finalContribution = await AccountTransaction.DepositTransactionAccount({
@@ -144,7 +264,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         amount: dsaccount.totalContribution + contributionInput.amountPerDay,
         balance: 0,
         createdBy: dsaccount.createdBy,
-        narration: "Total contribution",
+        narration: "Total DS",
         accountTypeId: DSAccountId,
         accountManagerId: dsaccount.accountManagerId,
         branchId: dsaccount.branchId,
@@ -160,7 +280,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountNumber: account.accountNumber,
         accountTypeId: account._id,
         date: formattedDate,
-        narration: "Deposit from DS account",
+        narration: "From DS account",
         direction: "Credit",
       });
   
@@ -207,7 +327,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountNumber: dsaccount.accountNumber,
         accountTypeId: DSAccountId,
         date: formattedDate,
-        narration: "Daily contribution",
+        narration: "DS Deposit",
         direction: "Credit",
       });
       // Update total contribution count
@@ -230,7 +350,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountNumber: dsaccount.accountNumber,
         accountTypeId: DSAccountId,
         date: formattedDate,
-        narration: "Daily contribution",
+        narration: "DS Deposit",
         direction: "Credit",
       });
   
@@ -244,14 +364,14 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountNumber: dsaccount.accountNumber,
         accountTypeId: DSAccountId,
         date: formattedDate,
-        narration: "Contribution Charge",
+        narration: "DS Charge",
         direction: "Debit",
       });
       const newBalance = contributionInput.amountPerDay - chargeAmount
       const sureBankDeposit = {
         date: formattedDate,
         direction: "Credit",
-        narration: "Contribution Charge",
+        narration: "DS Charge",
         branchId: dsaccount.branchId,
         amount: chargeAmount,
         customerId:dsaccount.customerId,
@@ -280,12 +400,10 @@ const getCustomerDSAccountById = async (customerId) =>{
   
       return { data:newContribution, message:"Contribution successfull" };
     }
- 
-  
-   
   
     return { message: "Contribution processed successfully" };
   };
+  
   const withdrawDailyContribution = async (contributionInput) => {
     // Retrieve customer account using the DS account number
     const customerAccount = await getDSAccountByAccountNumber(contributionInput.DSAccountNumber);
@@ -344,7 +462,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountNumber: account.accountNumber,
         accountTypeId: account._id,
         date: formattedDate,
-        narration: "Deposit from DS account",
+        narration: "From DS account",
         direction: "Credit",
       });
   
