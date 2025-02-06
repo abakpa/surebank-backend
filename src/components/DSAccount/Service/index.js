@@ -203,7 +203,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         {
           $set: {
             availableBalance: updateLedgerBalance.availableBalance + totalContribution,
-            ledgerBalance: updateLedgerBalance.ledgerBalance + (totalContribution - (excessBalance - charge)),
+            ledgerBalance: updateLedgerBalance.ledgerBalance + (contributionInput.amountPerDay - charge)
           },
         }
       );
