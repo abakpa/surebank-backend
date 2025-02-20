@@ -96,11 +96,14 @@ const getCustomerDSAccountById = async (customerId) =>{
   
     const DSAccountId = dsaccount._id;
     const contributionDaysCount = contributionInput.amountPerDay / dsaccount.amountPerDay;
-    const currentDate = new Date().getTime();
-    const formattedDate = new Date(currentDate).toLocaleDateString("en-GB", {
+    const currentDate = new Date();
+    const formattedDate = currentDate.toLocaleString("en-GB", {
       day: "2-digit",
       month: "short",
-      year: "numeric",
+      year: "2-digit", // Abbreviated year (YY)
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true, // Ensures AM/PM format
     });
   
     if (contributionInput.amountPerDay < dsaccount.amountPerDay) {
@@ -513,11 +516,14 @@ const getCustomerDSAccountById = async (customerId) =>{
     }
   
     const DSAccountId = dsaccount._id;
-    const currentDate = new Date().getTime();
-    const formattedDate = new Date(currentDate).toLocaleDateString("en-GB", {
+    const currentDate = new Date();
+    const formattedDate = currentDate.toLocaleString("en-GB", {
       day: "2-digit",
       month: "short",
-      year: "numeric",
+      year: "2-digit", // Abbreviated year (YY)
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true, // Ensures AM/PM format
     });
   
     if (contributionInput.amountPerDay > dsaccount.totalContribution) {
@@ -582,11 +588,14 @@ const getCustomerDSAccountById = async (customerId) =>{
       throw new Error('Account number does not exist.');
     }
   
-    const currentDate = new Date().getTime();
-    const formattedDate = new Date(currentDate).toLocaleDateString("en-GB", {
+    const currentDate = new Date();
+    const formattedDate = currentDate.toLocaleString("en-GB", {
       day: "2-digit",
       month: "short",
-      year: "numeric",
+      year: "2-digit", // Abbreviated year (YY)
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true, // Ensures AM/PM format
     });
 
     const account = await Account.findOne({ accountNumber: contributionInput.accountNumber });
