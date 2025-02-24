@@ -5,7 +5,15 @@ require('dotenv').config()
     const createDSAccount = async (req, res) => {
         try {
         const createdBy = req.staff.staffId;
-        const startDate = new Date().getTime();
+        const currentDate = new Date();
+        const startDate = currentDate.toLocaleString("en-GB", {
+          day: "2-digit",
+          month: "short",
+          year: "2-digit", // Abbreviated year (YY)
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: true, // Ensures AM/PM format
+        });
         const status = 'open';
         const hasBeenCharged = "false"
           const { accountNumber, amountPerDay, accountManagerId,accountType } = req.body;
