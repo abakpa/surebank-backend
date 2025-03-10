@@ -33,6 +33,17 @@ require('dotenv').config()
           return { success: false, message: 'An error occurred while updating the amount', error };
         }
       };
+      const updateCostPrice = async (req,res) => {
+        const editedBy = req.staff.staffId;
+        const {SBAccountNumber,costPrice,productName} = req.body
+        try {
+      
+      const newData = await SBAccountService.updateCostPrice({SBAccountNumber,costPrice,productName,editedBy})
+          res.status(201).json({ message:newData.message });
+        } catch (error) {
+          return { success: false, message: 'An error occurred while updating the amount', error };
+        }
+      };
       
       const getDSAccount = async (req, res) => {
         try {
@@ -93,5 +104,6 @@ require('dotenv').config()
     getCustomerSBAccountById,
     updateSBAccountAmount,
     withdrawSBContribution,
-    sellProduct
+    sellProduct,
+    updateCostPrice
   };

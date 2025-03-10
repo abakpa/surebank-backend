@@ -172,6 +172,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountTypeId: DSAccountId,
         date: formattedDate,
         narration: "DS Deposit",
+        package:"DS",
         direction: "Credit",
       });
     
@@ -185,6 +186,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountManagerId: dsaccount.accountManagerId,
         branchId: dsaccount.branchId,
         date: formattedDate,
+        package:"DS",
         direction: "Moved",
       });
     
@@ -198,6 +200,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountTypeId: account._id,
         date: formattedDate,
         narration: "From DS account",
+        package:"DS",
         direction: "Credit",
       });
     
@@ -221,10 +224,12 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountTypeId: DSAccountId,
         date: formattedDate,
         narration: "DS Charge",
-        direction: "Debit",
+        package:"DS",
+        direction: "Charge",
       });
     
       const sureBankDeposit = {
+        package:"DS",
         date: formattedDate,
         direction: "Credit",
         narration: "DS Charge",
@@ -263,6 +268,7 @@ const getCustomerDSAccountById = async (customerId) =>{
        accountTypeId: DSAccountId,
        date: formattedDate,
        narration: "DS Deposit",
+       package:"DS",
        direction: "Credit",
      });
       const finalContribution = await AccountTransaction.DepositTransactionAccount({
@@ -275,6 +281,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountManagerId: dsaccount.accountManagerId,
         branchId: dsaccount.branchId,
         date: formattedDate,
+        package:"DS",
         direction: "Moved",
       });
       const toAvailableBalance = await AccountTransaction.DepositTransactionAccount({
@@ -287,6 +294,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountTypeId: account._id,
         date: formattedDate,
         narration: "From DS account",
+        package:"DS",
         direction: "Credit",
       });
   
@@ -321,6 +329,7 @@ const getCustomerDSAccountById = async (customerId) =>{
        accountTypeId: DSAccountId,
        date: formattedDate,
        narration: "DS Deposit",
+       package:"DS",
        direction: "Credit",
      });
  
@@ -335,10 +344,12 @@ const getCustomerDSAccountById = async (customerId) =>{
        accountTypeId: DSAccountId,
        date: formattedDate,
        narration: "DS Charge",
-       direction: "Debit",
+       package:"DS",
+       direction: "Charge",
      });
      const newBalance = contributionInput.amountPerDay - chargeAmount
      const sureBankDeposit = {
+      package:"DS",
        date: formattedDate,
        direction: "Credit",
        narration: "DS Charge",
@@ -360,6 +371,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountManagerId: dsaccount.accountManagerId,
         branchId: dsaccount.branchId,
         date: formattedDate,
+        package:"DS",
         direction: "Moved",
       });
       const toAvailableBalance = await AccountTransaction.DepositTransactionAccount({
@@ -372,6 +384,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountTypeId: account._id,
         date: formattedDate,
         narration: "From DS account",
+        package:"DS",
         direction: "Credit",
       });
   
@@ -422,6 +435,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountTypeId: DSAccountId,
         date: formattedDate,
         narration: "DS Deposit",
+        package:"DS",
         direction: "Credit",
       });
       // Update total contribution count
@@ -445,6 +459,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountTypeId: DSAccountId,
         date: formattedDate,
         narration: "DS Deposit",
+        package:"DS",
         direction: "Credit",
       });
   
@@ -459,10 +474,12 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountTypeId: DSAccountId,
         date: formattedDate,
         narration: "DS Charge",
-        direction: "Debit",
+        package:"DS",
+        direction: "Charge",
       });
       const newBalance = contributionInput.amountPerDay - chargeAmount
       const sureBankDeposit = {
+        package:"DS",
         date: formattedDate,
         direction: "Credit",
         narration: "DS Charge",
@@ -548,6 +565,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountTypeId: DSAccountId,
         date: formattedDate,
         narration: "Withdrawal",
+        package:"DS",
         direction: "Debit",
       });
       await AccountTransaction.DepositTransactionAccount({
@@ -560,6 +578,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountTypeId: account._id,
         date: formattedDate,
         narration: "From DS account",
+        package:"DS",
         direction: "Credit",
       });
   
@@ -622,6 +641,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountTypeId: account._id,
         date: formattedDate,
         narration: "Withdrawal",
+        package:"DS",
         direction: "Debit",
       });
       // const newBalance = dsaccount.totalContribution - contributionInput.amountPerDay;

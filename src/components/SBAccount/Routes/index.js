@@ -5,6 +5,7 @@ const {staffAuth} = require('../../Middleware/index')
 
 router.post('/', staffAuth, SBAccountController.createSBAccount);
 router.put('/', staffAuth, SBAccountController.updateSBAccountAmount);
+router.put('/costprice', staffAuth, SBAccountController.updateCostPrice);
 router.get('/', SBAccountController.getDSAccount);
 router.get('/:id', SBAccountController.getCustomerSBAccountById);
 router.post('/deposit', staffAuth, SBAccountController.saveSBContribution);

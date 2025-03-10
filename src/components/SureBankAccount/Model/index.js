@@ -5,6 +5,10 @@ const sureBankAccountTransactionSchema = new mongoose.Schema({
     type: String, 
     required: true 
 },
+package: { 
+    type: String, 
+    required: true 
+},
   direction: { 
     type: String, 
     required: true 

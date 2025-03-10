@@ -53,6 +53,40 @@ const updateSBAccountAmount = async (details) => {
     }
   };
 
+const updateCostPrice = async (details) => {
+    const {SBAccountNumber,costPrice,productName,editedBy} = details
+    try {
+      // Validate input
+      if (!SBAccountNumber) {
+        throw new Error('Invalid account number');
+      }
+  
+      const sbaccount = await SBAccount.findOne({
+        SBAccountNumber: SBAccountNumber,
+        // productName: productName,
+      });
+      if (sbaccount.sellingPrice > sbaccount.balance) {
+        return {message:'The money must be completed before approval'};
+      }
+      const profit = sbaccount.sellingPrice - costPrice
+      // Find and update the DSAccount by DSAccount
+      const updatedcostPrice = await SBAccount.findOneAndUpdate(
+        { SBAccountNumber }, // Find the account by accountNumber
+        { $set: { costPrice: costPrice, profit:profit, editedBy:editedBy, productName:productName } }, // Update only the amount field
+        { new: true } // Return the updated document
+      );
+  
+      // Check if the account was found and updated
+      if (!updatedcostPrice) {
+        throw new Error('SBAccount not found or update failed');
+      }
+  
+      return { success: true, message: 'Cost price updated successfully', updatedcostPrice };
+    } catch (error) {
+      throw new Error('An error occurred while updating the amount', error );
+    }
+  };
+
 const getAccountByAccountNumber = async (accountNumber) => {
     return await Account.findOne({ accountNumber });
   };
@@ -110,6 +144,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
                 accountTypeId: SBAccountId,
                 date: formattedDate,
                 narration: "SB Deposit",
+                package: "SB",
                 direction: "Credit",
               });
 
@@ -179,6 +214,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
             accountTypeId: SBAccountId,
             date: formattedDate,
             narration: "Withdrawal",
+            package: "SB",
             direction: "Debit",
           });
       
@@ -228,6 +264,9 @@ const getAccountByAccountNumber = async (accountNumber) => {
         if (sbaccount.sellingPrice > sbaccount.balance) {
           throw new Error("Insuffitient amount for product price");
         }
+        if (sbaccount.costPrice === 0) {
+          throw new Error("Ask admin for approval");
+        }
 
         // if (sbaccount.sellingPrice > sbaccount.balance) {
         //   throw new Error("Insuffitient balance");
@@ -250,9 +289,23 @@ const getAccountByAccountNumber = async (accountNumber) => {
             accountNumber: sbaccount.accountNumber,
             accountTypeId: SBAccountId,
             date: formattedDate,
+            package: "SB",
             narration: `${sbaccount.productName} sold`,
             direction: "Debit",
           });
+
+             const sureBankDeposit = {
+                  package:"SB",
+                  date: formattedDate,
+                  direction: "Credit",
+                  narration: "DS Charge",
+                  branchId: sbaccount.branchId,
+                  amount: sbaccount.profit,
+                  customerId:sbaccount.customerId,
+                  type:SBAccountId
+                }
+          
+                await SureBankAccount.DepositTransactionAccount({...sureBankDeposit});
       
           await Account.findOneAndUpdate(
             { accountNumber: sbaccount.accountNumber },
@@ -280,5 +333,6 @@ module.exports = {
     getCustomerSBAccountById,
     saveSBContribution,
     withdrawSBContribution,
-    sellProduct
+    sellProduct,
+    updateCostPrice
   };

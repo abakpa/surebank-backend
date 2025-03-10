@@ -39,6 +39,10 @@ const accountTransactionSchema = new mongoose.Schema({
   narration: { 
     type: String, 
     required:true
+  },
+  package: { 
+    type: String, 
+    required:true
   }
 },
 {timestamps:true}
