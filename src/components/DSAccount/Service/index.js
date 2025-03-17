@@ -200,7 +200,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountTypeId: account._id,
         date: formattedDate,
         narration: "From DS account",
-        package:"DS",
+        package:"DSTRANSFER",
         direction: "Credit",
       });
     
@@ -294,7 +294,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountTypeId: account._id,
         date: formattedDate,
         narration: "From DS account",
-        package:"DS",
+        package:"DSTRANSFER",
         direction: "Credit",
       });
   
@@ -384,7 +384,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountTypeId: account._id,
         date: formattedDate,
         narration: "From DS account",
-        package:"DS",
+        package:"DSTRANSFER",
         direction: "Credit",
       });
   

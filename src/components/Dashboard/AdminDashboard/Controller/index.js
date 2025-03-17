@@ -12,7 +12,8 @@ const bcrypt = require('bcrypt')
       }
       const getAllDSAccountWithdrawal = async (req, res) => {
         try {
-            const DSAccount = await accountTransactionService.getAllDSAccountWithdrawal();
+            const {date,branchId} = req.body
+            const DSAccount = await accountTransactionService.getAllDSAccountWithdrawal(date,branchId);
             res.status(200).json(DSAccount);
         } catch (error) {
             res.status(500).json({ message: error.message });

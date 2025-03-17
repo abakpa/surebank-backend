@@ -26,24 +26,31 @@ async function getAllDSAccount() {
     
     return totalBalance - Withdrawal;
 }
-async function getAllDSAccountWithdrawal() {
-    const transactions = await AccountTransaction.find({ package: 'DS', direction: 'Debit' });
-    
-    // Sort transactions by createdAt in ascending order
-    transactions.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    
-    // Use a Map to store the latest balance for each accountTypeId
-    const balanceMap = new Map();
-    
-    transactions.forEach(tx => {
-        balanceMap.set(tx.accountTypeId, tx.amount);
-    });
-    
-    // Calculate the sum of the latest balances
-    const totalBalance = Array.from(balanceMap.values()).reduce((sum, amount) => sum + amount, 0);
-    
+async function getAllDSAccountWithdrawal(date = null, branchId = null) {
+    let query = { package: 'DS', direction: 'Debit' };
+
+    if (date) {
+        const startDate = new Date(date);
+        startDate.setHours(0, 0, 0, 0);
+        const endDate = new Date(date);
+        endDate.setHours(23, 59, 59, 999);
+        query.createdAt = { $gte: startDate, $lte: endDate };
+    }
+
+    if (branchId) {
+        query.branchId = branchId;
+    }
+
+
+    const transactions = await AccountTransaction.find(query);
+
+    // Sum up all withdrawal amounts directly
+    const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0) || 0;
+
     return totalBalance;
 }
+
+
 async function getAllDSAccountCharge() {
     const transactions = await AccountTransaction.find({ package: 'DS', direction: 'Charge' });
     
@@ -137,13 +144,20 @@ async function getAllDailyDSAccount(date = null, branchId = null) {
     const balanceMap = new Map();
     
     transactions.forEach(tx => {
-        balanceMap.set(tx.accountTypeId, tx.balance);
+        balanceMap.set(tx.accountTypeId, tx.amount);
     });
     
     // Calculate the sum of the latest balances
-    const totalBalance = Array.from(balanceMap.values()).reduce((sum, balance) => sum + balance, 0);
-    const dswithdrawal = await getAllDailyDSAccountWithdrawalByDate(date,branchId);
-    const charge = await getAllDailyDSAccountChargeByDate(date,branchId);
+    const totalBalance = Array.from(balanceMap.values()).reduce((sum, amount) => sum + amount, 0);
+    let dswithdrawal = 0, charge = 0;
+    if(date && branchId){
+     dswithdrawal = await getAllDailyDSAccountWithdrawalByDate(date,branchId) ;
+     charge = await getAllDailyDSAccountChargeByDate(date,branchId);
+    }else{
+        dswithdrawal = await getAllDailyDSAccountWithdrawal()
+        charge = await getAllDailyDSAccountCharge()
+    }
+
     const Withdrawal = dswithdrawal + charge
     
     return totalBalance - Withdrawal ;
@@ -319,12 +333,17 @@ async function getAllDailySBAccount(date = null, branchId = null) {
     const balanceMap = new Map();
     
     transactions.forEach(tx => {
-        balanceMap.set(tx.accountTypeId, tx.balance);
+        balanceMap.set(tx.accountTypeId, tx.amount);
     });
     
     // Calculate the sum of the latest balances
-    const totalBalance = Array.from(balanceMap.values()).reduce((sum, balance) => sum + balance, 0);
-    const sbwithdrawal = await getAllDailySBAccountWithdrawalByDate(date,branchId)
+    const totalBalance = Array.from(balanceMap.values()).reduce((sum, amount) => sum + amount, 0);
+    let sbwithdrawal = 0
+    if(date && branchId){
+    sbwithdrawal = await getAllDailySBAccountWithdrawalByDate(date,branchId)
+    }else{
+    sbwithdrawal = await getAllDailySBAccountWithdrawal()
+    }
     
     return totalBalance - sbwithdrawal;
 }
