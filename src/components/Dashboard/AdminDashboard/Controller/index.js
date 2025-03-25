@@ -55,6 +55,7 @@ const bcrypt = require('bcrypt')
       const getAllDailyDSAccount = async (req, res) => {
         try {
             const {date,branchId} = req.body
+
             const DSAccount = await accountTransactionService.getAllDailyDSAccount(date,branchId);
             res.status(200).json(DSAccount);
         } catch (error) {

@@ -117,7 +117,6 @@ async function getAllSBandDSAccount() {
 }
 async function getAllDailyDSAccount(date = null, branchId = null) {
     let query = { package: 'DS', direction: 'Credit' };
-    
     if (!date) {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
@@ -159,6 +158,7 @@ async function getAllDailyDSAccount(date = null, branchId = null) {
     }
 
     const Withdrawal = dswithdrawal + charge
+    console.log("total",totalBalance-Withdrawal)
     
     return totalBalance - Withdrawal ;
 }
