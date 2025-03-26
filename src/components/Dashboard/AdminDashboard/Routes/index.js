@@ -8,7 +8,7 @@ router.get('/ds', AcountTransactionController.getAllDSAccount);
 router.post('/dswithdrawal', AcountTransactionController.getAllDSAccountWithdrawal);
 router.get('/dscharge', AcountTransactionController.getAllDSAccountCharge);
 router.post('/dailyds', AcountTransactionController.getAllDailyDSAccount);
-router.get('/dailydswithdrawal', AcountTransactionController.getAllDailyDSAccountWithdrawal);
+router.post('/dailydswithdrawal', AcountTransactionController.getAllDailyDSAccountWithdrawal);
 router.get('/dailydscharge', AcountTransactionController.getAllDailyDSAccountCharge);
 router.get('/sb', AcountTransactionController.getAllSBAccount);
 router.post('/sbwithdrawal', AcountTransactionController.getAllSBAccountWithdrawal);
@@ -22,6 +22,8 @@ router.post('/packages', AcountTransactionController.getAllAccountPackage);
 router.post('/sbincome', AcountTransactionController.getSBAccountIncome);
 router.post('/dsincome', AcountTransactionController.getDSAccountIncome);
 router.post('/totalincome', AcountTransactionController.getAllSBandDSIncome);
+router.post('/totalexpenditure', AcountTransactionController.getAllExpenditure);
+router.post('/profit', AcountTransactionController.getProfit);
 
 
 module.exports = router;

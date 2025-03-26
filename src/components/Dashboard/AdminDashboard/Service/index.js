@@ -3,10 +3,24 @@ const AccountTransaction = require('../../../AccountTransaction/Model/index');
 const DSAccount = require('../../../DSAccount/Model');
 const SBAccount = require('../../../SBAccount/Model');
 const SureBankAccount = require('../../../SureBankAccount/Model');
+const Expenditure = require('../../../Expenditure/Model');
 
 
-async function getAllDSAccount() {
-    const transactions = await AccountTransaction.find({ package: 'DS', direction: 'Credit' });
+async function getAllDSAccount(date = null, branchId = null) {
+
+    let query = { package: 'DS', direction: 'Credit' };
+    
+   
+    // Filter by date if provided or default to today
+    const endDate = date ? new Date(date) : new Date();
+    endDate.setHours(23, 59, 59, 999);
+    query.createdAt = { $lte: endDate };
+  
+    // Filter by branch if provided
+    if (branchId) {
+      query.branchId = branchId;
+    }
+    const transactions = await AccountTransaction.find(query);
     
     // Sort transactions by createdAt in ascending order
     transactions.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
@@ -20,8 +34,8 @@ async function getAllDSAccount() {
     
     // Calculate the sum of the latest balances
     const totalBalance = Array.from(balanceMap.values()).reduce((sum, balance) => sum + balance, 0);
-    const dswithdrawal = await getAllDSAccountWithdrawal();
-    const charge  = await getAllDSAccountCharge();
+    const dswithdrawal = await getAllDSAccountWithdrawal(date,branchId);
+    const charge  = await getAllDSAccountCharge(date,branchId);
     const Withdrawal = dswithdrawal + charge
     
     return totalBalance - Withdrawal;
@@ -29,13 +43,10 @@ async function getAllDSAccount() {
 async function getAllDSAccountWithdrawal(date = null, branchId = null) {
     let query = { package: 'DS', direction: 'Debit' };
 
-    if (date) {
-        const startDate = new Date(date);
-        startDate.setHours(0, 0, 0, 0);
-        const endDate = new Date(date);
-        endDate.setHours(23, 59, 59, 999);
-        query.createdAt = { $gte: startDate, $lte: endDate };
-    }
+     // Filter by date if provided or default to today
+     const endDate = date ? new Date(date) : new Date();
+     endDate.setHours(23, 59, 59, 999);
+     query.createdAt = { $lte: endDate };
 
     if (branchId) {
         query.branchId = branchId;
@@ -51,27 +62,39 @@ async function getAllDSAccountWithdrawal(date = null, branchId = null) {
 }
 
 
-async function getAllDSAccountCharge() {
-    const transactions = await AccountTransaction.find({ package: 'DS', direction: 'Charge' });
+async function getAllDSAccountCharge(date = null, branchId = null) {
+    let query = { package: 'DS', direction: 'Charge' };
+       // Filter by date if provided or default to today
+       const endDate = date ? new Date(date) : new Date();
+       endDate.setHours(23, 59, 59, 999);
+       query.createdAt = { $lte: endDate };
+     
+       // Filter by branch if provided
+       if (branchId) {
+         query.branchId = branchId;
+       }
+    const transactions = await AccountTransaction.find(query);
     
-    // Sort transactions by createdAt in ascending order
-    transactions.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    
-    // Use a Map to store the latest balance for each accountTypeId
-    const balanceMap = new Map();
-    
-    transactions.forEach(tx => {
-        balanceMap.set(tx.accountTypeId, tx.amount);
-    });
-    
-    // Calculate the sum of the latest balances
-    const totalBalance = Array.from(balanceMap.values()).reduce((sum, amount) => sum + amount, 0);
+   // Sum up all charge amounts directly
+   const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0) || 0;
     
     return totalBalance;
 }
 
-async function getAllSBAccount() {
-    const transactions = await AccountTransaction.find({ package: 'SB', direction: 'Credit' });
+async function getAllSBAccount(date = null, branchId = null) {
+    let query = { package: 'SB', direction: 'Credit' };
+    
+   
+    // Filter by date if provided or default to today
+    const endDate = date ? new Date(date) : new Date();
+    endDate.setHours(23, 59, 59, 999);
+    query.createdAt = { $lte: endDate };
+  
+    // Filter by branch if provided
+    if (branchId) {
+      query.branchId = branchId;
+    }
+    const transactions = await AccountTransaction.find(query);
     
     // Sort transactions by createdAt in ascending order
     transactions.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
@@ -85,80 +108,69 @@ async function getAllSBAccount() {
     
     // Calculate the sum of the latest balances
     const totalBalance = Array.from(balanceMap.values()).reduce((sum, balance) => sum + balance, 0);
-    const SBWithdrawal = await getAllSBAccountWithdrawal()
+    const SBWithdrawal = await getAllSBAccountWithdrawal(date,branchId)
     
     return totalBalance - SBWithdrawal;
 }
-async function getAllSBAccountWithdrawal() {
-    const transactions = await AccountTransaction.find({ package: 'SB', direction: 'Debit' });
-    
-    // Sort transactions by createdAt in ascending order
-    transactions.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    
-    // Use a Map to store the latest balance for each accountNumber
-    const balanceMap = new Map();
-    
-    transactions.forEach(tx => {
-        balanceMap.set(tx.accountTypeId, tx.amount);
-    });
-    
-    // Calculate the sum of the latest balances
-    const totalBalance = Array.from(balanceMap.values()).reduce((sum, amount) => sum + amount, 0);
-    
+async function getAllSBAccountWithdrawal(date = null, branchId = null) {
+    let query = { package: 'DS', direction: 'Debit' };
+
+     // Filter by date if provided or default to today
+     const endDate = date ? new Date(date) : new Date();
+     endDate.setHours(23, 59, 59, 999);
+     query.createdAt = { $lte: endDate };
+
+    if (branchId) {
+        query.branchId = branchId;
+    }
+
+
+    const transactions = await AccountTransaction.find(query);
+
+    // Sum up all withdrawal amounts directly
+    const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0) || 0;
+
     return totalBalance;
 }
-async function getAllSBandDSAccount() {
+async function getAllSBandDSAccount(date = null, branchId = null) {
     
-  const DS = await getAllDSAccount()
-  const SB = await getAllSBAccount()
+  const DS = await getAllDSAccount(date,branchId)
+  const SB = await getAllSBAccount(date,branchId)
   const totalContribution = DS + SB
     
     return totalContribution;
 }
 async function getAllDailyDSAccount(date = null, branchId = null) {
     let query = { package: 'DS', direction: 'Credit' };
-    if (!date) {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const endOfToday = new Date();
-        endOfToday.setHours(23, 59, 59, 999);
-        query.createdAt = { $gte: today, $lte: endOfToday };
-    } else {
-        const startDate = new Date(date);
-        startDate.setHours(0, 0, 0, 0);
-        const endDate = new Date(date);
-        endDate.setHours(23, 59, 59, 999);
-        query.createdAt = { $gte: startDate, $lte: endDate };
-    }
+   // Filter by date if provided or default to today
+   const targetDate = date ? new Date(date) : new Date();
+
+   // Set start of day
+   const startDate = new Date(targetDate);
+   startDate.setHours(0, 0, 0, 0);
+   
+   // Set end of day
+   const endDate = new Date(targetDate);
+   endDate.setHours(23, 59, 59, 999);
+   
+   query.createdAt = { $gte: startDate, $lte: endDate };
+   
     
     if (branchId) {
         query.branchId = branchId;
     }
     const transactions = await AccountTransaction.find(query);
     
-    // Sort transactions by createdAt in ascending order
-    transactions.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    
-    // Use a Map to store the latest balance for each accountTypeId
-    const balanceMap = new Map();
-    
-    transactions.forEach(tx => {
-        balanceMap.set(tx.accountTypeId, tx.amount);
-    });
+ // Sum up all withdrawal amounts directly
+ const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0) || 0;
     
     // Calculate the sum of the latest balances
-    const totalBalance = Array.from(balanceMap.values()).reduce((sum, amount) => sum + amount, 0);
-    let dswithdrawal = 0, charge = 0;
-    if(date && branchId){
-     dswithdrawal = await getAllDailyDSAccountWithdrawalByDate(date,branchId) ;
-     charge = await getAllDailyDSAccountChargeByDate(date,branchId);
-    }else{
-        dswithdrawal = await getAllDailyDSAccountWithdrawal()
-        charge = await getAllDailyDSAccountCharge()
-    }
+    // const totalBalance = Array.from(balanceMap.values()).reduce((sum, balance) => sum + balance, 0);
+     const dswithdrawal = await getAllDailyDSAccountWithdrawalByDate(date,branchId) ;
+     const charge = await getAllDailyDSAccountChargeByDate(date,branchId);
+ 
 
     const Withdrawal = dswithdrawal + charge
-    console.log("total",totalBalance-Withdrawal)
     
     return totalBalance - Withdrawal ;
 }
@@ -202,279 +214,220 @@ async function getAllDailyDSAccountCharge(date = null, branchId = null) {
 async function getAllDailyDSAccountWithdrawal(date = null, branchId = null) {
     let query = { package: 'DS', direction: 'Debit' };
     
-    if (!date) {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const endOfToday = new Date();
-        endOfToday.setHours(23, 59, 59, 999);
-        query.createdAt = { $gte: today, $lte: endOfToday };
-    } else {
-        const startDate = new Date(date);
-        startDate.setHours(0, 0, 0, 0);
-        const endDate = new Date(date);
-        endDate.setHours(23, 59, 59, 999);
-        query.createdAt = { $gte: startDate, $lte: endDate };
-    }
+    const targetDate = date ? new Date(date) : new Date();
+
+    // Set start of day
+    const startDate = new Date(targetDate);
+    startDate.setHours(0, 0, 0, 0);
+    
+    // Set end of day
+    const endDate = new Date(targetDate);
+    endDate.setHours(23, 59, 59, 999);
+    
+    query.createdAt = { $gte: startDate, $lte: endDate };
     
     if (branchId) {
         query.branchId = branchId;
     }
+    // Get all matching debit transactions
     const transactions = await AccountTransaction.find(query);
-    
-    // Sort transactions by createdAt in ascending order
-    transactions.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    
-    // Use a Map to store the latest balance for each accountTypeId
-    const balanceMap = new Map();
-    
-    transactions.forEach(tx => {
-        balanceMap.set(tx.accountTypeId, tx.amount);
-    });
-    
-    // Calculate the sum of the latest balances
-    const totalBalance = Array.from(balanceMap.values()).reduce((sum, amount) => sum + amount, 0);
-    
+  
+    // Calculate the total amount of all debit transactions
+    const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0);
+  
     return totalBalance;
 }
 async function getAllDailyDSAccountChargeByDate(date = null, branchId = null) {
     let query = { package: 'DS', direction: 'Charge' };
     
-    if (!date) {
-        const today = new Date();
-        today.setHours(23, 59, 59, 999);
-        query.createdAt = { $lte: today };
-    } else {
-        const endDate = new Date(date);
-        endDate.setHours(23, 59, 59, 999);
-        query.createdAt = { $lte: endDate };
-    }
+   
+    const targetDate = date ? new Date(date) : new Date();
+
+    // Set start of day
+    const startDate = new Date(targetDate);
+    startDate.setHours(0, 0, 0, 0);
     
+    // Set end of day
+    const endDate = new Date(targetDate);
+    endDate.setHours(23, 59, 59, 999);
+    
+    query.createdAt = { $gte: startDate, $lte: endDate };
+    
+  
+    // Filter by branch if provided
     if (branchId) {
-        query.branchId = branchId;
+      query.branchId = branchId;
     }
+    // Get all matching debit transactions
     const transactions = await AccountTransaction.find(query);
-    
-    // Sort transactions by createdAt in ascending order
-    transactions.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    
-    // Use a Map to store the latest balance for each accountTypeId
-    const balanceMap = new Map();
-    
-    transactions.forEach(tx => {
-        balanceMap.set(tx.accountTypeId, tx.amount);
-    });
-    
-    // Calculate the sum of the latest balances
-    const totalBalance = Array.from(balanceMap.values()).reduce((sum, amount) => sum + amount, 0);
+  
+    // Calculate the total amount of all debit transactions
+    const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0);
     
     return totalBalance;
 }
 async function getAllDailyDSAccountWithdrawalByDate(date = null, branchId = null) {
     let query = { package: 'DS', direction: 'Debit' };
+  
+    const targetDate = date ? new Date(date) : new Date();
+
+    // Set start of day
+    const startDate = new Date(targetDate);
+    startDate.setHours(0, 0, 0, 0);
     
-    if (!date) {
-        const today = new Date();
-        today.setHours(23, 59, 59, 999);
-        query.createdAt = { $lte: today };
-    } else {
-        const endDate = new Date(date);
-        endDate.setHours(23, 59, 59, 999);
-        query.createdAt = { $lte: endDate };
-    }
+    // Set end of day
+    const endDate = new Date(targetDate);
+    endDate.setHours(23, 59, 59, 999);
     
+    query.createdAt = { $gte: startDate, $lte: endDate };
+    
+  
+    // Filter by branch if provided
     if (branchId) {
-        query.branchId = branchId;
+      query.branchId = branchId;
     }
+  
+    // Get all matching debit transactions
     const transactions = await AccountTransaction.find(query);
-    
-    // Sort transactions by createdAt in ascending order
-    transactions.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    
-    // Use a Map to store the latest balance for each accountTypeId
-    const balanceMap = new Map();
-    
-    transactions.forEach(tx => {
-        balanceMap.set(tx.accountTypeId, tx.amount);
-    });
-    
-    // Calculate the sum of the latest balances
-    const totalBalance = Array.from(balanceMap.values()).reduce((sum, amount) => sum + amount, 0);
-    
+  
+    // Calculate the total amount of all debit transactions
+    const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0);
+  
     return totalBalance;
-}
+  }
+  
 
 
 async function getAllDailySBAccount(date = null, branchId = null) {
     let query = { package: 'SB', direction: 'Credit' };
+    // Filter by date if provided or default to today
+    const targetDate = date ? new Date(date) : new Date();
+ 
+    // Set start of day
+    const startDate = new Date(targetDate);
+    startDate.setHours(0, 0, 0, 0);
     
-    if (!date) {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const endOfToday = new Date();
-        endOfToday.setHours(23, 59, 59, 999);
-        query.createdAt = { $gte: today, $lte: endOfToday };
-    } else {
-        const startDate = new Date(date);
-        startDate.setHours(0, 0, 0, 0);
-        const endDate = new Date(date);
-        endDate.setHours(23, 59, 59, 999);
-        query.createdAt = { $gte: startDate, $lte: endDate };
-    }
+    // Set end of day
+    const endDate = new Date(targetDate);
+    endDate.setHours(23, 59, 59, 999);
     
-    if (branchId) {
-        query.branchId = branchId;
-    }
-    const transactions = await AccountTransaction.find(query);
+    query.createdAt = { $gte: startDate, $lte: endDate };
     
-    // Sort transactions by createdAt in ascending order
-    transactions.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+     
+     if (branchId) {
+         query.branchId = branchId;
+     }
+     const transactions = await AccountTransaction.find(query);
     
-    // Use a Map to store the latest balance for each accountTypeId
-    const balanceMap = new Map();
-    
-    transactions.forEach(tx => {
-        balanceMap.set(tx.accountTypeId, tx.amount);
-    });
-    
-    // Calculate the sum of the latest balances
-    const totalBalance = Array.from(balanceMap.values()).reduce((sum, amount) => sum + amount, 0);
-    let sbwithdrawal = 0
-    if(date && branchId){
-    sbwithdrawal = await getAllDailySBAccountWithdrawalByDate(date,branchId)
-    }else{
-    sbwithdrawal = await getAllDailySBAccountWithdrawal()
-    }
-    
-    return totalBalance - sbwithdrawal;
+     // Sum up all withdrawal amounts directly
+     const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0) || 0;
+      const sbwithdrawal = await getAllDailySBAccountWithdrawalByDate(date,branchId) ;
+     
+     return totalBalance - sbwithdrawal ;
 }
 
 async function getAllDailySBAccountWithdrawal(date = null, branchId = null) {
+    
     let query = { package: 'SB', direction: 'Debit' };
+  
+    const targetDate = date ? new Date(date) : new Date();
+
+    // Set start of day
+    const startDate = new Date(targetDate);
+    startDate.setHours(0, 0, 0, 0);
     
-    if (!date) {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const endOfToday = new Date();
-        endOfToday.setHours(23, 59, 59, 999);
-        query.createdAt = { $gte: today, $lte: endOfToday };
-    } else {
-        const startDate = new Date(date);
-        startDate.setHours(0, 0, 0, 0);
-        const endDate = new Date(date);
-        endDate.setHours(23, 59, 59, 999);
-        query.createdAt = { $gte: startDate, $lte: endDate };
-    }
+    // Set end of day
+    const endDate = new Date(targetDate);
+    endDate.setHours(23, 59, 59, 999);
     
+    query.createdAt = { $gte: startDate, $lte: endDate };
+    
+  
+    // Filter by branch if provided
     if (branchId) {
-        query.branchId = branchId;
+      query.branchId = branchId;
     }
+  
+    // Get all matching debit transactions
     const transactions = await AccountTransaction.find(query);
-    
-    // Sort transactions by createdAt in ascending order
-    transactions.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    
-    // Use a Map to store the latest balance for each accountTypeId
-    const balanceMap = new Map();
-    
-    transactions.forEach(tx => {
-        balanceMap.set(tx.accountTypeId, tx.amount);
-    });
-    
-    // Calculate the sum of the latest balances
-    const totalBalance = Array.from(balanceMap.values()).reduce((sum, amount) => sum + amount, 0);
-    
+  
+    // Calculate the total amount of all debit transactions
+    const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0);
+  
     return totalBalance;
 }
 async function getAllDailySBAccountWithdrawalByDate(date = null, branchId = null) {
     let query = { package: 'SB', direction: 'Debit' };
+  
+    const targetDate = date ? new Date(date) : new Date();
+
+    // Set start of day
+    const startDate = new Date(targetDate);
+    startDate.setHours(0, 0, 0, 0);
     
-    if (!date) {
-        const today = new Date();
-        today.setHours(23, 59, 59, 999);
-        query.createdAt = { $lte: today };
-    } else {
-        const endDate = new Date(date);
-        endDate.setHours(23, 59, 59, 999);
-        query.createdAt = { $lte: endDate };
-    }
+    // Set end of day
+    const endDate = new Date(targetDate);
+    endDate.setHours(23, 59, 59, 999);
     
+    query.createdAt = { $gte: startDate, $lte: endDate };
+    
+  
+    // Filter by branch if provided
     if (branchId) {
-        query.branchId = branchId;
+      query.branchId = branchId;
     }
+  
+    // Get all matching debit transactions
     const transactions = await AccountTransaction.find(query);
-    
-    // Sort transactions by createdAt in ascending order
-    transactions.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    
-    // Use a Map to store the latest balance for each accountTypeId
-    const balanceMap = new Map();
-    
-    transactions.forEach(tx => {
-        balanceMap.set(tx.accountTypeId, tx.amount);
-    });
-    
-    // Calculate the sum of the latest balances
-    const totalBalance = Array.from(balanceMap.values()).reduce((sum, amount) => sum + amount, 0);
-    
+  
+    // Calculate the total amount of all debit transactions
+    const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0);
+  
     return totalBalance;
 }
 async function getSBAccountIncome(date = null, branchId = null) {
-    let query = { package: 'SB', direction: 'Credit' };
-    
-    if (!date) {
-        const todayStart = new Date();
-        todayStart.setHours(0, 0, 0, 0);
-        const todayEnd = new Date();
-        todayEnd.setHours(23, 59, 59, 999);
-        query.createdAt = { $gte: todayStart, $lte: todayEnd };
-    } else {
-        const startDate = new Date(date);
-        startDate.setHours(0, 0, 0, 0);
-        const endDate = new Date(date);
-        endDate.setHours(23, 59, 59, 999);
-        query.createdAt = { $gte: startDate, $lte: endDate };
-    }
-    
+    const endDate = date ? new Date(date) : new Date();
+    endDate.setHours(23, 59, 59, 999);
+  
+    const query = {
+      package: 'SB',
+      direction: 'Credit',
+      createdAt: { $lte: endDate },
+    };
+  
     if (branchId) {
-        query.branchId = branchId;
+      query.branchId = branchId;
     }
-    
+  
     const transactions = await SureBankAccount.find(query);
-    
-    // Calculate the sum of all amounts
+  
     const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0);
-    
+  
     return totalBalance;
-}
+  }
+  
 
 async function getDSAccountIncome(date = null, branchId = null) {
-    let query = { package: 'DS', direction: 'Credit' };
-    
-    if (!date) {
-        const todayStart = new Date();
-        todayStart.setHours(0, 0, 0, 0);
-        const todayEnd = new Date();
-        todayEnd.setHours(23, 59, 59, 999);
-        query.createdAt = { $gte: todayStart, $lte: todayEnd };
-    } else {
-        const startDate = new Date(date);
-        startDate.setHours(0, 0, 0, 0);
-        const endDate = new Date(date);
-        endDate.setHours(23, 59, 59, 999);
-        query.createdAt = { $gte: startDate, $lte: endDate };
-    }
-    
+    const endDate = date ? new Date(date) : new Date();
+    endDate.setHours(23, 59, 59, 999);
+  
+    const query = {
+      package: 'DS',
+      direction: 'Credit',
+      createdAt: { $lte: endDate },
+    };
+  
     if (branchId) {
-        query.branchId = branchId;
+      query.branchId = branchId;
     }
-    
+  
     const transactions = await SureBankAccount.find(query);
-    
-    // Calculate the sum of all amounts
+  
     const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0);
-    
+  
     return totalBalance;
-}
+  }
+  
 async function getAllSBandDSIncome(date = null, branchId = null) {
 
     const DS = await getDSAccountIncome(date,branchId)
@@ -493,21 +446,96 @@ async function getAllDailySBandDSAccount(date = null, branchId = null) {
     return totalContribution;
 }
 
-async function getAllDSAccountPackage() {
-    const countPackage = await DSAccount.countDocuments({});
-    
-    return countPackage 
+async function getAllDSAccountPackage(date = null, branchId = null) {
+    // Use today's date if none is provided
+    const endDate = date ? new Date(date) : new Date();
+    endDate.setHours(23, 59, 59, 999); // Include the full day
+  
+    // Build query with date filter
+    const query = {
+      createdAt: { $lte: endDate },
+    };
+  
+    // Optionally filter by branch
+    if (branchId) {
+      query.branchId = branchId;
+    }
+  
+    // Count matching documents
+    const countPackage = await DSAccount.countDocuments(query);
+    return countPackage;
+  }
+  
+  
+async function getAllSBAccountPackage(date = null, branchId = null) {
+    // Use today's date if none is provided
+    const endDate = date ? new Date(date) : new Date();
+    endDate.setHours(23, 59, 59, 999); // Include the full day
+  
+    // Build query with date filter
+    const query = {
+      createdAt: { $lte: endDate },
+    };
+  
+    // Optionally filter by branch
+    if (branchId) {
+      query.branchId = branchId;
+    }
+  
+    // Count matching documents
+    const countPackage = await SBAccount.countDocuments(query);
+    return countPackage;
 }
-async function getAllSBAccountPackage() {
-    const countPackage = await SBAccount.countDocuments({});
-    
-    return countPackage 
-}
-async function getAllAccountPackage() {
-const sbPackage = await getAllSBAccountPackage()    
-const dsPackage = await getAllDSAccountPackage()    
+async function getAllAccountPackage(date = null, branchId = null) {
+const sbPackage = await getAllSBAccountPackage(date,branchId)    
+const dsPackage = await getAllDSAccountPackage(date,branchId)    
 const packages = sbPackage + dsPackage
     return packages 
+}
+async function getAllExpenditure(date = null, branchId = null) {
+    // Use today's date if none is provided
+    const endDate = date ? new Date(date) : new Date();
+    endDate.setHours(23, 59, 59, 999); // Include the full day
+  
+    // Build query with date filter
+    const query = {
+      createdAt: { $lte: endDate },
+    };
+  
+    // Optionally filter by branch
+    if (branchId) {
+      query.branchId = branchId;
+    }
+  
+    // Count matching documents
+    const expenditures = await Expenditure.find(query);
+  
+    const totalExpenditure = expenditures.reduce((sum, tx) => sum + tx.amount, 0);
+  
+    return totalExpenditure;
+}
+async function getProfit(date = null, branchId = null) {
+    // Use today's date if none is provided
+    const endDate = date ? new Date(date) : new Date();
+    endDate.setHours(23, 59, 59, 999); // Include the full day
+  
+    // Build query with date filter
+    const query = {
+      createdAt: { $lte: endDate },
+    };
+  
+    // Optionally filter by branch
+    if (branchId) {
+      query.branchId = branchId;
+    }
+  
+    // Count matching documents
+    const income = await getAllSBandDSIncome(date,branchId)
+    const expenditure = await getAllExpenditure(date,branchId)
+  
+    const profit = income - expenditure
+  
+    return profit;
 }
 
   module.exports = {
@@ -531,5 +559,7 @@ const packages = sbPackage + dsPackage
     getAllAccountPackage,
     getSBAccountIncome,
     getDSAccountIncome,
-    getAllSBandDSIncome
+    getAllSBandDSIncome,
+    getAllExpenditure,
+    getProfit
   };

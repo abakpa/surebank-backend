@@ -84,10 +84,7 @@ const getCustomerDSAccountById = async (customerId) =>{
       DSAccountNumber: contributionInput.DSAccountNumber,
       accountType: contributionInput.accountType,
     });
-  
-    if (!dsaccount) {
-      throw new error('Customer does not have an active package');
-    }
+
   
     // Validate contribution amount against the daily savings package
     if (contributionInput.amountPerDay % dsaccount.amountPerDay !== 0) {
@@ -246,7 +243,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         totalContribution: excessBalance - charge,
         totalCount: excessCount,
       });
-    
+  
       return { data: newContribution, message: "Contribution successful" };
     }
   
@@ -314,6 +311,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         totalContribution: 0,
         totalCount: 0,
       });
+   
       return ('Transaction successful');
 
     }else{
@@ -404,6 +402,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         totalContribution: 0,
         totalCount: 0,
       });
+    
       return ('Transaction successful');
       
     }
@@ -424,7 +423,10 @@ const getCustomerDSAccountById = async (customerId) =>{
       await DSAccount.findByIdAndUpdate(DSAccountId, {
         totalContribution: dsaccount.totalContribution + contributionInput.amountPerDay,
       });
-  
+      const DSBalanceData = {
+        balance: contributionInput.amountPerDay,
+        branchId: dsaccount.branchId
+      };
       const newContribution = await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
         amount: contributionInput.amountPerDay,
@@ -504,6 +506,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         hasBeenCharged: "true",
         totalContribution: contributionInput.amountPerDay - chargeAmount,
       });
+  
       // Update total contribution count
       await DSAccount.findByIdAndUpdate(DSAccountId, {
         $set: { totalCount },
@@ -579,7 +582,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         date: formattedDate,
         narration: "From DS account",
         package:"DS",
-        direction: "Credit",
+        direction: "DSTRANSFER",
       });
   
       await Account.findOneAndUpdate(

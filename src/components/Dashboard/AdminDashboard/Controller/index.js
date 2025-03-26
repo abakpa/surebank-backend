@@ -136,25 +136,46 @@ const bcrypt = require('bcrypt')
         }
       }
       const getAllDSAccountPackage = async (req, res) => {
+        const {date,branchId} = req.body
         try {
-            const DSAccount = await accountTransactionService.getAllDSAccountPackage();
+            const DSAccount = await accountTransactionService.getAllDSAccountPackage(date,branchId);
             res.status(200).json(DSAccount);
         } catch (error) {
             res.status(500).json({ message: error.message });
         }
       }
       const getAllSBAccountPackage = async (req, res) => {
+        const {date,branchId} = req.body
         try {
-            const SBAccount = await accountTransactionService.getAllSBAccountPackage();
+            const SBAccount = await accountTransactionService.getAllSBAccountPackage(date,branchId);
             res.status(200).json(SBAccount);
         } catch (error) {
             res.status(500).json({ message: error.message });
         }
       }
       const getAllAccountPackage = async (req, res) => {
+        const {date,branchId} = req.body
         try {
-            const packages = await accountTransactionService.getAllAccountPackage();
+            const packages = await accountTransactionService.getAllAccountPackage(date,branchId);
             res.status(200).json(packages);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
+      const getAllExpenditure = async (req, res) => {
+        const {date,branchId} = req.body
+        try {
+            const expenditure = await accountTransactionService.getAllExpenditure(date,branchId);
+            res.status(200).json(expenditure);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
+      const getProfit = async (req, res) => {
+        const {date,branchId} = req.body
+        try {
+            const profit = await accountTransactionService.getProfit(date,branchId);
+            res.status(200).json(profit);
         } catch (error) {
             res.status(500).json({ message: error.message });
         }
@@ -178,5 +199,7 @@ const bcrypt = require('bcrypt')
     getAllAccountPackage,
     getSBAccountIncome,
     getDSAccountIncome,
-    getAllSBandDSIncome
+    getAllSBandDSIncome,
+    getAllExpenditure,
+    getProfit
   };
