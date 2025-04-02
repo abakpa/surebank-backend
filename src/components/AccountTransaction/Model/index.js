@@ -1,6 +1,11 @@
 const mongoose = require('mongoose');
 
 const accountTransactionSchema = new mongoose.Schema({
+  customerId: { 
+    type: String, 
+    ref:'Customer',
+    required: true 
+},
   accountNumber: { 
     type: String, 
     required: true 
@@ -11,6 +16,7 @@ const accountTransactionSchema = new mongoose.Schema({
 },
   createdBy: {
     type: String,
+    ref:'Staff',
     required: true,
   },
   accountManagerId: {
@@ -19,6 +25,7 @@ const accountTransactionSchema = new mongoose.Schema({
   },
   branchId: { 
     type: String, 
+    ref:'Branch'
   },
   date: { 
     type: String, 

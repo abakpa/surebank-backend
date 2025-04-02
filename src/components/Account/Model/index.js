@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const accountSchema = new mongoose.Schema({
   customerId: {
     type: String,
+    ref:'Customer',
     required: true
   },
   accountNumber: { 

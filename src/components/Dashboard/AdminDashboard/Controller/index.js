@@ -3,8 +3,9 @@ require('dotenv').config()
 const bcrypt = require('bcrypt')
  
       const getAllDSAccount = async (req, res) => {
+        const {date,branchId} = req.body
         try {
-            const DSAccount = await accountTransactionService.getAllDSAccount();
+            const DSAccount = await accountTransactionService.getAllDSAccount(date,branchId);
             res.status(200).json(DSAccount);
         } catch (error) {
             res.status(500).json({ message: error.message });
@@ -29,8 +30,9 @@ const bcrypt = require('bcrypt')
       }
  
       const getAllSBAccount = async (req, res) => {
+        const {date,branchId} = req.body
         try {
-            const SBAccount = await accountTransactionService.getAllSBAccount();
+            const SBAccount = await accountTransactionService.getAllSBAccount(date,branchId);
             res.status(200).json(SBAccount);
         } catch (error) {
             res.status(500).json({ message: error.message });
@@ -45,8 +47,9 @@ const bcrypt = require('bcrypt')
         }
       }
       const getAllContribution = async (req, res) => {
+        const {date,branchId} = req.body
         try {
-            const totalContribution = await accountTransactionService.getAllSBandDSAccount();
+            const totalContribution = await accountTransactionService.getAllSBandDSAccount(date,branchId);
             res.status(200).json(totalContribution);
         } catch (error) {
             res.status(500).json({ message: error.message });
@@ -204,6 +207,16 @@ const bcrypt = require('bcrypt')
             res.status(500).json({ message: error.message });
         }
       }
+      const getTransaction = async (req, res) => {
+    const createdBy = req.staff.staffId;
+
+        try {
+            const transaction = await accountTransactionService.getTransaction(createdBy);
+            res.status(200).json(transaction);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
 
   module.exports = {
     getAllDSAccount,
@@ -229,4 +242,5 @@ const bcrypt = require('bcrypt')
     getSBIncomeReport,
     getDSIncomeReport,
     getExpenditureReport,
+    getTransaction,
   };

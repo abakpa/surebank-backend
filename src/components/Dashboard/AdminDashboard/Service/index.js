@@ -588,6 +588,41 @@ const getExpenditureReport = async () => {
       throw new Error('Failed to retrieve SB income report');
     }
   };
+  const getTransaction = async (createdBy) => {
+    try {
+      if (!createdBy) {
+        throw new Error("createdBy is required");
+      }
+  
+      // Fetch transactions and populate createdBy and customer details
+      const transactions = await AccountTransaction.find({
+        package: { $in: ['SB', 'DS'] }, // Match either 'SB' or 'DS'
+        direction: { $in: ['Debit', 'Credit'] }, // Match either 'Debit' or 'Credit'
+        createdBy, // Ensuring createdBy is always included
+      })
+        .populate({
+          path: 'createdBy', // Populate createdBy to get branch details
+          model: 'Staff'
+        })
+          .populate ({
+            path: 'branchId',
+            model: 'Branch',
+          
+        })
+        .populate({
+          path: 'customerId', // Populate customer details using customerId directly in AccountTransaction
+          model: 'Customer',
+        })
+        .sort({ createdAt: -1 });
+  
+      return transactions;
+    } catch (error) {
+      console.error('Error fetching transactions:', error);
+      throw new Error('Failed to retrieve transactions');
+    }
+  };
+  
+  
   
 
   module.exports = {
@@ -617,4 +652,5 @@ const getExpenditureReport = async () => {
     getSBIncomeReport,
     getDSIncomeReport,
     getExpenditureReport,
+    getTransaction,
   };

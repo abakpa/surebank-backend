@@ -136,6 +136,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
 
             const newContribution = await AccountTransaction.DepositTransactionAccount({
                 createdBy: contributionInput.createdBy,
+                customerId:sbaccount.customerId,
                 amount: contributionInput.amount,
                 balance: sbaccount.balance + contributionInput.amount,
                 branchId: sbaccount.branchId,
@@ -206,6 +207,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
       
           const newContribution = await AccountTransaction.DepositTransactionAccount({
             createdBy: contributionInput.createdBy,
+            customerId:sbaccount.customerId,
             amount: contributionInput.amount,
             balance: newBalance,
             branchId: sbaccount.branchId,
@@ -282,6 +284,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
       
           const newContribution = await AccountTransaction.DepositTransactionAccount({
             createdBy: contributionInput.createdBy,
+            customerId:sbaccount.customerId,
             amount: sbaccount.sellingPrice,
             balance: newBalance,
             branchId: sbaccount.branchId,

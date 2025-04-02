@@ -18,9 +18,17 @@ const getDSAccountByAccountNumber = async (accountNumber) => {
         throw error;
     }
   }
+  const getTransaction = async () =>{
+    try {
+        return await AccountTransaction.find({});
+    } catch (error) {
+        throw error;
+    }
+  }
   module.exports = {
     DepositTransactionAccount,
     getDSAccountByAccountNumber,
-    getCustomerAcountTransactionById
+    getCustomerAcountTransactionById,
+    getTransaction
 
   };

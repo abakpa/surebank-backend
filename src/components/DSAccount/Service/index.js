@@ -161,6 +161,7 @@ const getCustomerDSAccountById = async (customerId) =>{
       
       await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
+        customerId: dsaccount.customerId,
         amount: contributionInput.amountPerDay,
         balance: dsaccount.totalContribution + contributionInput.amountPerDay,
         branchId: dsaccount.branchId,
@@ -175,6 +176,7 @@ const getCustomerDSAccountById = async (customerId) =>{
     
       await AccountTransaction.DepositTransactionAccount({
         accountNumber: dsaccount.accountNumber,
+        customerId: dsaccount.customerId,
         amount: totalContribution,
         balance: excessBalance,
         createdBy: dsaccount.createdBy,
@@ -189,6 +191,7 @@ const getCustomerDSAccountById = async (customerId) =>{
     
       await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
+        customerId: dsaccount.customerId,
         amount: totalContribution,
         balance: account.availableBalance + totalContribution,
         branchId: account.branchId,
@@ -213,6 +216,7 @@ const getCustomerDSAccountById = async (customerId) =>{
     
       const newContribution = await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
+        customerId: dsaccount.customerId,
         amount: charge,
         balance: excessBalance - charge,
         branchId: dsaccount.branchId,
@@ -257,6 +261,7 @@ const getCustomerDSAccountById = async (customerId) =>{
 
       await AccountTransaction.DepositTransactionAccount({
        createdBy: contributionInput.createdBy,
+       customerId: dsaccount.customerId,
        amount: contributionInput.amountPerDay,
        balance: dsaccount.totalContribution + contributionInput.amountPerDay,
        branchId: dsaccount.branchId,
@@ -270,6 +275,7 @@ const getCustomerDSAccountById = async (customerId) =>{
      });
       const finalContribution = await AccountTransaction.DepositTransactionAccount({
         accountNumber: dsaccount.accountNumber,
+        customerId: dsaccount.customerId,
         amount: dsaccount.totalContribution + contributionInput.amountPerDay,
         balance: 0,
         createdBy: dsaccount.createdBy,
@@ -283,6 +289,7 @@ const getCustomerDSAccountById = async (customerId) =>{
       });
       const toAvailableBalance = await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
+        customerId: dsaccount.customerId,
         amount:  dsaccount.totalContribution + contributionInput.amountPerDay,
         balance: account.availableBalance + dsaccount.totalContribution + contributionInput.amountPerDay,
         branchId: account.branchId,
@@ -320,6 +327,7 @@ const getCustomerDSAccountById = async (customerId) =>{
       await AccountTransaction.DepositTransactionAccount({
        createdBy: contributionInput.createdBy,
        amount: contributionInput.amountPerDay,
+       customerId: dsaccount.customerId,
        balance: dsaccount.totalContribution + contributionInput.amountPerDay,
        branchId: dsaccount.branchId,
        accountManagerId: dsaccount.accountManagerId,
@@ -336,6 +344,7 @@ const getCustomerDSAccountById = async (customerId) =>{
        createdBy: contributionInput.createdBy,
        amount: chargeAmount,
        balance: contributionInput.amountPerDay - chargeAmount,
+       customerId: dsaccount.customerId,
        branchId: dsaccount.branchId,
        accountManagerId: dsaccount.accountManagerId,
        accountNumber: dsaccount.accountNumber,
@@ -364,6 +373,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         amount: (dsaccount.totalContribution + contributionInput.amountPerDay)-dsaccount.amountPerDay,
         balance: 0,
         createdBy: dsaccount.createdBy,
+        customerId: dsaccount.customerId,
         narration: "Total DS",
         accountTypeId: DSAccountId,
         accountManagerId: dsaccount.accountManagerId,
@@ -374,6 +384,7 @@ const getCustomerDSAccountById = async (customerId) =>{
       });
       const toAvailableBalance = await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
+        customerId: dsaccount.customerId,
         amount:  (dsaccount.totalContribution + contributionInput.amountPerDay)-dsaccount.amountPerDay,
         balance: (account.availableBalance + dsaccount.totalContribution + contributionInput.amountPerDay)-dsaccount.amountPerDay,
         branchId: account.branchId,
@@ -429,6 +440,7 @@ const getCustomerDSAccountById = async (customerId) =>{
       };
       const newContribution = await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
+        customerId: dsaccount.customerId,
         amount: contributionInput.amountPerDay,
         balance: dsaccount.totalContribution + contributionInput.amountPerDay,
         branchId: dsaccount.branchId,
@@ -453,6 +465,7 @@ const getCustomerDSAccountById = async (customerId) =>{
 
        await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
+        customerId: dsaccount.customerId,
         amount: contributionInput.amountPerDay,
         balance: dsaccount.totalContribution + contributionInput.amountPerDay,
         branchId: dsaccount.branchId,
@@ -468,6 +481,7 @@ const getCustomerDSAccountById = async (customerId) =>{
       // Log the charge as a new contribution
       const newContribution = await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
+        customerId: dsaccount.customerId,
         amount: chargeAmount,
         balance: contributionInput.amountPerDay - chargeAmount,
         branchId: dsaccount.branchId,
@@ -560,6 +574,7 @@ const getCustomerDSAccountById = async (customerId) =>{
   
       const newContribution = await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
+        customerId: dsaccount.customerId,
         amount: contributionInput.amountPerDay,
         balance: 0,
         branchId: dsaccount.branchId,
@@ -573,6 +588,7 @@ const getCustomerDSAccountById = async (customerId) =>{
       });
       await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
+        customerId: dsaccount.customerId,
         amount:  newBalance,
         balance: account.availableBalance + newBalance,
         branchId: account.branchId,
@@ -639,6 +655,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         amount: contributionInput.amountPerDay,
         balance: account.availableBalance - contributionInput.amountPerDay,
         branchId: account.branchId,
+        customerId: account.customerId,
         accountManagerId: account.accountManagerId,
         accountNumber: account.accountNumber,
         accountTypeId: account._id,

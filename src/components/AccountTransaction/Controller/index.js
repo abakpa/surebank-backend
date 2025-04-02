@@ -6,7 +6,7 @@ const bcrypt = require('bcrypt')
  
       const getAccountTransaction = async (req, res) => {
         try {
-            const customers = await accountTransactionService.getCustomers();
+            const customers = await accountTransactionService.getTransaction();
             res.status(200).json(customers);
         } catch (error) {
             res.status(500).json({ message: error.message });
