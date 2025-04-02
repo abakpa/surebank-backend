@@ -180,6 +180,30 @@ const bcrypt = require('bcrypt')
             res.status(500).json({ message: error.message });
         }
       }
+      const getSBIncomeReport = async (req, res) => {
+        try {
+            const SBIncomeReport = await accountTransactionService.getSBIncomeReport();
+            res.status(200).json(SBIncomeReport);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
+      const getDSIncomeReport = async (req, res) => {
+        try {
+            const DSIncomeReport = await accountTransactionService.getDSIncomeReport();
+            res.status(200).json(DSIncomeReport);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
+      const getExpenditureReport = async (req, res) => {
+        try {
+            const ExpenditureReport = await accountTransactionService.getExpenditureReport();
+            res.status(200).json(ExpenditureReport);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
 
   module.exports = {
     getAllDSAccount,
@@ -201,5 +225,8 @@ const bcrypt = require('bcrypt')
     getDSAccountIncome,
     getAllSBandDSIncome,
     getAllExpenditure,
-    getProfit
+    getProfit,
+    getSBIncomeReport,
+    getDSIncomeReport,
+    getExpenditureReport,
   };

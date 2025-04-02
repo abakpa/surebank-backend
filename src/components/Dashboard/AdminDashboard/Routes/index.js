@@ -24,6 +24,9 @@ router.post('/dsincome', AcountTransactionController.getDSAccountIncome);
 router.post('/totalincome', AcountTransactionController.getAllSBandDSIncome);
 router.post('/totalexpenditure', AcountTransactionController.getAllExpenditure);
 router.post('/profit', AcountTransactionController.getProfit);
+router.post('/sbincomereport', AcountTransactionController.getSBIncomeReport);
+router.post('/dsincomereport', AcountTransactionController.getDSIncomeReport);
+router.post('/expenditurereport', AcountTransactionController.getExpenditureReport);
 
 
 module.exports = router;

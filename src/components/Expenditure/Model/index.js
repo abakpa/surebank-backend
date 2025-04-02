@@ -11,10 +11,12 @@ const expenditureSchema = new mongoose.Schema({
 },
   branchId: {
     type: String,
+    ref:'Branch',
     required: true,
   },
   createdBy: {
     type: String,
+    ref:'Staff',
     required: true,
   },
 },

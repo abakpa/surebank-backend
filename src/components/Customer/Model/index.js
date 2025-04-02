@@ -20,6 +20,7 @@ const customerSchema = new mongoose.Schema({
   },
   branchId: { 
     type: String, 
+    ref:'Branch',
     required: true
 
   }

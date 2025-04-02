@@ -298,7 +298,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
                   package:"SB",
                   date: formattedDate,
                   direction: "Credit",
-                  narration: "DS Charge",
+                  narration: `Profit on ${sbaccount.productName}`,
                   branchId: sbaccount.branchId,
                   amount: sbaccount.profit,
                   customerId:sbaccount.customerId,

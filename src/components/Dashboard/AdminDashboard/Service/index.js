@@ -318,12 +318,12 @@ async function getAllDailySBAccount(date = null, branchId = null) {
          query.branchId = branchId;
      }
      const transactions = await AccountTransaction.find(query);
-    
+    // return transactions
      // Sum up all withdrawal amounts directly
      const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0) || 0;
-      const sbwithdrawal = await getAllDailySBAccountWithdrawalByDate(date,branchId) ;
+    //   const sbwithdrawal = await getAllDailySBAccountWithdrawalByDate(date,branchId) ;
      
-     return totalBalance - sbwithdrawal ;
+     return totalBalance  ;
 }
 
 async function getAllDailySBAccountWithdrawal(date = null, branchId = null) {
@@ -537,6 +537,58 @@ async function getProfit(date = null, branchId = null) {
   
     return profit;
 }
+const getSBIncomeReport = async () => {
+    try {
+      const report = await SureBankAccount.find({ package: 'SB' })
+        .populate({
+          path: 'customerId',
+          populate: {
+            path: 'branchId', 
+            model: 'Branch'
+          }
+        });
+  
+      return report;
+    } catch (error) {
+      console.error('Error fetching SB income report:', error);
+      throw new Error('Failed to retrieve SB income report');
+    }
+  };
+const getDSIncomeReport = async () => {
+    try {
+      const report = await SureBankAccount.find({ package: 'DS' })
+        .populate({
+          path: 'customerId',
+          populate: {
+            path: 'branchId', 
+            model: 'Branch'
+          }
+        });
+  
+      return report;
+    } catch (error) {
+      console.error('Error fetching DS income report:', error);
+      throw new Error('Failed to retrieve SB income report');
+    }
+  };
+const getExpenditureReport = async () => {
+    try {
+      const report = await Expenditure.find({})
+        .populate({
+          path: 'createdBy',
+          populate: {
+            path: 'branchId', 
+            model: 'Branch'
+          }
+        }).sort({ createdAt: -1 });
+  
+      return report;
+    } catch (error) {
+      console.error('Error fetching DS income report:', error);
+      throw new Error('Failed to retrieve SB income report');
+    }
+  };
+  
 
   module.exports = {
     getAllDSAccount,
@@ -561,5 +613,8 @@ async function getProfit(date = null, branchId = null) {
     getDSAccountIncome,
     getAllSBandDSIncome,
     getAllExpenditure,
-    getProfit
+    getProfit,
+    getSBIncomeReport,
+    getDSIncomeReport,
+    getExpenditureReport,
   };

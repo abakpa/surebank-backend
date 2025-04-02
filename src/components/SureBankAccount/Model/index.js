@@ -22,7 +22,8 @@ package: {
     required: true,
   },
   branchId: { 
-    type: String, 
+    type: String,
+    ref:'Branch' 
   },
   amount: { 
     type: Number, 
@@ -30,6 +31,7 @@ package: {
   },
   customerId: { 
     type: String, 
+    ref:'Customer',
     required: true
   },
 },
