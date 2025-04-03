@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const sbaccountSchema = new mongoose.Schema({
   customerId: {
     type: String,
+    ref:'Customer',
     required: true
   },
   accountNumber: { 
@@ -15,6 +16,7 @@ SBAccountNumber: {
 },
   createdBy: {
     type: String,
+    ref:'Staff',
     required: true,
   },
   productName: {
@@ -34,6 +36,7 @@ SBAccountNumber: {
   },
   branchId: { 
     type: String, 
+    ref:'Branch'
   },
   status: { 
     type: String, 

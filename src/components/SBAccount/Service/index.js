@@ -270,11 +270,6 @@ const getAccountByAccountNumber = async (accountNumber) => {
           throw new Error("Ask admin for approval");
         }
 
-        // if (sbaccount.sellingPrice > sbaccount.balance) {
-        //   throw new Error("Insuffitient balance");
-        // }
-      
-        // Retrieve and update ledger balance
         const account = await Account.findOne({ accountNumber: sbaccount.accountNumber });
       
         if (!account) {
@@ -320,7 +315,8 @@ const getAccountByAccountNumber = async (accountNumber) => {
           );
       
           await SBAccount.findByIdAndUpdate(SBAccountId, {
-            balance: newBalance
+            balance: newBalance,
+            status: 'sold'
           });
       
           return { data: newContribution, message: "Product sold successful" };

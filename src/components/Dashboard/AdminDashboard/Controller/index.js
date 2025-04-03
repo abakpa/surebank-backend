@@ -217,6 +217,16 @@ const bcrypt = require('bcrypt')
             res.status(500).json({ message: error.message });
         }
       }
+      const getOrder = async (req, res) => {
+    // const createdBy = req.staff.staffId;
+
+        try {
+            const order = await accountTransactionService.getOrder();
+            res.status(200).json(order);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
 
   module.exports = {
     getAllDSAccount,
@@ -243,4 +253,5 @@ const bcrypt = require('bcrypt')
     getDSIncomeReport,
     getExpenditureReport,
     getTransaction,
+    getOrder,
   };

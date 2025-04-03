@@ -621,6 +621,35 @@ const getExpenditureReport = async () => {
       throw new Error('Failed to retrieve transactions');
     }
   };
+  const getOrder = async () => {
+    try {
+  
+      // Fetch transactions and populate createdBy and customer details
+      const transactions = await SBAccount.find({})
+        .populate({
+          path: 'createdBy', // Populate createdBy to get branch details
+          model: 'Staff'
+        })
+          .populate ({
+            path: 'branchId',
+            model: 'Branch',
+          
+        })
+        .populate({
+          path: 'customerId', // Populate customer details using customerId directly in AccountTransaction
+          model: 'Customer',
+        })
+        .sort({ status: 1 }); // Sort alphabetically (but not guaranteed for "booked" first)
+
+    // Custom sorting: "booked" first, then "sold"
+    transactions.sort((a, b) => (a.status === "booked" ? -1 : 1));
+  
+      return transactions;
+    } catch (error) {
+      console.error('Error fetching transactions:', error);
+      throw new Error('Failed to retrieve transactions');
+    }
+  };
   
   
   
@@ -653,4 +682,5 @@ const getExpenditureReport = async () => {
     getDSIncomeReport,
     getExpenditureReport,
     getTransaction,
+    getOrder,
   };

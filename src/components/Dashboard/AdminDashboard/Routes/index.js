@@ -28,6 +28,7 @@ router.post('/sbincomereport', AcountTransactionController.getSBIncomeReport);
 router.post('/dsincomereport', AcountTransactionController.getDSIncomeReport);
 router.post('/expenditurereport', AcountTransactionController.getExpenditureReport);
 router.post('/transaction', staffAuth, AcountTransactionController.getTransaction);
+router.post('/order', staffAuth, AcountTransactionController.getOrder);
 
 
 module.exports = router;
