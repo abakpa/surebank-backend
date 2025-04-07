@@ -17,10 +17,20 @@ const getStaff = async () =>{
       throw error;
   }
 }
+const getBranchStaff = async (staff) =>{
+  const branch = await Staff.findOne({_id:staff})
+  const branchId = branch.branchId
+  try {
+      return await Staff.find({branchId:branchId});
+  } catch (error) {
+      throw error;
+  }
+}
 
 module.exports = {
     createStaff,
     getStaffByEmail,
     getStaff,
+    getBranchStaff,
     
   };

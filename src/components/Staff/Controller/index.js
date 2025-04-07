@@ -46,8 +46,18 @@ const getStaff = async (req, res) => {
         res.status(500).json({ message: error.message });
     }
   }
+const getBranchStaff = async (req, res) => {
+  const staffId = req.staff.staffId;
+    try {
+        const staff = await staffService.getBranchStaff(staffId);
+        res.status(200).json(staff);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+  }
 
   module.exports = {
     registerStaff,
     getStaff,
+    getBranchStaff,
   };

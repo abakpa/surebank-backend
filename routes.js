@@ -11,6 +11,7 @@ const fdaccountRoutes = require('./src/components/FDAccount/Routes/index');
 const accountRoutes = require('./src/components/Account/Routes/index');
 const accountTransactionRoutes = require('./src/components/AccountTransaction/Routes/index');
 const adminDashboard = require('./src/components/Dashboard/AdminDashboard/Routes/index');
+const managerDashboard = require('./src/components/Dashboard/ManagerDashboard/Routes/index');
 const expenditureRoutes = require('./src/components/Expenditure/Routes/index');
 
 
@@ -24,6 +25,7 @@ router.use('/api/fdaccount', fdaccountRoutes);
 router.use('/api/account', accountRoutes);
 router.use('/api/customertransaction', accountTransactionRoutes);
 router.use('/api/admindashboard', adminDashboard);
+router.use('/api/managerdashboard',managerDashboard);
 router.use('/api/expenditure', expenditureRoutes);
 
 

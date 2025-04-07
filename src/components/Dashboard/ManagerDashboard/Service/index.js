@@ -4,11 +4,14 @@ const DSAccount = require('../../../DSAccount/Model');
 const SBAccount = require('../../../SBAccount/Model');
 const SureBankAccount = require('../../../SureBankAccount/Model');
 const Expenditure = require('../../../Expenditure/Model');
+const Staff = require('../../../Staff/Model');
 
 
-async function getAllDSAccount(date = null, branchId = null) {
+async function getAllBranchDSAccount(date = null, staff) {
 
-    let query = { package: 'DS', direction: 'Credit' };
+    const branch = await Staff.findOne({_id:staff})
+    const branchId = branch.branchId
+    let query = { package: 'DS', direction: 'Credit',branchId:branchId };
     
    
     // Filter by date if provided or default to today
@@ -16,10 +19,6 @@ async function getAllDSAccount(date = null, branchId = null) {
     endDate.setHours(23, 59, 59, 999);
     query.createdAt = { $lte: endDate };
   
-    // Filter by branch if provided
-    if (branchId) {
-      query.branchId = branchId;
-    }
     const transactions = await AccountTransaction.find(query);
     
     // // Sort transactions by createdAt in ascending order
@@ -32,26 +31,24 @@ async function getAllDSAccount(date = null, branchId = null) {
     //     balanceMap.set(tx.accountTypeId, tx.balance);
     // });
     
-    // // Calculate the sum of the latest balances
-    // const totalBalance = Array.from(balanceMap.values()).reduce((sum, balance) => sum + balance, 0);
+    // Calculate the sum of the latest balances
     const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0) || 0;
-    const dswithdrawal = await getAllDSAccountWithdrawal(date,branchId);
-    const charge  = await getAllDSAccountCharge(date,branchId);
+    // const totalBalance = Array.from(balanceMap.values()).reduce((sum, balance) => sum + balance, 0);
+    const dswithdrawal = await getAllBranchDSAccountWithdrawal(date,staff);
+    const charge  = await getAllBranchDSAccountCharge(date,staff);
     const Withdrawal = dswithdrawal + charge
     
     return totalBalance - Withdrawal;
 }
-async function getAllDSAccountWithdrawal(date = null, branchId = null) {
-    let query = { package: 'DS', direction: 'Debit' };
+async function getAllBranchDSAccountWithdrawal(date = null, staff) {
+    const branch = await Staff.findOne({_id:staff})
+    const branchId = branch.branchId
+    let query = { package: 'DS', direction: 'Debit',branchId:branchId };
 
      // Filter by date if provided or default to today
      const endDate = date ? new Date(date) : new Date();
      endDate.setHours(23, 59, 59, 999);
      query.createdAt = { $lte: endDate };
-
-    if (branchId) {
-        query.branchId = branchId;
-    }
 
 
     const transactions = await AccountTransaction.find(query);
@@ -63,17 +60,15 @@ async function getAllDSAccountWithdrawal(date = null, branchId = null) {
 }
 
 
-async function getAllDSAccountCharge(date = null, branchId = null) {
-    let query = { package: 'DS', direction: 'Charge' };
+async function getAllBranchDSAccountCharge(date = null, staff) {
+    const branch = await Staff.findOne({_id:staff})
+    const branchId = branch.branchId
+    let query = { package: 'DS', direction: 'Charge',branchId };
        // Filter by date if provided or default to today
        const endDate = date ? new Date(date) : new Date();
        endDate.setHours(23, 59, 59, 999);
        query.createdAt = { $lte: endDate };
      
-       // Filter by branch if provided
-       if (branchId) {
-         query.branchId = branchId;
-       }
     const transactions = await AccountTransaction.find(query);
     
    // Sum up all charge amounts directly
@@ -82,8 +77,10 @@ async function getAllDSAccountCharge(date = null, branchId = null) {
     return totalBalance;
 }
 
-async function getAllSBAccount(date = null, branchId = null) {
-    let query = { package: 'SB', direction: 'Credit' };
+async function getAllBranchSBAccount(date = null, staff) {
+    const branch = await Staff.findOne({_id:staff})
+    const branchId = branch.branchId
+    let query = { package: 'SB', direction: 'Credit',branchId:branchId };
     
    
     // Filter by date if provided or default to today
@@ -91,10 +88,7 @@ async function getAllSBAccount(date = null, branchId = null) {
     endDate.setHours(23, 59, 59, 999);
     query.createdAt = { $lte: endDate };
   
-    // Filter by branch if provided
-    if (branchId) {
-      query.branchId = branchId;
-    }
+  
     const transactions = await AccountTransaction.find(query);
     
     // Sort transactions by createdAt in ascending order
@@ -110,21 +104,19 @@ async function getAllSBAccount(date = null, branchId = null) {
     // Calculate the sum of the latest balances
     // const totalBalance = Array.from(balanceMap.values()).reduce((sum, balance) => sum + balance, 0);
     const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0) || 0;
-    const SBWithdrawal = await getAllSBAccountWithdrawal(date,branchId)
+    const SBWithdrawal = await getAllBranchSBAccountWithdrawal(date,staff)
     
     return totalBalance - SBWithdrawal;
 }
-async function getAllSBAccountWithdrawal(date = null, branchId = null) {
-    let query = { package: 'DS', direction: 'Debit' };
+async function getAllBranchSBAccountWithdrawal(date = null, staff ) {
+    const branch = await Staff.findOne({_id:staff})
+    const branchId = branch.branchId
+    let query = { package: 'SB', direction: 'Debit',branchId:branchId };
 
      // Filter by date if provided or default to today
      const endDate = date ? new Date(date) : new Date();
      endDate.setHours(23, 59, 59, 999);
      query.createdAt = { $lte: endDate };
-
-    if (branchId) {
-        query.branchId = branchId;
-    }
 
 
     const transactions = await AccountTransaction.find(query);
@@ -134,16 +126,18 @@ async function getAllSBAccountWithdrawal(date = null, branchId = null) {
 
     return totalBalance;
 }
-async function getAllSBandDSAccount(date = null, branchId = null) {
-    
-  const DS = await getAllDSAccount(date,branchId)
-  const SB = await getAllSBAccount(date,branchId)
+async function getAllBranchSBandDSAccount(date = null, staff) {
+
+  const DS = await getAllBranchDSAccount(date,staff)
+  const SB = await getAllBranchSBAccount(date,staff)
   const totalContribution = DS + SB
     
     return totalContribution;
 }
-async function getAllDailyDSAccount(date = null, branchId = null) {
-    let query = { package: 'DS', direction: 'Credit' };
+async function getAllBranchDailyDSAccount(date = null, staff) {
+    const branch = await Staff.findOne({_id:staff})
+    const branchId = branch.branchId
+    let query = { package: 'DS', direction: 'Credit',branchId:branchId };
    // Filter by date if provided or default to today
    const targetDate = date ? new Date(date) : new Date();
 
@@ -156,11 +150,7 @@ async function getAllDailyDSAccount(date = null, branchId = null) {
    endDate.setHours(23, 59, 59, 999);
    
    query.createdAt = { $gte: startDate, $lte: endDate };
-   
-    
-    if (branchId) {
-        query.branchId = branchId;
-    }
+
     const transactions = await AccountTransaction.find(query);
     
  // Sum up all withdrawal amounts directly
@@ -168,79 +158,18 @@ async function getAllDailyDSAccount(date = null, branchId = null) {
     
     // Calculate the sum of the latest balances
     // const totalBalance = Array.from(balanceMap.values()).reduce((sum, balance) => sum + balance, 0);
-    //  const dswithdrawal = await getAllDailyDSAccountWithdrawalByDate(date,branchId) ;
-    //  const charge = await getAllDailyDSAccountChargeByDate(date,branchId);
+    //  const dswithdrawal = await getAllBranchDailyDSAccountWithdrawalByDate(date,staff) ;
+    //  const charge = await getAllBranchDailyDSAccountChargeByDate(date,staff);
  
 
     // const Withdrawal = dswithdrawal + charge
     
-    return totalBalance;
+    return totalBalance  ;
 }
-async function getAllDailyDSAccountCharge(date = null, branchId = null) {
-    let query = { package: 'DS', direction: 'Charge' };
-    
-    if (!date) {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const endOfToday = new Date();
-        endOfToday.setHours(23, 59, 59, 999);
-        query.createdAt = { $gte: today, $lte: endOfToday };
-    } else {
-        const startDate = new Date(date);
-        startDate.setHours(0, 0, 0, 0);
-        const endDate = new Date(date);
-        endDate.setHours(23, 59, 59, 999);
-        query.createdAt = { $gte: startDate, $lte: endDate };
-    }
-    
-    if (branchId) {
-        query.branchId = branchId;
-    }
-    const transactions = await AccountTransaction.find(query);
-    
-    // Sort transactions by createdAt in ascending order
-    transactions.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    
-    // Use a Map to store the latest balance for each accountTypeId
-    const balanceMap = new Map();
-    
-    transactions.forEach(tx => {
-        balanceMap.set(tx.accountTypeId, tx.amount);
-    });
-    
-    // Calculate the sum of the latest balances
-    const totalBalance = Array.from(balanceMap.values()).reduce((sum, amount) => sum + amount, 0);
-    
-    return totalBalance;
-}
-async function getAllDailyDSAccountWithdrawal(date = null, branchId = null) {
-    let query = { package: 'DS', direction: 'Debit' };
-    
-    const targetDate = date ? new Date(date) : new Date();
-
-    // Set start of day
-    const startDate = new Date(targetDate);
-    startDate.setHours(0, 0, 0, 0);
-    
-    // Set end of day
-    const endDate = new Date(targetDate);
-    endDate.setHours(23, 59, 59, 999);
-    
-    query.createdAt = { $gte: startDate, $lte: endDate };
-    
-    if (branchId) {
-        query.branchId = branchId;
-    }
-    // Get all matching debit transactions
-    const transactions = await AccountTransaction.find(query);
-  
-    // Calculate the total amount of all debit transactions
-    const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0);
-  
-    return totalBalance;
-}
-async function getAllDailyDSAccountChargeByDate(date = null, branchId = null) {
-    let query = { package: 'DS', direction: 'Charge' };
+async function getAllBranchDailyDSAccountChargeByDate(date = null, staff) {
+    const branch = await Staff.findOne({_id:staff})
+    const branchId = branch.branchId
+    let query = { package: 'DS', direction: 'Charge',branchId:branchId };
     
    
     const targetDate = date ? new Date(date) : new Date();
@@ -255,11 +184,8 @@ async function getAllDailyDSAccountChargeByDate(date = null, branchId = null) {
     
     query.createdAt = { $gte: startDate, $lte: endDate };
     
+
   
-    // Filter by branch if provided
-    if (branchId) {
-      query.branchId = branchId;
-    }
     // Get all matching debit transactions
     const transactions = await AccountTransaction.find(query);
   
@@ -268,8 +194,10 @@ async function getAllDailyDSAccountChargeByDate(date = null, branchId = null) {
     
     return totalBalance;
 }
-async function getAllDailyDSAccountWithdrawalByDate(date = null, branchId = null) {
-    let query = { package: 'DS', direction: 'Debit' };
+async function getAllBranchDailyDSAccountWithdrawalByDate(date = null, staff) {
+    const branch = await Staff.findOne({_id:staff})
+    const branchId = branch.branchId
+    let query = { package: 'DS', direction: 'Debit',branchId:branchId };
   
     const targetDate = date ? new Date(date) : new Date();
 
@@ -283,11 +211,7 @@ async function getAllDailyDSAccountWithdrawalByDate(date = null, branchId = null
     
     query.createdAt = { $gte: startDate, $lte: endDate };
     
-  
-    // Filter by branch if provided
-    if (branchId) {
-      query.branchId = branchId;
-    }
+
   
     // Get all matching debit transactions
     const transactions = await AccountTransaction.find(query);
@@ -297,11 +221,10 @@ async function getAllDailyDSAccountWithdrawalByDate(date = null, branchId = null
   
     return totalBalance;
   }
-  
-
-
-async function getAllDailySBAccount(date = null, branchId = null) {
-    let query = { package: 'SB', direction: 'Credit' };
+  async function getAllBranchDailySBAccount(date = null, staff) {
+    const branch = await Staff.findOne({_id:staff})
+    const branchId = branch.branchId
+    let query = { package: 'SB', direction: 'Credit',branchId:branchId };
     // Filter by date if provided or default to today
     const targetDate = date ? new Date(date) : new Date();
  
@@ -316,9 +239,7 @@ async function getAllDailySBAccount(date = null, branchId = null) {
     query.createdAt = { $gte: startDate, $lte: endDate };
     
      
-     if (branchId) {
-         query.branchId = branchId;
-     }
+  
      const transactions = await AccountTransaction.find(query);
     // return transactions
      // Sum up all withdrawal amounts directly
@@ -328,9 +249,10 @@ async function getAllDailySBAccount(date = null, branchId = null) {
      return totalBalance  ;
 }
 
-async function getAllDailySBAccountWithdrawal(date = null, branchId = null) {
-    
-    let query = { package: 'SB', direction: 'Debit' };
+async function getAllBranchDailySBAccountWithdrawal(date = null, staff) {
+    const branch = await Staff.findOne({_id:staff})
+    const branchId = branch.branchId
+    let query = { package: 'SB', direction: 'Debit',branchId:branchId };
   
     const targetDate = date ? new Date(date) : new Date();
 
@@ -345,11 +267,7 @@ async function getAllDailySBAccountWithdrawal(date = null, branchId = null) {
     query.createdAt = { $gte: startDate, $lte: endDate };
     
   
-    // Filter by branch if provided
-    if (branchId) {
-      query.branchId = branchId;
-    }
-  
+ 
     // Get all matching debit transactions
     const transactions = await AccountTransaction.find(query);
   
@@ -358,8 +276,10 @@ async function getAllDailySBAccountWithdrawal(date = null, branchId = null) {
   
     return totalBalance;
 }
-async function getAllDailySBAccountWithdrawalByDate(date = null, branchId = null) {
-    let query = { package: 'SB', direction: 'Debit' };
+async function getAllBranchDailyDSAccountWithdrawal(date = null, staff) {
+    const branch = await Staff.findOne({_id:staff})
+    const branchId = branch.branchId
+    let query = { package: 'DS', direction: 'Debit',branchId:branchId };
   
     const targetDate = date ? new Date(date) : new Date();
 
@@ -374,11 +294,7 @@ async function getAllDailySBAccountWithdrawalByDate(date = null, branchId = null
     query.createdAt = { $gte: startDate, $lte: endDate };
     
   
-    // Filter by branch if provided
-    if (branchId) {
-      query.branchId = branchId;
-    }
-  
+ 
     // Get all matching debit transactions
     const transactions = await AccountTransaction.find(query);
   
@@ -387,68 +303,17 @@ async function getAllDailySBAccountWithdrawalByDate(date = null, branchId = null
   
     return totalBalance;
 }
-async function getSBAccountIncome(date = null, branchId = null) {
-    const endDate = date ? new Date(date) : new Date();
-    endDate.setHours(23, 59, 59, 999);
-  
-    const query = {
-      package: 'SB',
-      direction: 'Credit',
-      createdAt: { $lte: endDate },
-    };
-  
-    if (branchId) {
-      query.branchId = branchId;
-    }
-  
-    const transactions = await SureBankAccount.find(query);
-  
-    const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0);
-  
-    return totalBalance;
-  }
-  
+async function getAllBranchDailySBandDSAccount(date = null, staff) {
 
-async function getDSAccountIncome(date = null, branchId = null) {
-    const endDate = date ? new Date(date) : new Date();
-    endDate.setHours(23, 59, 59, 999);
-  
-    const query = {
-      package: 'DS',
-      direction: 'Credit',
-      createdAt: { $lte: endDate },
-    };
-  
-    if (branchId) {
-      query.branchId = branchId;
-    }
-  
-    const transactions = await SureBankAccount.find(query);
-  
-    const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0);
-  
-    return totalBalance;
-  }
-  
-async function getAllSBandDSIncome(date = null, branchId = null) {
-
-    const DS = await getDSAccountIncome(date,branchId)
-    const SB = await getSBAccountIncome(date,branchId)
-    const totalContribution = DS + SB
-      
-      return totalContribution;
-  }
-
-async function getAllDailySBandDSAccount(date = null, branchId = null) {
-
-  const DS = await getAllDailyDSAccount(date,branchId)
-  const SB = await getAllDailySBAccount(date,branchId)
+  const DS = await getAllBranchDailyDSAccount(date,staff)
+  const SB = await getAllBranchDailySBAccount(date,staff)
   const totalContribution = DS + SB
     
     return totalContribution;
 }
-
-async function getAllDSAccountPackage(date = null, branchId = null) {
+async function getAllBranchDSAccountPackage(date = null, staff) {
+    const branch = await Staff.findOne({_id:staff})
+    const branchId = branch.branchId
     // Use today's date if none is provided
     const endDate = date ? new Date(date) : new Date();
     endDate.setHours(23, 59, 59, 999); // Include the full day
@@ -456,12 +321,13 @@ async function getAllDSAccountPackage(date = null, branchId = null) {
     // Build query with date filter
     const query = {
       createdAt: { $lte: endDate },
+      branchId:branchId
     };
   
     // Optionally filter by branch
-    if (branchId) {
-      query.branchId = branchId;
-    }
+    // if (branchId) {
+    //   query.branchId = branchId;
+    // }
   
     // Count matching documents
     const countPackage = await DSAccount.countDocuments(query);
@@ -469,7 +335,9 @@ async function getAllDSAccountPackage(date = null, branchId = null) {
   }
   
   
-async function getAllSBAccountPackage(date = null, branchId = null) {
+async function getAllBranchSBAccountPackage(date = null, staff) {
+    const branch = await Staff.findOne({_id:staff})
+    const branchId = branch.branchId
     // Use today's date if none is provided
     const endDate = date ? new Date(date) : new Date();
     endDate.setHours(23, 59, 59, 999); // Include the full day
@@ -477,24 +345,84 @@ async function getAllSBAccountPackage(date = null, branchId = null) {
     // Build query with date filter
     const query = {
       createdAt: { $lte: endDate },
+      branchId:branchId
     };
   
     // Optionally filter by branch
-    if (branchId) {
-      query.branchId = branchId;
-    }
+    // if (branchId) {
+    //   query.branchId = branchId;
+    // }
   
     // Count matching documents
     const countPackage = await SBAccount.countDocuments(query);
     return countPackage;
 }
-async function getAllAccountPackage(date = null, branchId = null) {
-const sbPackage = await getAllSBAccountPackage(date,branchId)    
-const dsPackage = await getAllDSAccountPackage(date,branchId)    
+async function getAllBranchAccountPackage(date = null, staff) {
+const sbPackage = await getAllBranchSBAccountPackage(date,staff)    
+const dsPackage = await getAllBranchDSAccountPackage(date,staff)    
 const packages = sbPackage + dsPackage
     return packages 
 }
-async function getAllExpenditure(date = null, branchId = null) {
+async function getBranchSBAccountIncome(date = null, staff) {
+    const branch = await Staff.findOne({_id:staff})
+    const branchId = branch.branchId
+    const endDate = date ? new Date(date) : new Date();
+    endDate.setHours(23, 59, 59, 999);
+  
+    const query = {
+      package: 'SB',
+      direction: 'Credit',
+      createdAt: { $lte: endDate },
+      branchId:branchId
+    };
+  
+    // if (branchId) {
+    //   query.branchId = branchId;
+    // }
+  
+    const transactions = await SureBankAccount.find(query);
+  
+    const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0);
+  
+    return totalBalance;
+  }
+  
+
+async function getBranchDSAccountIncome(date = null, staff) {
+    const branch = await Staff.findOne({_id:staff})
+    const branchId = branch.branchId
+    const endDate = date ? new Date(date) : new Date();
+    endDate.setHours(23, 59, 59, 999);
+  
+    const query = {
+      package: 'DS',
+      direction: 'Credit',
+      createdAt: { $lte: endDate },
+      branchId:branchId
+    };
+  
+    // if (branchId) {
+    //   query.branchId = branchId;
+    // }
+  
+    const transactions = await SureBankAccount.find(query);
+  
+    const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0);
+  
+    return totalBalance;
+  }
+  
+async function getBranchAllSBandDSIncome(date = null, staff) {
+
+    const DS = await getBranchDSAccountIncome(date,staff)
+    const SB = await getBranchSBAccountIncome(date,staff)
+    const totalContribution = DS + SB
+      
+      return totalContribution;
+  }
+  async function getBranchAllExpenditure(date = null, staff) {
+    const branch = await Staff.findOne({_id:staff})
+    const branchId = branch.branchId
     // Use today's date if none is provided
     const endDate = date ? new Date(date) : new Date();
     endDate.setHours(23, 59, 59, 999); // Include the full day
@@ -502,12 +430,10 @@ async function getAllExpenditure(date = null, branchId = null) {
     // Build query with date filter
     const query = {
       createdAt: { $lte: endDate },
+      branchId:branchId
     };
   
-    // Optionally filter by branch
-    if (branchId) {
-      query.branchId = branchId;
-    }
+ 
   
     // Count matching documents
     const expenditures = await Expenditure.find(query);
@@ -516,7 +442,9 @@ async function getAllExpenditure(date = null, branchId = null) {
   
     return totalExpenditure;
 }
-async function getProfit(date = null, branchId = null) {
+async function getBranchProfit(date = null,staff) {
+    // const branch = await Staff.findOne({_id:staff})
+    // const branchId = branch.branchId
     // Use today's date if none is provided
     const endDate = date ? new Date(date) : new Date();
     endDate.setHours(23, 59, 59, 999); // Include the full day
@@ -526,22 +454,21 @@ async function getProfit(date = null, branchId = null) {
       createdAt: { $lte: endDate },
     };
   
-    // Optionally filter by branch
-    if (branchId) {
-      query.branchId = branchId;
-    }
+
   
     // Count matching documents
-    const income = await getAllSBandDSIncome(date,branchId)
-    const expenditure = await getAllExpenditure(date,branchId)
+    const income = await getBranchAllSBandDSIncome(date,staff)
+    const expenditure = await getBranchAllExpenditure(date,staff)
   
     const profit = income - expenditure
   
     return profit;
 }
-const getSBIncomeReport = async () => {
+const getBranchSBIncomeReport = async (staff) => {
+    const branch = await Staff.findOne({_id:staff})
+    const branchId = branch.branchId
     try {
-      const report = await SureBankAccount.find({ package: 'SB' })
+      const report = await SureBankAccount.find({ package: 'SB',branchId:branchId })
         .populate({
           path: 'customerId',
           populate: {
@@ -556,9 +483,11 @@ const getSBIncomeReport = async () => {
       throw new Error('Failed to retrieve SB income report');
     }
   };
-const getDSIncomeReport = async () => {
+const getBranchDSIncomeReport = async (staff) => {
+    const branch = await Staff.findOne({_id:staff})
+    const branchId = branch.branchId
     try {
-      const report = await SureBankAccount.find({ package: 'DS' })
+      const report = await SureBankAccount.find({ package: 'DS',branchId:branchId })
         .populate({
           path: 'customerId',
           populate: {
@@ -573,9 +502,11 @@ const getDSIncomeReport = async () => {
       throw new Error('Failed to retrieve SB income report');
     }
   };
-const getExpenditureReport = async () => {
+const getBranchExpenditureReport = async (staff) => {
+    const branch = await Staff.findOne({_id:staff})
+    const branchId = branch.branchId
     try {
-      const report = await Expenditure.find({})
+      const report = await Expenditure.find({branchId:branchId})
         .populate({
           path: 'createdBy',
           populate: {
@@ -623,11 +554,13 @@ const getExpenditureReport = async () => {
       throw new Error('Failed to retrieve transactions');
     }
   };
-  const getOrder = async () => {
+  const getBranchOrder = async (staff) => {
+    const branch = await Staff.findOne({_id:staff})
+    const branchId = branch.branchId
     try {
   
       // Fetch transactions and populate createdBy and customer details
-      const transactions = await SBAccount.find({})
+      const transactions = await SBAccount.find({branchId:branchId})
         .populate({
           path: 'createdBy', // Populate createdBy to get branch details
           model: 'Staff'
@@ -652,37 +585,33 @@ const getExpenditureReport = async () => {
       throw new Error('Failed to retrieve transactions');
     }
   };
-  
-  
-  
-
-  module.exports = {
-    getAllDSAccount,
-    getAllDSAccountWithdrawal,
-    getAllDSAccountCharge,
-    getAllSBAccount,
-    getAllSBAccountWithdrawal,
-    getAllDailyDSAccountChargeByDate,
-    getAllDailyDSAccountWithdrawalByDate,
-    getAllDailySBAccountWithdrawalByDate,
-    getAllSBandDSAccount,
-    getAllDailyDSAccount,
-    getAllDailyDSAccountCharge,
-    getAllDailyDSAccountWithdrawal,
-    getAllDailySBAccount,
-    getAllDailySBAccountWithdrawal,
-    getAllDailySBandDSAccount,
-    getAllDSAccountPackage,
-    getAllSBAccountPackage,
-    getAllAccountPackage,
-    getSBAccountIncome,
-    getDSAccountIncome,
-    getAllSBandDSIncome,
-    getAllExpenditure,
-    getProfit,
-    getSBIncomeReport,
-    getDSIncomeReport,
-    getExpenditureReport,
+module.exports = {
+    getAllBranchDSAccount,
+    getAllBranchDSAccountWithdrawal,
+    getAllBranchDSAccountCharge,
+    getAllBranchSBAccount,
+    getAllBranchSBAccountWithdrawal,
+    getAllBranchDailyDSAccountChargeByDate,
+    getAllBranchDailyDSAccountWithdrawalByDate,
+    // getAllDailySBAccountWithdrawalByDate,
+    getAllBranchSBandDSAccount,
+    getAllBranchDailyDSAccount,
+    // getAllDailyDSAccountCharge,
+    getAllBranchDailyDSAccountWithdrawal,
+    getAllBranchDailySBAccount,
+    getAllBranchDailySBAccountWithdrawal,
+    getAllBranchDailySBandDSAccount,
+    getAllBranchDSAccountPackage,
+    getAllBranchSBAccountPackage,
+    getAllBranchAccountPackage,
+    getBranchSBAccountIncome,
+    getBranchDSAccountIncome,
+    getBranchAllSBandDSIncome,
+    getBranchAllExpenditure,
+    getBranchProfit,
+    getBranchSBIncomeReport,
+    getBranchDSIncomeReport,
+    getBranchExpenditureReport,
     getTransaction,
-    getOrder,
+    getBranchOrder,
   };

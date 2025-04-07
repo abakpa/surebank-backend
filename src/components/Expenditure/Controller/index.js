@@ -3,6 +3,7 @@ require('dotenv').config()
 const Staff = require('../../Staff/Model/index');
 
 const createExpenditure = async (req, res) => {
+    const createdBy = req.staff.staffId;
     const staffBranch = await Staff.findById(createdBy)
     const {amount,reason} = req.body
     const detail = {
