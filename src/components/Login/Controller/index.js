@@ -31,7 +31,7 @@ const staffLogin = async (req, res) => {
                 id: staff._id,
                 email: staff.email,
                 role:staff.role,
-                branch:staff.branch
+                branch:staff.branchId
             },
             token
         });
