@@ -2,8 +2,9 @@ const mongoose = require('mongoose');
 
 const fdaccountSchema = new mongoose.Schema({
   customerId: {
-    type: String,
-    required: true
+    type: String, 
+    ref:'Customer',
+    required: true 
   },
   accountNumber: { 
     type: String, 
@@ -19,6 +20,7 @@ durationMonths: {
 },
   createdBy: {
     type: String,
+    ref:'Staff',
     required: true,
   },
   editedBy: {
@@ -29,7 +31,9 @@ durationMonths: {
     type: String,
   },
   branchId: { 
-    type: String, 
+    type: String,
+    ref:'Branch',
+    required: true,
   },
   status: { 
     type: String, 
@@ -47,11 +51,18 @@ durationMonths: {
     type: Number, 
     required: true
   },
-  interestRate: { 
+  incomeInterestRate: { 
     type: Number, 
     required: true, 
 },
-  interest: { 
+  expenseInterestRate: { 
+    type: Number, 
+    required: true, 
+},
+  expenseInterest: { 
+    type: Number, 
+  },
+  incomeInterest: { 
     type: Number, 
   },
   totalAmount: { 

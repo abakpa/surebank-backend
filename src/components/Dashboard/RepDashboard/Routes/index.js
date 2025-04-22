@@ -24,5 +24,9 @@ router.post('/repdsincomereport',staffAuth, AcountTransactionController.getRepDS
 router.post('/repexpenditurereport',staffAuth, AcountTransactionController.getRepExpenditureReport);
 router.post('/reptransaction', staffAuth, AcountTransactionController.getTransaction);
 router.post('/reporder', staffAuth, AcountTransactionController.getRepOrder);
+router.post('/repfdpackage', staffAuth, AcountTransactionController.getAllFDPackage);
+router.post('/repfd', staffAuth, AcountTransactionController.getAllFDAccount);
+
+
 
 module.exports = router

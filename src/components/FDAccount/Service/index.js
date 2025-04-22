@@ -9,16 +9,19 @@ const createFDAccount = async (FDAccountData) => {
           if (!existingFDAccountNumber) {
             throw new Error('Account number does not exists');
           }
-          const interestRate = 15
-          const interest = (FDAccountData.fdamount * interestRate * FDAccountData.durationMonths) / (12 * 100)
-          const totalAmount = FDAccountData.fdamount + interest
+          const expenseInterestRate = 12
+          const incomeInterestRate = 16
+          const expenseInterest = (FDAccountData.fdamount * expenseInterestRate * FDAccountData.durationMonths) / (12 * 100)
+          const incomeInterest = (FDAccountData.fdamount * incomeInterestRate * FDAccountData.durationMonths) / (12 * 100)
+          const totalAmount = FDAccountData.fdamount + expenseInterest
           const FDAccountNumber = await generateUniqueAccountNumber('FDA')
-  const fdaccount = new FDAccount({...FDAccountData,customerId:existingFDAccountNumber.customerId,branchId:existingFDAccountNumber.branchId,FDAccountNumber, interestRate,interest,totalAmount});
+  const fdaccount = new FDAccount({...FDAccountData,customerId:existingFDAccountNumber.customerId,branchId:existingFDAccountNumber.branchId,FDAccountNumber,incomeInterestRate,incomeInterest, expenseInterestRate,expenseInterest,totalAmount});
   const newFDAccount = await fdaccount.save();
   const account = await Account.findOne({ accountNumber: fdaccount.accountNumber });
   const FDAccountId = newFDAccount._id;
   const newContribution = await AccountTransaction.DepositTransactionAccount({
     createdBy: FDAccountData.createdBy,
+    customerId:existingFDAccountNumber.customerId,
     amount: newFDAccount.fdamount,
     balance: newFDAccount.totalAmount,
     branchId: newFDAccount.branchId,
@@ -26,10 +29,10 @@ const createFDAccount = async (FDAccountData) => {
     accountNumber: newFDAccount.accountNumber,
     accountTypeId: FDAccountId,
     date: FDAccountData.startDate,
+    package: "FD",
     narration: "Deposit",
     direction: "Credit",
   });
-
   await Account.findOneAndUpdate(
     { accountNumber: newFDAccount.accountNumber },
     {
@@ -195,12 +198,14 @@ const getAccountByAccountNumber = async (accountNumber) => {
           const newContribution = await AccountTransaction.DepositTransactionAccount({
             createdBy: contributionInput.createdBy,
             amount: fdaccount.totalAmount,
+            customerId:customerAccount.customerId,
             balance: 0,
             branchId: fdaccount.branchId,
             accountManagerId: fdaccount.accountManagerId,
             accountNumber: fdaccount.accountNumber,
             accountTypeId: FDAccountId,
             date: formattedDate,
+            package:"FD",
             narration: "Withdrawal",
             direction: "Debit",
           });
@@ -264,17 +269,20 @@ const getAccountByAccountNumber = async (accountNumber) => {
           const newContribution = await AccountTransaction.DepositTransactionAccount({
             createdBy: contributionInput.createdBy,
             amount: contributionInput.fdamount,
+            customerId:customerAccount.customerId,
             balance: 0,
             branchId: fdaccount.branchId,
             accountManagerId: fdaccount.accountManagerId,
             accountNumber: fdaccount.accountNumber,
             accountTypeId: FDAccountId,
             date: formattedDate,
+            package:"FD",
             narration: "Withdrawal",
             direction: "Debit",
           });
               await AccountTransaction.DepositTransactionAccount({
                   createdBy: contributionInput.createdBy,
+                  customerId:customerAccount.customerId,
                   amount:  newBalance,
                   balance: account.availableBalance + newBalance,
                   branchId: account.branchId,
@@ -282,6 +290,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
                   accountNumber: account.accountNumber,
                   accountTypeId: account._id,
                   date: formattedDate,
+                  package:"FD",
                   narration: "From FD account",
                   direction: "Credit",
                 });
@@ -352,6 +361,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
               // Record deposit transaction
               await AccountTransaction.DepositTransactionAccount({
                 createdBy: editedBy,
+                customerId:fdaccount.customerId,
                 amount:fdamount,
                 balance: totalAmount,
                 branchId: fdaccount.branchId,
@@ -359,6 +369,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
                 accountNumber: fdaccount.accountNumber,
                 accountTypeId: fdaccount._id,
                 date: startDate,
+                package:"FD",
                 narration: "Deposit",
                 direction: "Credit",
               });

@@ -4,6 +4,7 @@ const DSAccount = require('../../../DSAccount/Model');
 const SBAccount = require('../../../SBAccount/Model');
 const SureBankAccount = require('../../../SureBankAccount/Model');
 const Expenditure = require('../../../Expenditure/Model');
+const FDAccount = require('../../../FDAccount/Model');
 
 
 async function getAllDSAccount(date = null, branchId = null) {
@@ -114,6 +115,142 @@ async function getAllSBAccount(date = null, branchId = null) {
     
     return totalBalance - SBWithdrawal;
 }
+async function getAllFDAccount(date = null, branchId = null) {
+  try {
+    const query = {};
+
+    // Set end of the provided date or today
+    const endDate = date ? new Date(date) : new Date();
+    endDate.setHours(23, 59, 59, 999);
+    query.createdAt = { $lte: endDate };
+
+    // Filter by branch if branchId is provided
+    if (branchId) {
+      query.branchId = branchId;
+    }
+
+    const transactions = await FDAccount.find(query);
+
+    const totalBalance = transactions.reduce((sum, tx) => sum + (tx.fdamount || 0), 0);
+
+    return totalBalance
+  } catch (error) {
+    console.error("Error fetching FD accounts:", error);
+    return totalBalance = 0
+  }
+}
+async function getAllFDInterestIncome(date = null, branchId = null) {
+  try {
+    const query = {};
+
+    // Set end of the provided date or today
+    const endDate = date ? new Date(date) : new Date();
+    endDate.setHours(23, 59, 59, 999);
+    query.createdAt = { $lte: endDate };
+
+    // Filter by branch if branchId is provided
+    if (branchId) {
+      query.branchId = branchId;
+    }
+
+    const transactions = await FDAccount.find(query);
+
+    const totalBalance = transactions.reduce((sum, tx) => sum + (tx.incomeInterest || 0), 0);
+
+    return totalBalance
+  } catch (error) {
+    console.error("Error fetching FD accounts:", error);
+    return totalBalance = 0
+  }
+}
+async function getAllFDInterestExpense(date = null, branchId = null) {
+  try {
+    const query = {};
+
+    // Set end of the provided date or today
+    const endDate = date ? new Date(date) : new Date();
+    endDate.setHours(23, 59, 59, 999);
+    query.createdAt = { $lte: endDate };
+
+    // Filter by branch if branchId is provided
+    if (branchId) {
+      query.branchId = branchId;
+    }
+
+    const transactions = await FDAccount.find(query);
+
+    const totalBalance = transactions.reduce((sum, tx) => sum + (tx.expenseInterest || 0), 0);
+
+    return totalBalance
+  } catch (error) {
+    console.error("Error fetching FD accounts:", error);
+    return totalBalance = 0
+  }
+}
+async function getAllFDTransaction(date = null, branchId = null) {
+  try {
+    const query = {};
+
+    // Set end of the provided date or today
+    const endDate = date ? new Date(date) : new Date();
+    endDate.setHours(23, 59, 59, 999);
+    query.createdAt = { $lte: endDate };
+
+    // Filter by branch if branchId is provided
+    if (branchId) {
+      query.branchId = branchId;
+    }
+
+    const transactions = await FDAccount.find(query)
+      .populate({
+        path: 'createdBy', // Populate createdBy to get branch details
+        model: 'Staff'
+      })
+        .populate ({
+          path: 'branchId',
+          model: 'Branch',
+        
+      })
+      .populate({
+        path: 'customerId', // Populate customer details using customerId directly in AccountTransaction
+        model: 'Customer',
+      })
+      .sort({ createdAt: -1 });
+
+    // const totalBalance = transactions.reduce((sum, tx) => sum + (tx.expenseInterest || 0), 0);
+
+    return transactions
+  } catch (error) {
+    console.error("Error fetching FD accounts:", error);
+    return totalBalance = 0
+  }
+}
+async function getAllFDPackage(date = null, branchId = null) {
+  try {
+    const query = {};
+
+    // Set end of the provided date or today
+    const endDate = date ? new Date(date) : new Date();
+    endDate.setHours(23, 59, 59, 999);
+    query.createdAt = { $lte: endDate };
+
+    // Filter by branch if branchId is provided
+    if (branchId) {
+      query.branchId = branchId;
+    }
+
+    const transactions = await FDAccount.find(query);
+    const count = transactions.length;
+
+    // const totalBalance = transactions.reduce((sum, tx) => sum + (tx.fdamount || 0), 0);
+
+    return count
+  } catch (error) {
+    console.error("Error fetching FD accounts:", error);
+    return { totalBalance: 0, count: 0 };
+  }
+}
+
 async function getAllSBAccountWithdrawal(date = null, branchId = null) {
     let query = { package: 'DS', direction: 'Debit' };
 
@@ -661,6 +798,11 @@ const getExpenditureReport = async () => {
     getAllDSAccountWithdrawal,
     getAllDSAccountCharge,
     getAllSBAccount,
+    getAllFDAccount,
+    getAllFDInterestIncome,
+    getAllFDInterestExpense,
+    getAllFDTransaction,
+    getAllFDPackage,
     getAllSBAccountWithdrawal,
     getAllDailyDSAccountChargeByDate,
     getAllDailyDSAccountWithdrawalByDate,

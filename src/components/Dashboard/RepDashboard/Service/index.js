@@ -5,6 +5,7 @@ const SBAccount = require('../../../SBAccount/Model');
 const SureBankAccount = require('../../../SureBankAccount/Model');
 const Expenditure = require('../../../Expenditure/Model');
 const Staff = require('../../../Staff/Model');
+const FDAccount = require('../../../FDAccount/Model');
 
 
 async function getAllRepDSAccount(date = null, staff) {
@@ -15,7 +16,6 @@ async function getAllRepDSAccount(date = null, staff) {
     const endDate = date ? new Date(date) : new Date();
     endDate.setHours(23, 59, 59, 999);
     query.createdAt = { $lte: endDate };
-  console.log('rep ds',query)
     const transactions = await AccountTransaction.find(query);
     
     // // Sort transactions by createdAt in ascending order
@@ -565,6 +565,59 @@ const getRepExpenditureReport = async (staff) => {
       throw new Error('Failed to retrieve transactions');
     }
   };
+  async function getAllFDPackage(date = null, staff) {
+    // const branch = await Staff.findOne({_id:staff})
+    // const branchId = branch.branchId
+    try {
+      // Use today's date if none is provided
+      const endDate = date ? new Date(date) : new Date();
+      endDate.setHours(23, 59, 59, 999); // Include the full day
+    
+      // Build query with date filter
+      const query = {
+        createdAt: { $lte: endDate },
+        createdBy:staff
+      };
+    
+      // Optionally filter by Rep
+      // if (RepId) {
+      //   query.RepId = RepId;
+      // }
+    
+      // Count matching documents
+      const countPackage = await FDAccount.countDocuments(query);
+      return countPackage;
+    } catch (error) {
+      console.error("Error fetching FD accounts:", error);
+      return { totalBalance: 0, count: 0 };
+    }
+  }
+  async function getAllFDAccount(date = null, staff) {
+    // const branch = await Staff.findOne({_id:staff})
+    // const branchId = branch.branchId
+    try {
+      const query = {createdBy:staff};
+  
+      // Set end of the provided date or today
+      const endDate = date ? new Date(date) : new Date();
+      endDate.setHours(23, 59, 59, 999);
+      query.createdAt = { $lte: endDate };
+  
+      // Filter by branch if branchId is provided
+      // if (branchId) {
+      //   query.branchId = branchId;
+      // }
+  
+      const transactions = await FDAccount.find(query);
+  
+      const totalBalance = transactions.reduce((sum, tx) => sum + (tx.fdamount || 0), 0);
+  
+      return totalBalance
+    } catch (error) {
+      console.error("Error fetching FD accounts:", error);
+      return totalBalance = 0
+    }
+  }
 module.exports = {
     getAllRepDSAccount,
     getAllRepDSAccountWithdrawal,
@@ -594,4 +647,6 @@ module.exports = {
     getRepExpenditureReport,
     getTransaction,
     getRepOrder,
+    getAllFDPackage,
+    getAllFDAccount,
   };

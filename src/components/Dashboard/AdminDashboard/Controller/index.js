@@ -38,6 +38,51 @@ const bcrypt = require('bcrypt')
             res.status(500).json({ message: error.message });
         }
       }
+      const getAllFDAccount = async (req, res) => {
+        const {date,branchId} = req.body
+        try {
+            const FDAccount = await accountTransactionService.getAllFDAccount(date,branchId);
+            res.status(200).json(FDAccount);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
+      const getAllFDInterestIncome = async (req, res) => {
+        const {date,branchId} = req.body
+        try {
+            const FDAccount = await accountTransactionService.getAllFDInterestIncome(date,branchId);
+            res.status(200).json(FDAccount);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
+      const getAllFDInterestExpense = async (req, res) => {
+        const {date,branchId} = req.body
+        try {
+            const FDAccount = await accountTransactionService.getAllFDInterestExpense(date,branchId);
+            res.status(200).json(FDAccount);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
+      const getAllFDTransaction = async (req, res) => {
+        const {date,branchId} = req.body
+        try {
+            const FDAccount = await accountTransactionService.getAllFDTransaction(date,branchId);
+            res.status(200).json(FDAccount);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
+      const getAllFDPackage = async (req, res) => {
+        const {date,branchId} = req.body
+        try {
+            const FDAccount = await accountTransactionService.getAllFDPackage(date,branchId);
+            res.status(200).json(FDAccount);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
       const getAllSBAccountWithdrawal = async (req, res) => {
         try {
             const SBAccount = await accountTransactionService.getAllSBAccountWithdrawal();
@@ -233,6 +278,11 @@ const bcrypt = require('bcrypt')
     getAllDSAccountWithdrawal,
     getAllDSAccountCharge,
     getAllSBAccount,
+    getAllFDAccount,
+    getAllFDInterestIncome,
+    getAllFDInterestExpense,
+    getAllFDTransaction,
+    getAllFDPackage,
     getAllSBAccountWithdrawal,
     getAllContribution,
     getAllDailyDSAccount,

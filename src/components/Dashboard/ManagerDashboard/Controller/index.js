@@ -12,6 +12,61 @@ const bcrypt = require('bcrypt')
             res.status(500).json({ message: error.message });
         }
       }
+         const getAllFDAccount = async (req, res) => {
+        const staff = req.staff.staffId;
+
+              const {date} = req.body
+              try {
+                  const FDAccount = await accountTransactionService.getAllFDAccount(date,staff);
+                  res.status(200).json(FDAccount);
+              } catch (error) {
+                  res.status(500).json({ message: error.message });
+              }
+            }
+            const getAllFDInterestIncome = async (req, res) => {
+        const staff = req.staff.staffId;
+
+              const {date} = req.body
+              try {
+                  const FDAccount = await accountTransactionService.getAllFDInterestIncome(date,staff);
+                  res.status(200).json(FDAccount);
+              } catch (error) {
+                  res.status(500).json({ message: error.message });
+              }
+            }
+            const getAllFDInterestExpense = async (req, res) => {
+        const staff = req.staff.staffId;
+
+              const {date} = req.body
+              try {
+                  const FDAccount = await accountTransactionService.getAllFDInterestExpense(date,staff);
+                  res.status(200).json(FDAccount);
+              } catch (error) {
+                  res.status(500).json({ message: error.message });
+              }
+            }
+            const getAllFDTransaction = async (req, res) => {
+        const staff = req.staff.staffId;
+
+              const {date} = req.body
+              try {
+                  const FDAccount = await accountTransactionService.getAllFDTransaction(date,staff);
+                  res.status(200).json(FDAccount);
+              } catch (error) {
+                  res.status(500).json({ message: error.message });
+              }
+            }
+            const getAllFDPackage = async (req, res) => {
+        const staff = req.staff.staffId;
+
+              const {date} = req.body
+              try {
+                  const FDAccount = await accountTransactionService.getAllFDPackage(date,staff);
+                  res.status(200).json(FDAccount);
+              } catch (error) {
+                  res.status(500).json({ message: error.message });
+              }
+            }
     const getAllBranchDSAccountWithdrawal = async (req, res) => {
               try {
                 const staff = req.staff.staffId;
@@ -249,6 +304,11 @@ const bcrypt = require('bcrypt')
 
       module.exports = {
         getAllBranchDSAccount,
+        getAllFDAccount,
+        getAllFDInterestIncome,
+        getAllFDInterestExpense,
+        getAllFDTransaction,
+        getAllFDPackage,
         getAllBranchDSAccountWithdrawal,
         getAllBranchDSAccountCharge,
         getAllBranchSBAccount,

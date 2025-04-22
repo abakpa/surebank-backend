@@ -40,6 +40,27 @@ const bcrypt = require('bcrypt')
                         res.status(500).json({ message: error.message });
                     }
                   }
+               const getAllFDAccount = async (req, res) => {
+                const staff = req.staff.staffId;
+                      const {date} = req.body
+                      try {
+                          const FDAccount = await accountTransactionService.getAllFDAccount(date,staff);
+                          res.status(200).json(FDAccount);
+                      } catch (error) {
+                          res.status(500).json({ message: error.message });
+                      }
+                    }
+       
+                    const getAllFDPackage = async (req, res) => {
+                const staff = req.staff.staffId;
+                      const {date} = req.body
+                      try {
+                          const FDAccount = await accountTransactionService.getAllFDPackage(date,staff);
+                          res.status(200).json(FDAccount);
+                      } catch (error) {
+                          res.status(500).json({ message: error.message });
+                      }
+                    }
      const getAllRepSBAccountWithdrawal = async (req, res) => {
                     try {
                         const SBAccount = await accountTransactionService.getAllRepSBAccountWithdrawal();
@@ -252,6 +273,8 @@ const bcrypt = require('bcrypt')
         getAllRepDSAccountWithdrawal,
         getAllRepDSAccountCharge,
         getAllRepSBAccount,
+        getAllFDAccount,
+        getAllFDPackage,
         getAllRepSBAccountWithdrawal,
         getAllRepContribution,
         getAllRepDailyDSAccount,
