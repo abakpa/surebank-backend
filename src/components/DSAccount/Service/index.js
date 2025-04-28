@@ -598,7 +598,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         date: formattedDate,
         narration: "From DS account",
         package:"DS",
-        direction: "DSTRANSFER",
+        direction: "Transfer",
       });
   
       await Account.findOneAndUpdate(

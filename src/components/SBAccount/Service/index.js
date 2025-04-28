@@ -2,7 +2,8 @@ const Account = require('../../Account/Model');
 const  generateUniqueAccountNumber  = require('../../generateAccountNumber');
 const SBAccount = require('../Model/index');
 const AccountTransaction = require('../../AccountTransaction/Service/index');
-const SureBankAccount = require('../../SureBankAccount/Service/index')
+const SureBankAccount = require('../../SureBankAccount/Service/index');
+const sendSMS = require('../../sendSMS');
 
 const createSBAccount = async (SBAccountData) => {
           const existingSBAccountNumber = await getAccountByAccountNumber(SBAccountData.accountNumber);
@@ -158,10 +159,11 @@ const getAccountByAccountNumber = async (accountNumber) => {
                 }
               );
 
-      await SBAccount.findByIdAndUpdate(SBAccountId, {
+      const sbNewBalance = await SBAccount.findByIdAndUpdate(SBAccountId, {
         balance: sbaccount.balance + contributionInput.amount,
       });
-    
+      // const message = `Your account has been credited with NGN${contributionInput.amount}, Date:${sbNewBalance.createdAt} Bal:${sbNewBalance.balance}`
+      // await sendSMS(sbaccount.accountNumber,message)
       return { data: newContribution, message: "deposit successful" };
     }
 

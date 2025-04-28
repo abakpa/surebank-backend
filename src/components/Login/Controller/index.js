@@ -4,15 +4,15 @@ const staffService = require('../Service/index');
 
 const customerLogin = async (req, res) => {
     try {
-        const { email, password } = req.body;
-        const {customer,token} = await customerService.customerLogin(email, password);
+        const { phone, password } = req.body;
+        const {customer,token} = await customerService.customerLogin(phone, password);
 
       
         res.status(200).json({
             message: 'Login successful',
             customer: {
                 id: customer._id,
-                email: customer.email,
+                phone: customer.phone,
             },
             token
         });

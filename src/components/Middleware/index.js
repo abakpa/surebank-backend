@@ -8,7 +8,7 @@ const customerAuth = async(req, res, next) => {
     const token = authHeader.split(" ")[1];
     try {
         const payload = jwt.verify(token, process.env.JWT_SECRET_KEY);
-        req.customer = { customerId: payload.id, email: payload.email };
+        req.customer = { customerId: payload.id, phone: payload.phone };
 
         next();
     } catch (error) {

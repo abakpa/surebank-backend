@@ -14,6 +14,7 @@ const adminDashboard = require('./src/components/Dashboard/AdminDashboard/Routes
 const managerDashboard = require('./src/components/Dashboard/ManagerDashboard/Routes/index');
 const repDashboard = require('./src/components/Dashboard/RepDashboard/Routes/index');
 const expenditureRoutes = require('./src/components/Expenditure/Routes/index');
+const smsRoutes = require('./src/components/SMS/Routes/index');
 
 
 router.use('/api/branch', branchRoutes);
@@ -29,6 +30,7 @@ router.use('/api/admindashboard', adminDashboard);
 router.use('/api/managerdashboard',managerDashboard);
 router.use('/api/repdashboard',repDashboard);
 router.use('/api/expenditure', expenditureRoutes);
+router.use('/api/sms', smsRoutes);
 
 
 module.exports = router;

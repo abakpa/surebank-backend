@@ -4,18 +4,18 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken')
 require('dotenv').config()
 
-const customerLogin = async (email, password) => {
+const customerLogin = async (phone, password) => {
     try {
-        const customer = await Customer.findOne({ email });
+        const customer = await Customer.findOne({ phone });
         if (!customer) {
-            throw new Error('Invalid email or password');
+            throw new Error('Invalid phone number or password');
         }
 
         const isMatch = await bcrypt.compare(password, customer.password);
         if (!isMatch) {
-            throw new Error('Invalid email or password');
+            throw new Error('Invalid Phone number or password');
         }
-        const token = jwt.sign({ id: customer._id, email: customer.email },
+        const token = jwt.sign({ id: customer._id, phone: customer.phone },
             process.env.JWT_SECRET_KEY, { expiresIn: process.env.JWT_LIFETIME }
         );
         return {customer,token};
