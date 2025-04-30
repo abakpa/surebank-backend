@@ -29,6 +29,7 @@ const staffLogin = async (req, res) => {
             message: 'Login successful',
             staff: {
                 id: staff._id,
+                name:staff.name,
                 email: staff.email,
                 role:staff.role,
                 branch:staff.branchId

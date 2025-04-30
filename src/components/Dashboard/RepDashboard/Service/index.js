@@ -489,8 +489,8 @@ const getRepExpenditureReport = async (staff) => {
         .populate({
           path: 'createdBy',
           populate: {
-            path: 'RepId', 
-            model: 'Rep'
+            path: 'branchId', 
+            model: 'Branch'
           }
         }).sort({ createdAt: -1 });
   
