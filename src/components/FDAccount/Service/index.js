@@ -2,15 +2,55 @@ const Account = require('../../Account/Model');
 const  generateUniqueAccountNumber  = require('../../generateAccountNumber');
 const FDAccount = require('../Model/index');
 const AccountTransaction = require('../../AccountTransaction/Service/index');
-const SureBankAccount = require('../../SureBankAccount/Service/index')
+const SureBankAccount = require('../../SureBankAccount/Service/index');
+const Interest = require('../Model/interestRate');
+
+const createInterest = async (data) => {
+    try {
+        const interest = new Interest(data);
+        await interest.save();
+        return interest;
+    } catch (error) {
+        throw error;
+    }
+};
+const getInterest = async () => {
+    try {
+        return await Interest.find({});
+    } catch (error) {
+        throw error;
+    }
+};
+const updateInterest = async (details) => {
+    const {expenseInterestRate,incomeInterestRate,editedBy} = details
+    try {
+    
+      // Find and update the DSAccount by DSAccount
+      const updatedInterest = await Interest.findOneAndUpdate(
+        {},
+        { $set: { expenseInterestRate: expenseInterestRate, editedBy:editedBy, incomeInterestRate:incomeInterestRate } }, // Update only the amount field
+        { new: true } // Return the updated document
+      );
+  
+      // Check if the account was found and updated
+      if (!updatedInterest) {
+        throw new Error('SBAccount not found or update failed');
+      }
+  
+      return { success: true, message: 'Updated successfully', updatedInterest };
+    } catch (error) {
+      throw new Error('An error occurred while updating the amount', error );
+    }
+  };
 
 const createFDAccount = async (FDAccountData) => {
           const existingFDAccountNumber = await getAccountByAccountNumber(FDAccountData.accountNumber);
           if (!existingFDAccountNumber) {
             throw new Error('Account number does not exists');
           }
-          const expenseInterestRate = 12
-          const incomeInterestRate = 16
+          const getInterest = await Interest.findOne()
+          const expenseInterestRate = getInterest.expenseInterestRate
+          const incomeInterestRate = getInterest.incomeInterestRate
           const expenseInterest = (FDAccountData.fdamount * expenseInterestRate * FDAccountData.durationMonths) / (12 * 100)
           const incomeInterest = (FDAccountData.fdamount * incomeInterestRate * FDAccountData.durationMonths) / (12 * 100)
           const totalAmount = FDAccountData.fdamount + expenseInterest
@@ -252,7 +292,8 @@ const getAccountByAccountNumber = async (accountNumber) => {
       minute: "2-digit",
       hour12: true, // Ensures AM/PM format
     });
-    const balance = fdaccount.totalAmount - fdaccount.interest
+
+    const balance = fdaccount.totalAmount - fdaccount.expenseInterest
       
         if (contributionInput.fdamount > balance) {
           throw new Error("Insuffitient balance");
@@ -265,7 +306,6 @@ const getAccountByAccountNumber = async (accountNumber) => {
           throw new Error('Account not found for ledger update');
         }
         const newBalance = balance - contributionInput.fdamount;
-      
           const newContribution = await AccountTransaction.DepositTransactionAccount({
             createdBy: contributionInput.createdBy,
             amount: contributionInput.fdamount,
@@ -466,5 +506,8 @@ module.exports = {
     withdrawFDContribution,
     sellProduct,
     withdrawImatureFDContribution,
-    updateFDAccountAmount
+    updateFDAccountAmount,
+    createInterest,
+    getInterest,
+    updateInterest
   };

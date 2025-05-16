@@ -23,7 +23,7 @@ const createDSAccount = async (DSAccountData) => {
 };
 const updateDSAccountAmount = async (details) => {
   const {DSAccountNumber,amountPerDay,editedBy} = details
-  try {
+  // try {
     // Validate input
     if (!DSAccountNumber || !amountPerDay || typeof amountPerDay !== 'number' || amountPerDay <= 0) {
       throw new Error('Invalid account number or amount');
@@ -33,6 +33,8 @@ const updateDSAccountAmount = async (details) => {
       DSAccountNumber: DSAccountNumber,
       // accountType: contributionInput.accountType,
     });
+  console.log("????<<<<<",dsaccount)
+
     if (dsaccount.totalContribution !==0 && dsaccount.totalCount !==0) {
       throw new Error('You cannot edit amount while package is running');
     }
@@ -49,9 +51,9 @@ const updateDSAccountAmount = async (details) => {
     }
 
     return { success: true, message: 'Amount updated successfully', updatedDSAccount };
-  } catch (error) {
-    throw new Error('An error occurred while updating the amount', error );
-  }
+  // } catch (error) {
+  //   throw new Error('An error occurred while updating the amount', error );
+  // }
 };
 const getAccountByAccountNumber = async (accountNumber) => {
     return await Account.findOne({ accountNumber });

@@ -1,3 +1,4 @@
+const Staff = require('../../Staff/Model');
 const Customer = require('../Model/index');
 
 const createCustomer = async (customerData) => {
@@ -21,6 +22,21 @@ const getCustomers = async () =>{
         throw error;
     }
   }
+const getCustomerByBranch = async (staffId) =>{
+    try {
+      const branch = await Staff.findOne({_id:staffId})
+        return await Customer.find({branchId:branch.branchId});
+    } catch (error) {
+        throw error;
+    }
+  }
+const getCustomerByRep = async (staffId) =>{
+    try {
+        return await Customer.find({createdBy:staffId});
+    } catch (error) {
+        throw error;
+    }
+  }
 const getCustomerById = async (customerId) =>{
     try {
         return await Customer.findOne({_id:customerId});
@@ -32,5 +48,7 @@ const getCustomerById = async (customerId) =>{
   module.exports = {
     createCustomer,
     getCustomers,
-    getCustomerById
+    getCustomerById,
+    getCustomerByBranch,
+    getCustomerByRep
   };

@@ -32,7 +32,7 @@ require('dotenv').config()
           res.status(201).json({ data: newAmountPerDay });
         } catch (error) {
           console.error('Error updating DSAccount amount:', error);
-          return { success: false, message: 'An error occurred while updating the amount', error };
+          res.status(500).json({ message: error.message });
         }
       };
       

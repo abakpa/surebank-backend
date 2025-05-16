@@ -4,6 +4,9 @@ const FDAccountController = require('../Controller/index');
 const {staffAuth} = require('../../Middleware/index')
 
 router.post('/', staffAuth, FDAccountController.createFDAccount);
+router.post('/interest', staffAuth, FDAccountController.createInterest);
+router.post('/getinterest', staffAuth, FDAccountController.getInterest);
+router.put('/interest', staffAuth, FDAccountController.updateInterest);
 router.put('/', staffAuth, FDAccountController.updateFDAccount);
 router.get('/', FDAccountController.getFDAccount);
 router.get('/:id', FDAccountController.getCustomerFDAccountById);

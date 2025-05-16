@@ -18,6 +18,10 @@ const customerSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  createdBy: {
+    type: String,
+    required: true,
+  },
   branchId: { 
     type: String, 
     ref:'Branch',

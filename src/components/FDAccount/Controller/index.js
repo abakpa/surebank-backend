@@ -2,47 +2,102 @@ const FDAccountService = require('../Service/index');
 
 // const User = require("../models/User");
 
+const createInterest = async (req, res) => {
+    try {
+        const Interest = await FDAccountService.createInterest(req.body);
+        res.status(201).json(Interest);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+const getInterest = async (req, res) => {
+    try {
+        const interest = await FDAccountService.getInterest();
+        res.status(200).json(interest);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+   const updateInterest = async (req,res) => {
+        const editedBy = req.staff.staffId;
+        const {expenseInterestRate,incomeInterestRate} = req.body
+        try {
+      
+      const newData = await FDAccountService.updateInterest({expenseInterestRate,incomeInterestRate,editedBy})
+          res.status(201).json({ data: newData });
+        } catch (error) {
+          return { success: false, message: 'An error occurred while updating', error };
+        }
+      };
+
 // Create a fixed deposit
 const createFDAccount = async (req, res) => {
   try {
-    const { fdamount, durationMonths, accountNumber,accountManagerId } = req.body;
+    const { fdamount, durationMonths, accountNumber, accountManagerId } = req.body;
     const createdBy = req.staff.staffId;
+
+    // Get current date
     const currentDate = new Date();
+    
+    // Format start date as "dd MMM yy, hh:mm AM/PM"
     const startDate = currentDate.toLocaleString("en-GB", {
       day: "2-digit",
       month: "short",
-      year: "2-digit", // Abbreviated year (YY)
+      year: "2-digit",
       hour: "2-digit",
       minute: "2-digit",
-      hour12: true, // Ensures AM/PM format
+      hour12: true,
     });
-    const status = 'Active'
 
+    const status = 'Active';
+
+    // Check minimum deposit requirement
     if (fdamount < 1000) {
       return res.status(400).json({ message: "Minimum deposit is ₦1000" });
     }
 
-    // Calculate maturity date
-    const maturityDate = new Date();
-    maturityDate.setMonth(maturityDate.getMonth() + durationMonths);
+    // Calculate maturity date with proper year adjustment
+    const maturityDate = new Date(currentDate);
+    const currentYear = maturityDate.getFullYear();
+    const currentMonth = maturityDate.getMonth();
+    
+    // Calculate new month and year
+    const totalMonths = currentMonth + durationMonths;
+    const newYear = currentYear + Math.floor(totalMonths / 12);
+    const newMonth = totalMonths % 12;
+    
+    maturityDate.setFullYear(newYear, newMonth, maturityDate.getDate());
 
-    // Create fixed deposit
+    // Handle cases where the original date was the last day of the month
+    if (maturityDate.getDate() !== currentDate.getDate()) {
+      maturityDate.setDate(0); // Set to last day of previous month
+    }
+
+    // Create FD account using service
     const fixDeposit = await FDAccountService.createFDAccount({
-        createdBy,
-        startDate,
-        accountNumber,
-        accountManagerId,
-        fdamount,
-        durationMonths,
-        maturityDate,
-        status,
+      createdBy,
+      startDate,
+      accountNumber,
+      accountManagerId,
+      fdamount,
+      durationMonths,
+      maturityDate,
+      status,
     });
 
-    res.status(201).json({ message: fixDeposit.message, FDAccount:fixDeposit.newFDAccount });
+    res.status(201).json({
+      message: fixDeposit.message,
+      FDAccount: fixDeposit.newFDAccount,
+    });
+
   } catch (error) {
-    res.status(500).json({ message: "Server Error", error: error.message });
+    res.status(500).json({
+      message: "Server Error",
+      error: error.message,
+    });
   }
 };
+
 // Get user’s fixed deposits
 const getFDAccount = async (req, res) => {
     try {
@@ -114,5 +169,8 @@ module.exports = {
     getCustomerFDAccountById,
     withdrawFixedDeposit,
     withdrawImatureFixedDeposit,
-    updateFDAccount
+    updateFDAccount,
+    createInterest,
+    getInterest,
+    updateInterest
   };

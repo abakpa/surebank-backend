@@ -7,10 +7,11 @@ const bcrypt = require('bcrypt')
     const registerCustomer = async (req, res) => {
         try {
           const staffId = req.staff.staffId;
+          const createdBy = staffId
         const salt = await bcrypt.genSalt()
         req.body.password = await bcrypt.hash(req.body.password,salt)
           const { name, phone, address, password,branchId,accountManagerId } = req.body;
-          const newCustomer = await customerService.createCustomer({ name, phone, address, password,branchId });
+          const newCustomer = await customerService.createCustomer({ name, phone, address,createdBy, password,branchId });
           const accountNumber = await accountService.createAccount({customerId:newCustomer._id,staffId:staffId,branchId,accountManagerId,phone:phone})
           res.status(201).json({ message: 'Customer registered successfully', user: newCustomer,accountNumber:accountNumber });
         } catch (error) {
@@ -20,6 +21,26 @@ const bcrypt = require('bcrypt')
       const getCustomer = async (req, res) => {
         try {
             const customers = await customerService.getCustomers();
+            res.status(200).json(customers);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
+      const getCustomerByBranch = async (req, res) => {
+        const staffId = req.staff.staffId;
+
+        try {
+            const customers = await customerService.getCustomerByBranch(staffId);
+            res.status(200).json(customers);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
+      const getCustomerByRep = async (req, res) => {
+        const staffId = req.staff.staffId;
+
+        try {
+            const customers = await customerService.getCustomerByRep(staffId);
             res.status(200).json(customers);
         } catch (error) {
             res.status(500).json({ message: error.message });
@@ -38,5 +59,7 @@ const bcrypt = require('bcrypt')
   module.exports = {
     registerCustomer,
     getCustomer,
-    getCustomerById
+    getCustomerById,
+    getCustomerByBranch,
+    getCustomerByRep
   };
