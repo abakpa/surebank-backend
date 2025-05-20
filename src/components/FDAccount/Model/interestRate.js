@@ -10,6 +10,10 @@ const interestSchema = new mongoose.Schema({
     type: Number, 
     required: true
   },
+  chargeInterestRate: { 
+    type: Number, 
+    required: true
+  },
 },
 {timestamps:true}
 );

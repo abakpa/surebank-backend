@@ -33,7 +33,6 @@ const updateDSAccountAmount = async (details) => {
       DSAccountNumber: DSAccountNumber,
       // accountType: contributionInput.accountType,
     });
-  console.log("????<<<<<",dsaccount)
 
     if (dsaccount.totalContribution !==0 && dsaccount.totalCount !==0) {
       throw new Error('You cannot edit amount while package is running');

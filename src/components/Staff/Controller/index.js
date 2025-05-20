@@ -55,9 +55,20 @@ const getBranchStaff = async (req, res) => {
         res.status(500).json({ message: error.message });
     }
   }
+     const updateStaff = async (req,res) => {
+      const staff = req.params.id
+      const status = req.query.status
+          try {
+        const newData = await staffService.updateStaff({staff,status})
+            res.status(201).json({ data: newData });
+          } catch (error) {
+            return { success: false, message: 'An error occurred while updating', error };
+          }
+        };
 
   module.exports = {
     registerStaff,
     getStaff,
     getBranchStaff,
+    updateStaff
   };

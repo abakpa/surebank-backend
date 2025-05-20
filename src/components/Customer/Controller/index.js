@@ -55,11 +55,33 @@ const bcrypt = require('bcrypt')
             res.status(500).json({ message: error.message });
         }
       }
+           const transferAllCustomer = async (req,res) => {
+            const oldStaff = req.params.id
+            const newStaff = req.query.newStaff
+                try {
+              const newData = await customerService.transferAllCustomer({oldStaff,newStaff})
+                  res.status(201).json({ data: newData });
+                } catch (error) {
+                  return { success: false, message: 'An error occurred while updating', error };
+                }
+              };
+           const transferCustomer = async (req,res) => {
+            const customer = req.params.id
+            const newStaff = req.query.newStaff
+                try {
+              const newData = await customerService.transferCustomer({customer,newStaff})
+                  res.status(201).json({ data: newData });
+                } catch (error) {
+                  return { success: false, message: 'An error occurred while updating', error };
+                }
+              };
 
   module.exports = {
     registerCustomer,
     getCustomer,
     getCustomerById,
     getCustomerByBranch,
-    getCustomerByRep
+    getCustomerByRep,
+    transferAllCustomer,
+    transferCustomer,
   };

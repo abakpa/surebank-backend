@@ -5,6 +5,7 @@ const AccountTransaction = require('../../AccountTransaction/Service/index');
 const SureBankAccount = require('../../SureBankAccount/Service/index');
 const Interest = require('../Model/interestRate');
 
+
 const createInterest = async (data) => {
     try {
         const interest = new Interest(data);
@@ -22,13 +23,13 @@ const getInterest = async () => {
     }
 };
 const updateInterest = async (details) => {
-    const {expenseInterestRate,incomeInterestRate,editedBy} = details
+    const {expenseInterestRate,incomeInterestRate,chargeInterestRate,editedBy} = details
     try {
     
       // Find and update the DSAccount by DSAccount
       const updatedInterest = await Interest.findOneAndUpdate(
         {},
-        { $set: { expenseInterestRate: expenseInterestRate, editedBy:editedBy, incomeInterestRate:incomeInterestRate } }, // Update only the amount field
+        { $set: { expenseInterestRate: expenseInterestRate, editedBy:editedBy, incomeInterestRate:incomeInterestRate,chargeInterestRate:chargeInterestRate } }, // Update only the amount field
         { new: true } // Return the updated document
       );
   
@@ -48,14 +49,45 @@ const createFDAccount = async (FDAccountData) => {
           if (!existingFDAccountNumber) {
             throw new Error('Account number does not exists');
           }
+          const {
+            createdBy,
+            startDate,
+            accountNumber,
+            accountManagerId,
+            fdamount,
+            durationMonths,
+            maturityDate,
+            status,
+          } = FDAccountData
           const getInterest = await Interest.findOne()
           const expenseInterestRate = getInterest.expenseInterestRate
           const incomeInterestRate = getInterest.incomeInterestRate
+          const chargeInterestRate = getInterest.chargeInterestRate
+          const chargeInterest = (FDAccountData.fdamount * chargeInterestRate * FDAccountData.durationMonths) / (12 * 100)
           const expenseInterest = (FDAccountData.fdamount * expenseInterestRate * FDAccountData.durationMonths) / (12 * 100)
           const incomeInterest = (FDAccountData.fdamount * incomeInterestRate * FDAccountData.durationMonths) / (12 * 100)
           const totalAmount = FDAccountData.fdamount + expenseInterest
           const FDAccountNumber = await generateUniqueAccountNumber('FDA')
-  const fdaccount = new FDAccount({...FDAccountData,customerId:existingFDAccountNumber.customerId,branchId:existingFDAccountNumber.branchId,FDAccountNumber,incomeInterestRate,incomeInterest, expenseInterestRate,expenseInterest,totalAmount});
+  const fdaccount = new FDAccount({
+    createdBy,
+    startDate,
+    accountNumber,
+    accountManagerId,
+    fdamount,
+    durationMonths,
+    maturityDate,
+    status,
+    customerId:existingFDAccountNumber.customerId,
+    branchId:existingFDAccountNumber.branchId,
+    FDAccountNumber,
+    incomeInterestRate,
+    incomeInterest,
+    chargeInterest,
+    chargeInterestRate, 
+    expenseInterestRate,
+    expenseInterest,
+    totalAmount
+  });
   const newFDAccount = await fdaccount.save();
   const account = await Account.findOne({ accountNumber: fdaccount.accountNumber });
   const FDAccountId = newFDAccount._id;
@@ -77,7 +109,44 @@ const createFDAccount = async (FDAccountData) => {
     { accountNumber: newFDAccount.accountNumber },
     {
       $set: {
-        ledgerBalance: account.ledgerBalance + newFDAccount.fdamount,
+        ledgerBalance: account.ledgerBalance + totalAmount,
+      },
+    }
+  );
+  const newContribution2 = await AccountTransaction.DepositTransactionAccount({
+    createdBy: FDAccountData.createdBy,
+    amount: expenseInterest,
+    customerId:existingFDAccountNumber.customerId,
+    balance: totalAmount - expenseInterest,
+    branchId: newFDAccount.branchId,
+    accountManagerId: newFDAccount.accountManagerId,
+    accountNumber: newFDAccount.accountNumber,
+    accountTypeId: FDAccountId,
+    date: FDAccountData.startDate,
+    package:"FD",
+    narration: "Interest",
+    direction: "Debit",
+  });
+      await AccountTransaction.DepositTransactionAccount({
+          createdBy: FDAccountData.createdBy,
+          customerId:existingFDAccountNumber.customerId,
+          amount:  expenseInterest,
+          balance: account.availableBalance + expenseInterest,
+          branchId: account.branchId,
+          accountManagerId: account.accountManagerId,
+          accountNumber: account.accountNumber,
+          accountTypeId: account._id,
+          date: FDAccountData.startDate,
+          package:"FD",
+          narration: "From FD account",
+          direction: "Credit",
+        });
+
+  await Account.findOneAndUpdate(
+    { accountNumber: fdaccount.accountNumber },
+    {
+      $set: {
+        availableBalance: account.availableBalance + expenseInterest,
       },
     }
   );
@@ -233,11 +302,15 @@ const getAccountByAccountNumber = async (accountNumber) => {
         if (!account) {
           throw new Error('Account not found for ledger update');
         }
+           
+        if (contributionInput.fdamount > fdaccount.fdamount) {
+          throw new Error("Insuffitient balance");
+        }
         // const newBalance = fdaccount.balance - fdaccount.amount;
       
           const newContribution = await AccountTransaction.DepositTransactionAccount({
             createdBy: contributionInput.createdBy,
-            amount: fdaccount.totalAmount,
+            amount: fdaccount.fdamount,
             customerId:customerAccount.customerId,
             balance: 0,
             branchId: fdaccount.branchId,
@@ -261,7 +334,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
       
           await FDAccount.findByIdAndUpdate(FDAccountId, {
             totalAmount: 0,
-            status:'Matured'
+            status:'inActive'
           });
       
           return { data:newContribution, message:"Withdrawal successful" };
@@ -294,8 +367,10 @@ const getAccountByAccountNumber = async (accountNumber) => {
     });
 
     const balance = fdaccount.totalAmount - fdaccount.expenseInterest
+    const charge = fdaccount.chargeInterest
+    const balanceAfterCharge = balance  - charge
       
-        if (contributionInput.fdamount > balance) {
+        if (contributionInput.fdamount > balanceAfterCharge) {
           throw new Error("Insuffitient balance");
         }
       
@@ -305,7 +380,22 @@ const getAccountByAccountNumber = async (accountNumber) => {
         if (!account) {
           throw new Error('Account not found for ledger update');
         }
-        const newBalance = balance - contributionInput.fdamount;
+        const newBalance = balanceAfterCharge - contributionInput.fdamount;
+        const amountFromLedgerBalance = contributionInput.fdamount + charge
+          const newContribution1 = await AccountTransaction.DepositTransactionAccount({
+            createdBy: contributionInput.createdBy,
+            amount: charge,
+            customerId:customerAccount.customerId,
+            balance: balanceAfterCharge,
+            branchId: fdaccount.branchId,
+            accountManagerId: fdaccount.accountManagerId,
+            accountNumber: fdaccount.accountNumber,
+            accountTypeId: FDAccountId,
+            date: formattedDate,
+            package:"FD",
+            narration: "Interest Charge",
+            direction: "Debit",
+          });
           const newContribution = await AccountTransaction.DepositTransactionAccount({
             createdBy: contributionInput.createdBy,
             amount: contributionInput.fdamount,
@@ -339,7 +429,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
             { accountNumber: fdaccount.accountNumber },
             {
               $set: {
-                ledgerBalance: account.ledgerBalance - contributionInput.fdamount,
+                ledgerBalance: account.ledgerBalance - amountFromLedgerBalance,
                 availableBalance: account.availableBalance + newBalance,
               },
             }
@@ -347,79 +437,167 @@ const getAccountByAccountNumber = async (accountNumber) => {
       
           await FDAccount.findByIdAndUpdate(FDAccountId, {
             totalAmount: 0,
-            status:'Matured'
+            status:'inActive'
           });
       
           return { data:newContribution, message:"Withdrawal successful" };
         }
         const updateFDAccountAmount = async (details) => {
-            try {
-              const { FDAccountNumber, fdamount, maturityDate, durationMonths, editedBy, startDate } = details;
-          
-              // Validate input
-              if (!FDAccountNumber || !fdamount || typeof fdamount !== 'number' || fdamount < 1000) {
-                throw new Error('Invalid account number or amount. Amount must be at least 1000.');
-              }
-          
-              // Find the Fixed Deposit account
-              const fdaccount = await FDAccount.findOne({ FDAccountNumber });
-          
-              if (!fdaccount) {
-                throw new Error('FDAccount not found.');
-              }
-          
-              if (fdaccount.totalAmount !== 0) {
-                throw new Error('You cannot edit the amount while the package is running.');
-              }
-          
-              // Calculate interest and total amount
-              const interestRate = 15; // Assuming 15% annual interest
-              const interest = (fdamount * interestRate * durationMonths) / (12 * 100);
-              const totalAmount = fdamount + interest;
-          
-              // Update FDAccount
-              const updatedFDAccount = await FDAccount.findOneAndUpdate(
-                { FDAccountNumber },
-                {
-                  $set: {
-                    fdamount,
-                    totalAmount,
-                    maturityDate,
-                    editedBy,
-                    status: 'Active',
-                    interest,
-                    startDate,
-                  },
-                },
-                { new: true }
-              );
-          
-              if (!updatedFDAccount) {
-                throw new Error('FDAccount update failed.');
-              }
-          
-              // Record deposit transaction
-              await AccountTransaction.DepositTransactionAccount({
-                createdBy: editedBy,
-                customerId:fdaccount.customerId,
-                amount:fdamount,
-                balance: totalAmount,
-                branchId: fdaccount.branchId,
-                accountManagerId: fdaccount.accountManagerId,
-                accountNumber: fdaccount.accountNumber,
-                accountTypeId: fdaccount._id,
-                date: startDate,
-                package:"FD",
-                narration: "Deposit",
-                direction: "Credit",
-              });
-          
-              return { success: true, message: 'Amount updated successfully', updatedFDAccount };
-          
-            } catch (error) {
-              return (`An error occurred while updating the account: ${error.message}`);
+          try {
+            const {
+              FDAccountNumber,
+              fdamount,
+              maturityDate,
+              durationMonths,
+              editedBy,
+              startDate,
+            } = details;
+        
+            // Validate input
+            if (
+              !FDAccountNumber ||
+              !fdamount ||
+              typeof fdamount !== "number" ||
+              fdamount < 1000
+            ) {
+              throw new Error("Invalid account number or amount. Amount must be at least 1000.");
             }
-          };
+        
+            // Fetch FD account and main account
+            const fdaccount = await FDAccount.findOne({ FDAccountNumber });
+            const account = await Account.findOne({ accountNumber: fdaccount.accountNumber });
+        
+            if (!fdaccount || !account) {
+              throw new Error("FDAccount or related main Account not found.");
+            }
+        
+            if (fdaccount.totalAmount !== 0) {
+              throw new Error("You cannot edit the amount while the package is running.");
+            }
+        
+            // Fetch interest rates
+            const interestData = await Interest.findOne();
+            if (!interestData) {
+              throw new Error("Interest configuration not found.");
+            }
+        
+            const { expenseInterestRate, incomeInterestRate, chargeInterestRate } = interestData;
+        
+            // Compute interest and total
+            const chargeInterest = (fdamount * chargeInterestRate * durationMonths) / (12 * 100);
+            const expenseInterest = (fdamount * expenseInterestRate * durationMonths) / (12 * 100);
+            const incomeInterest = (fdamount * incomeInterestRate * durationMonths) / (12 * 100);
+            const totalAmount = fdamount + expenseInterest;
+        
+            // Update FD Account
+            const updatedFDAccount = await FDAccount.findOneAndUpdate(
+              { FDAccountNumber },
+              {
+                $set: {
+                  fdamount,
+                  totalAmount,
+                  maturityDate,
+                  startDate,
+                  editedBy,
+                  status: "Active",
+                  expenseInterest,
+                  incomeInterest,
+                  chargeInterest,
+                  expenseInterestRate,
+                  incomeInterestRate,
+                  chargeInterestRate,
+                },
+              },
+              { new: true }
+            );
+        
+            if (!updatedFDAccount) {
+              throw new Error("FDAccount update failed.");
+            }
+        
+            // Record FD deposit transaction
+            await AccountTransaction.DepositTransactionAccount({
+              createdBy: editedBy,
+              customerId: fdaccount.customerId,
+              amount: fdamount,
+              balance: totalAmount,
+              branchId: fdaccount.branchId,
+              accountManagerId: fdaccount.accountManagerId,
+              accountNumber: fdaccount.accountNumber,
+              accountTypeId: fdaccount._id,
+              date: startDate,
+              package: "FD",
+              narration: "Deposit",
+              direction: "Credit",
+            });
+        
+            // Update main account ledger balance
+            const updatedLedgerBalance = account.ledgerBalance + totalAmount;
+            await Account.findOneAndUpdate(
+              { accountNumber: fdaccount.accountNumber },
+              {
+                $set: {
+                  ledgerBalance: updatedLedgerBalance,
+                },
+              }
+            );
+        
+            // Record interest as debit in FD account
+            await AccountTransaction.DepositTransactionAccount({
+              createdBy: editedBy,
+              amount: expenseInterest,
+              customerId: fdaccount.customerId,
+              balance: totalAmount - expenseInterest,
+              branchId: fdaccount.branchId,
+              accountManagerId: fdaccount.accountManagerId,
+              accountNumber: fdaccount.accountNumber,
+              accountTypeId: fdaccount._id,
+              date: startDate,
+              package: "FD",
+              narration: "Interest",
+              direction: "Debit",
+            });
+        
+            // Credit interest to main account
+            await AccountTransaction.DepositTransactionAccount({
+              createdBy: editedBy,
+              customerId: fdaccount.customerId,
+              amount: expenseInterest,
+              balance: account.availableBalance + expenseInterest,
+              branchId: account.branchId,
+              accountManagerId: account.accountManagerId,
+              accountNumber: account.accountNumber,
+              accountTypeId: account._id,
+              date: startDate,
+              package: "FD",
+              narration: "From FD account",
+              direction: "Credit",
+            });
+        
+            // Update available balance in main account
+            await Account.findOneAndUpdate(
+              { accountNumber: fdaccount.accountNumber },
+              {
+                $set: {
+                  availableBalance: account.availableBalance + expenseInterest,
+                },
+              }
+            );
+        
+            return {
+              success: true,
+              message: "FD amount and interest updated successfully.",
+              updatedFDAccount,
+            };
+          } catch (error) {
+            console.error("FD update error:", error);
+            return {
+              success: false,
+              message: `An error occurred while updating the account: ${error.message}`,
+            };
+          }
+        };
+        
           
     const sellProduct = async (contributionInput) => {
         // Retrieve customer account using the DS account number

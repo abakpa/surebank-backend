@@ -20,10 +20,10 @@ const getInterest = async (req, res) => {
 };
    const updateInterest = async (req,res) => {
         const editedBy = req.staff.staffId;
-        const {expenseInterestRate,incomeInterestRate} = req.body
+        const {expenseInterestRate,incomeInterestRate,chargeInterestRate} = req.body
         try {
       
-      const newData = await FDAccountService.updateInterest({expenseInterestRate,incomeInterestRate,editedBy})
+      const newData = await FDAccountService.updateInterest({expenseInterestRate,incomeInterestRate,chargeInterestRate,editedBy})
           res.status(201).json({ data: newData });
         } catch (error) {
           return { success: false, message: 'An error occurred while updating', error };
@@ -38,16 +38,16 @@ const createFDAccount = async (req, res) => {
 
     // Get current date
     const currentDate = new Date();
-    
-    // Format start date as "dd MMM yy, hh:mm AM/PM"
     const startDate = currentDate.toLocaleString("en-GB", {
       day: "2-digit",
       month: "short",
-      year: "2-digit",
+      year: "2-digit", // Abbreviated year (YY)
       hour: "2-digit",
       minute: "2-digit",
-      hour12: true,
+      hour12: true, // Ensures AM/PM format
     });
+    const maturityDate = new Date();
+    maturityDate.setMonth(maturityDate.getMonth() + durationMonths);
 
     const status = 'Active';
 
@@ -57,21 +57,21 @@ const createFDAccount = async (req, res) => {
     }
 
     // Calculate maturity date with proper year adjustment
-    const maturityDate = new Date(currentDate);
-    const currentYear = maturityDate.getFullYear();
-    const currentMonth = maturityDate.getMonth();
+    // const maturityDate = new Date(currentDate);
+    // const currentYear = maturityDate.getFullYear();
+    // const currentMonth = maturityDate.getMonth();
     
     // Calculate new month and year
-    const totalMonths = currentMonth + durationMonths;
-    const newYear = currentYear + Math.floor(totalMonths / 12);
-    const newMonth = totalMonths % 12;
+    // const totalMonths = currentMonth + durationMonths;
+    // const newYear = currentYear + Math.floor(totalMonths / 12);
+    // const newMonth = totalMonths % 12;
     
-    maturityDate.setFullYear(newYear, newMonth, maturityDate.getDate());
+    // maturityDate.setFullYear(newYear, newMonth, maturityDate.getDate());
 
     // Handle cases where the original date was the last day of the month
-    if (maturityDate.getDate() !== currentDate.getDate()) {
-      maturityDate.setDate(0); // Set to last day of previous month
-    }
+    // if (maturityDate.getDate() !== currentDate.getDate()) {
+    //   maturityDate.setDate(0); // Set to last day of previous month
+    // }
 
     // Create FD account using service
     const fixDeposit = await FDAccountService.createFDAccount({

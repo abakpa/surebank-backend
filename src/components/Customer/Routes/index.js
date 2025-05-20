@@ -8,6 +8,8 @@ router.post('/branchcustomer', staffAuth, customerController.getCustomerByBranch
 router.post('/repcustomer', staffAuth, customerController.getCustomerByRep);
 router.get('/', customerController.getCustomer);
 router.get('/:id', customerController.getCustomerById);
+router.put('/:id', customerController.transferAllCustomer);
+router.put('/newstaff/:id', customerController.transferCustomer);
 
 
 module.exports = router;

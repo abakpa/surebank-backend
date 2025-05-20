@@ -27,6 +27,12 @@ const staffSchema = new mongoose.Schema({
     required: true
 
   },
+  status: { 
+    type: String, 
+    required: true,
+    default: "isActive"
+
+  },
   branchId: { 
     type: String, 
     ref:'Branch',

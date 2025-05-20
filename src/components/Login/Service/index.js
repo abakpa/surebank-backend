@@ -10,6 +10,7 @@ const customerLogin = async (phone, password) => {
         if (!customer) {
             throw new Error('Invalid phone number or password');
         }
+  
 
         const isMatch = await bcrypt.compare(password, customer.password);
         if (!isMatch) {
@@ -29,7 +30,9 @@ const staffLogin = async (email, password) => {
         if (!staff) {
             throw new Error('Invalid email or password');
         }
-
+        if (staff.status !== "isActive") {
+            throw new Error('Staff is deactivated');
+        }
         const isMatch = await bcrypt.compare(password, staff.password);
         if (!isMatch) {
             throw new Error('Invalid email or password');

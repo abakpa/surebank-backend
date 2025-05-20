@@ -26,11 +26,32 @@ const getBranchStaff = async (staff) =>{
       throw error;
   }
 }
+const updateStaff = async (details) => {
+  try {
+    const { staff, status } = details;
+
+    const updatedStaff = await Staff.findOneAndUpdate(
+      { _id: staff },
+      { $set: { status } },
+      { new: true }
+    );
+
+    if (!updatedStaff) {
+      throw new Error("Staff not found or update failed");
+    }
+
+    return { success: true, message: "Updated successfully", updatedStaff };
+  } catch (error) {
+    console.error("Error updating staff:", error);
+    throw new Error("An error occurred while updating the staff status.");
+  }
+};
+
 
 module.exports = {
     createStaff,
     getStaffByEmail,
     getStaff,
     getBranchStaff,
-    
+    updateStaff
   };

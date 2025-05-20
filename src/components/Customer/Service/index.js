@@ -1,3 +1,7 @@
+const Account = require('../../Account/Model');
+const DSAccount = require('../../DSAccount/Model');
+const FDAccount = require('../../FDAccount/Model');
+const SBAccount = require('../../SBAccount/Model');
 const Staff = require('../../Staff/Model');
 const Customer = require('../Model/index');
 
@@ -44,11 +48,122 @@ const getCustomerById = async (customerId) =>{
         throw error;
     }
   }
+  const transferAllCustomer = async (details) => {
+    try {
+      const { oldStaff, newStaff } = details;
+  
+      // Perform updates on all related collections
+      const customerUpdate = await Customer.updateMany(
+        { createdBy: oldStaff },
+        { $set: { createdBy: newStaff } }
+      );
+      const accountUpdate = await Account.updateMany(
+        { createdBy: oldStaff },
+        { $set: { createdBy: newStaff } }
+      );
+      const FDAccountUpdate = await FDAccount.updateMany(
+        { createdBy: oldStaff },
+        { $set: { createdBy: newStaff } }
+      );
+      const DSAccountUpdate = await DSAccount.updateMany(
+        { createdBy: oldStaff },
+        { $set: { createdBy: newStaff } }
+      );
+      const SBAccountUpdate = await SBAccount.updateMany(
+        { createdBy: oldStaff },
+        { $set: { createdBy: newStaff } }
+      );
+  
+      // Count total modified records
+      const totalModified =
+        customerUpdate.modifiedCount +
+        accountUpdate.modifiedCount +
+        FDAccountUpdate.modifiedCount +
+        DSAccountUpdate.modifiedCount +
+        SBAccountUpdate.modifiedCount;
+  
+      if (totalModified === 0) {
+        throw new Error("No records were updated.");
+      }
+  
+      return {
+        success: true,
+        message: `${totalModified} record(s) transferred successfully.`,
+        updated: {
+          customers: customerUpdate.modifiedCount,
+          accounts: accountUpdate.modifiedCount,
+          fdAccounts: FDAccountUpdate.modifiedCount,
+          dsAccounts: DSAccountUpdate.modifiedCount,
+          sbAccounts: SBAccountUpdate.modifiedCount,
+        },
+      };
+    } catch (error) {
+      console.error("Error transferring customers and accounts:", error);
+      throw new Error("An error occurred while transferring records.");
+    }
+  };
+  const transferCustomer = async (details) => {
+    try {
+      const { customer, newStaff } = details;
+  
+      const customerUpdate = await Customer.updateOne(
+        { _id: customer },
+        { $set: { createdBy: newStaff } }
+      );
+      const accountUpdate = await Account.updateOne(
+        { customerId: customer },
+        { $set: { createdBy: newStaff } }
+      );
+      const FDAccountUpdate = await FDAccount.updateOne(
+        { customerId: customer },
+        { $set: { createdBy: newStaff } }
+      );
+      const DSAccountUpdate = await DSAccount.updateOne(
+        { customerId: customer },
+        { $set: { createdBy: newStaff } }
+      );
+      const SBAccountUpdate = await SBAccount.updateOne(
+        { customerId: customer },
+        { $set: { createdBy: newStaff } }
+      );
+  
+      const totalModified =
+        customerUpdate.modifiedCount +
+        accountUpdate.modifiedCount +
+        FDAccountUpdate.modifiedCount +
+        DSAccountUpdate.modifiedCount +
+        SBAccountUpdate.modifiedCount;
+  
+      if (totalModified === 0) {
+        throw new Error("No records were updated.");
+      }
+  
+      return {
+        success: true,
+        message: `${totalModified} record(s) transferred successfully.`,
+        updated: {
+          customers: customerUpdate.modifiedCount,
+          accounts: accountUpdate.modifiedCount,
+          fdAccounts: FDAccountUpdate.modifiedCount,
+          dsAccounts: DSAccountUpdate.modifiedCount,
+          sbAccounts: SBAccountUpdate.modifiedCount,
+        },
+      };
+    } catch (error) {
+      console.error("Error transferring customers and accounts:", error);
+      throw new Error("An error occurred while transferring records.");
+    }
+  };
+  
+  
+  
 
   module.exports = {
     createCustomer,
     getCustomers,
     getCustomerById,
     getCustomerByBranch,
-    getCustomerByRep
+    getCustomerByRep,
+    transferAllCustomer,
+    transferCustomer,
   };

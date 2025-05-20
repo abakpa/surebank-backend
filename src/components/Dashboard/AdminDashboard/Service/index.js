@@ -189,42 +189,52 @@ async function getAllFDInterestExpense(date = null, branchId = null) {
 }
 async function getAllFDTransaction(date = null, branchId = null) {
   try {
-    const query = {};
-
-    // Set end of the provided date or today
+    // Set date filter
     const endDate = date ? new Date(date) : new Date();
     endDate.setHours(23, 59, 59, 999);
-    query.createdAt = { $lte: endDate };
 
-    // Filter by branch if branchId is provided
+    // Build match query
+    const match = {
+      createdAt: { $lte: endDate }
+    };
+
     if (branchId) {
-      query.branchId = branchId;
+      match.branchId = branchId;
     }
 
-    const transactions = await FDAccount.find(query)
-      .populate({
-        path: 'createdBy', // Populate createdBy to get branch details
-        model: 'Staff'
-      })
-        .populate ({
-          path: 'branchId',
-          model: 'Branch',
-        
-      })
-      .populate({
-        path: 'customerId', // Populate customer details using customerId directly in AccountTransaction
-        model: 'Customer',
-      })
-      .sort({ createdAt: -1 });
+    // Use aggregation to add sort priority and sort accordingly
+    const transactions = await FDAccount.aggregate([
+      { $match: match },
+      {
+        $addFields: {
+          statusOrder: {
+            $switch: {
+              branches: [
+                { case: { $eq: ["$status", "Matured"] }, then: 1 },
+                { case: { $eq: ["$status", "Active"] }, then: 2 },
+              ],
+              default: 3
+            }
+          }
+        }
+      },
+      { $sort: { statusOrder: 1} }, // Sort by statusOrder, then by date
+    ]);
 
-    // const totalBalance = transactions.reduce((sum, tx) => sum + (tx.expenseInterest || 0), 0);
+    // Manually populate if needed (Mongoose's .aggregate doesn't populate)
+    const populatedTransactions = await FDAccount.populate(transactions, [
+      { path: 'createdBy', model: 'Staff' },
+      { path: 'branchId', model: 'Branch' },
+      { path: 'customerId', model: 'Customer' }
+    ]);
 
-    return transactions
+    return populatedTransactions;
   } catch (error) {
     console.error("Error fetching FD accounts:", error);
-    return totalBalance = 0
+    return [];
   }
 }
+
 async function getAllFDPackage(date = null, branchId = null) {
   try {
     const query = {};

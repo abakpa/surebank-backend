@@ -62,6 +62,13 @@ durationMonths: {
   expenseInterest: { 
     type: Number, 
   },
+  chargeInterestRate: { 
+    type: Number, 
+    required: true, 
+},
+  chargeInterest: { 
+    type: Number, 
+  },
   incomeInterest: { 
     type: Number, 
   },
