@@ -5,8 +5,8 @@ const {staffAuth} = require('../../Middleware/index')
 const router = express.Router();
 
 router.post('/', staffAuth, expenditureController.createExpenditure);
-router.get('/', expenditureController.getExpenditure);
-router.get('/:id', expenditureController.getExpenditureById);
+router.get('/',staffAuth, expenditureController.getExpenditure);
+router.get('/:id',staffAuth, expenditureController.getExpenditureById);
 
 
 

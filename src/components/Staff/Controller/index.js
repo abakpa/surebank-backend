@@ -47,6 +47,7 @@ const getStaff = async (req, res) => {
     }
   }
 const getBranchStaff = async (req, res) => {
+
   const staffId = req.staff.staffId;
     try {
         const staff = await staffService.getBranchStaff(staffId);

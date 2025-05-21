@@ -3,9 +3,9 @@ const router = express.Router();
 const staffController = require('../Controller/index');
 const {staffAuth} = require('../../Middleware/index')
 
-router.post('/',staffController.registerStaff);
-router.get('/',staffController.getStaff);
-router.put('/:id',staffController.updateStaff);
-router.post('/branchstaff',staffAuth,staffController.getBranchStaff);
+router.post('/',staffAuth,staffController.registerStaff);
+router.get('/',staffAuth,staffController.getStaff);
+router.put('/:id',staffAuth,staffController.updateStaff);
+router.get('/branchstaff',staffAuth,staffController.getBranchStaff);
 
 module.exports = router;

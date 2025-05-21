@@ -4,12 +4,12 @@ const customerController = require('../Controller/index');
 const {staffAuth} = require('../../Middleware/index')
 
 router.post('/', staffAuth, customerController.registerCustomer);
-router.post('/branchcustomer', staffAuth, customerController.getCustomerByBranch);
-router.post('/repcustomer', staffAuth, customerController.getCustomerByRep);
-router.get('/', customerController.getCustomer);
-router.get('/:id', customerController.getCustomerById);
-router.put('/:id', customerController.transferAllCustomer);
-router.put('/newstaff/:id', customerController.transferCustomer);
+router.get('/branchcustomer', staffAuth, customerController.getCustomerByBranch);
+router.get('/repcustomer', staffAuth, customerController.getCustomerByRep);
+router.get('/', staffAuth,customerController.getCustomer);
+router.get('/:id',staffAuth, customerController.getCustomerById);
+router.put('/:id', staffAuth,customerController.transferAllCustomer);
+router.put('/newstaff/:id',staffAuth, customerController.transferCustomer);
 
 
 module.exports = router;

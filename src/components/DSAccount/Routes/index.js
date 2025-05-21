@@ -5,8 +5,8 @@ const {staffAuth} = require('../../Middleware/index')
 
 router.post('/', staffAuth, DSAccountController.createDSAccount);
 router.put('/', staffAuth, DSAccountController.updateDSAccountAmount);
-router.get('/', DSAccountController.getDSAccount);
-router.get('/:id', DSAccountController.getCustomerDSAccountById);
+router.get('/',staffAuth, DSAccountController.getDSAccount);
+router.get('/:id',staffAuth, DSAccountController.getCustomerDSAccountById);
 router.post('/deposit', staffAuth, DSAccountController.saveDailyContribution);
 router.post('/withdrawal', staffAuth, DSAccountController.withdrawDailyContribution);
 router.post('/mainwithdrawal', staffAuth, DSAccountController.mainWithdrawal);

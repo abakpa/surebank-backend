@@ -3,7 +3,8 @@ const jwt = require("jsonwebtoken");
 const customerAuth = async(req, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-        res.send("Authentication invalid");
+        return res.status(401).json({ message: "Authorization token missing or malformed" });
+        // res.send("Authentication invalid");
     }
     const token = authHeader.split(" ")[1];
     try {
@@ -30,8 +31,10 @@ const staffAuth = async(req, res, next) => {
 
         next();
     } catch (error) {
+        if (error) return res.status(401).json({ message: 'Token expired or invalid' });
+
         console.log(error);
-        res.send("invalid authentication");
+        // res.send("invalid authentication");
     }
 };
 module.exports = {
