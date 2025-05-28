@@ -110,6 +110,16 @@ const bcrypt = require('bcrypt')
             res.status(500).json({ message: error.message });
         }
       }
+      const getAllDailyFDAccount = async (req, res) => {
+        try {
+            const {date,branchId} = req.body
+
+            const DSAccount = await accountTransactionService.getAllDailyFDAccount(date,branchId);
+            res.status(200).json(DSAccount);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
       const getAllDailyDSAccountWithdrawal = async (req, res) => {
         try {
             const {date,branchId} = req.body
@@ -161,6 +171,15 @@ const bcrypt = require('bcrypt')
             const {date,branchId} = req.body
             const SBAccount = await accountTransactionService.getDSAccountIncome(date,branchId);
             res.status(200).json(SBAccount);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
+      const getFDAccountIncome = async (req, res) => {
+        try {
+            const {date,branchId} = req.body
+            const FDAccount = await accountTransactionService.getFDAccountIncome(date,branchId);
+            res.status(200).json(FDAccount);
         } catch (error) {
             res.status(500).json({ message: error.message });
         }
@@ -286,6 +305,7 @@ const bcrypt = require('bcrypt')
     getAllSBAccountWithdrawal,
     getAllContribution,
     getAllDailyDSAccount,
+    getAllDailyFDAccount,
     getAllDailyDSAccountWithdrawal,
     getAllDailyDSAccountCharge,
     getAllDailySBAccount,
@@ -296,6 +316,7 @@ const bcrypt = require('bcrypt')
     getAllAccountPackage,
     getSBAccountIncome,
     getDSAccountIncome,
+    getFDAccountIncome,
     getAllSBandDSIncome,
     getAllExpenditure,
     getProfit,

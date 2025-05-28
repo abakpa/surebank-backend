@@ -4,6 +4,7 @@ const FDAccount = require('../Model/index');
 const AccountTransaction = require('../../AccountTransaction/Service/index');
 const SureBankAccount = require('../../SureBankAccount/Service/index');
 const Interest = require('../Model/interestRate');
+const FDStatement = require('../Model/fdStatement')
 
 
 const createInterest = async (data) => {
@@ -21,6 +22,25 @@ const getInterest = async () => {
     } catch (error) {
         throw error;
     }
+};
+const getFDStatement = async () => {
+    try {
+        const fdstatement = await FDStatement.find({})
+          .populate ({
+            path: 'branchId',
+            model: 'Branch',
+          
+        })
+        .populate({
+          path: 'customerId', // Populate customer details using customerId directly in AccountTransaction
+          model: 'Customer',
+        })
+        .sort({ status: 1 });
+        return fdstatement
+    } catch (error) {
+        throw error;
+    }
+    
 };
 const updateInterest = async (details) => {
     const {expenseInterestRate,incomeInterestRate,chargeInterestRate,editedBy} = details
@@ -137,7 +157,7 @@ const createFDAccount = async (FDAccountData) => {
           accountNumber: account.accountNumber,
           accountTypeId: account._id,
           date: FDAccountData.startDate,
-          package:"FD",
+          package:"FDTRANSFER",
           narration: "From FD account",
           direction: "Credit",
         });
@@ -150,6 +170,30 @@ const createFDAccount = async (FDAccountData) => {
       },
     }
   );
+     const sureBankDeposit = {
+        package:"FD",
+         date: FDAccountData.startDate,
+         direction: "Credit",
+         narration: "FD Income",
+         branchId: account.branchId,
+         amount: incomeInterest - expenseInterest,
+         customerId:existingFDAccountNumber.customerId,
+         type:account._id
+       }
+  
+       await SureBankAccount.DepositTransactionAccount({...sureBankDeposit});
+     const fdStatement = {
+         customerId:existingFDAccountNumber.customerId,
+         accountNumber: newFDAccount.accountNumber,
+         FDAccountNumber,
+         branchId: account.branchId,
+         incomeInterest,
+         expenseInterest,
+         charge:0,
+         profit: incomeInterest - expenseInterest
+       }
+       const fdincomestatement = new FDStatement(fdStatement);
+       await fdincomestatement.save();
   return ({message:"Fixed deposit account created successfilly", newFDAccount})
 };
 
@@ -420,7 +464,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
                   accountNumber: account.accountNumber,
                   accountTypeId: account._id,
                   date: formattedDate,
-                  package:"FD",
+                  package:"FDTRANSFER",
                   narration: "From FD account",
                   direction: "Credit",
                 });
@@ -439,7 +483,30 @@ const getAccountByAccountNumber = async (accountNumber) => {
             totalAmount: 0,
             status:'inActive'
           });
+          const sureBankDeposit = {
+            package:"FD",
+             date: formattedDate,
+             direction: "Credit",
+             narration: "FD Charge Income",
+             branchId: account.branchId,
+             amount: charge - fdaccount.expenseInterest,
+             customerId:customerAccount.customerId,
+             type:account._id
+           }
       
+           await SureBankAccount.DepositTransactionAccount({...sureBankDeposit});
+           const fdStatement = {
+            customerId:customerAccount.customerId,
+            accountNumber: account.accountNumber,
+            FDAccountNumber:fdaccount.FDAccountNumber,
+            branchId: account.branchId,
+            incomeInterest:0,
+            expenseInterest:fdaccount.expenseInterest,
+            charge,
+            profit: charge - fdaccount.expenseInterest
+          }
+          const fdincomestatement = new FDStatement(fdStatement);
+          await fdincomestatement.save();
           return { data:newContribution, message:"Withdrawal successful" };
         }
         const updateFDAccountAmount = async (details) => {
@@ -687,5 +754,6 @@ module.exports = {
     updateFDAccountAmount,
     createInterest,
     getInterest,
-    updateInterest
+    updateInterest,
+    getFDStatement
   };

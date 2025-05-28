@@ -8,6 +8,7 @@ router.post('/repds/:id',staffAuth, AcountTransactionController.getAllRepDSAccou
 router.post('/repsb/:id',staffAuth, AcountTransactionController.getAllRepSBAccount);
 router.post('/totalsbandds/:id',staffAuth, AcountTransactionController.getAllRepContribution);
 router.post('/dailyrepds/:id',staffAuth, AcountTransactionController.getAllRepDailyDSAccount);
+router.post('/dailyrepfd/:id',staffAuth, AcountTransactionController.getAllRepDailyFDAccount);
 router.post('/dailyrepsb/:id',staffAuth, AcountTransactionController.getAllRepDailySBAccount);
 router.post('/totaldailyrepcontribution/:id',staffAuth, AcountTransactionController.getAllRepDailyContribution);
 router.post('/dailyrepdswithdrawal/:id',staffAuth, AcountTransactionController.getAllRepDailyDSAccountWithdrawal);

@@ -8,6 +8,7 @@ router.post('/ds',staffAuth, AcountTransactionController.getAllDSAccount);
 router.post('/dswithdrawal',staffAuth, AcountTransactionController.getAllDSAccountWithdrawal);
 router.get('/dscharge',staffAuth, AcountTransactionController.getAllDSAccountCharge);
 router.post('/dailyds',staffAuth, AcountTransactionController.getAllDailyDSAccount);
+router.post('/dailyfd',staffAuth, AcountTransactionController.getAllDailyFDAccount);
 router.post('/dailydswithdrawal',staffAuth, AcountTransactionController.getAllDailyDSAccountWithdrawal);
 router.get('/dailydscharge',staffAuth, AcountTransactionController.getAllDailyDSAccountCharge);
 router.post('/sb',staffAuth, AcountTransactionController.getAllSBAccount);
@@ -26,6 +27,7 @@ router.post('/fdpackage',staffAuth, AcountTransactionController.getAllFDPackage)
 router.post('/packages',staffAuth, AcountTransactionController.getAllAccountPackage);
 router.post('/sbincome',staffAuth, AcountTransactionController.getSBAccountIncome);
 router.post('/dsincome',staffAuth, AcountTransactionController.getDSAccountIncome);
+router.post('/fdincome',staffAuth, AcountTransactionController.getFDAccountIncome);
 router.post('/totalincome',staffAuth, AcountTransactionController.getAllSBandDSIncome);
 router.post('/totalexpenditure',staffAuth, AcountTransactionController.getAllExpenditure);
 router.post('/profit',staffAuth, AcountTransactionController.getProfit);

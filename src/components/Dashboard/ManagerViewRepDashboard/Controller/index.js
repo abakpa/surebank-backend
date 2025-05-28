@@ -102,6 +102,17 @@ const getBranchStaff = async (req, res) => {
                               res.status(500).json({ message: error.message });
                           }
                         }
+     const getAllRepDailyFDAccount = async (req, res) => {
+                          try {
+                            const staff = req.params.id
+                            const {date} = req.body
+                  
+                              const DSAccount = await accountTransactionService.getAllRepDailyFDAccount(date,staff);
+                              res.status(200).json(DSAccount);
+                          } catch (error) {
+                              res.status(500).json({ message: error.message });
+                          }
+                        }
       const getAllRepDailyDSAccountWithdrawal = async (req, res) => {
                           try {
                             const staff = req.params.id
@@ -300,6 +311,7 @@ const getBranchStaff = async (req, res) => {
         getAllRepSBAccountWithdrawal,
         getAllRepContribution,
         getAllRepDailyDSAccount,
+        getAllRepDailyFDAccount,
         getAllRepDailyDSAccountWithdrawal,
         getAllRepDailyDSAccountCharge,
         getAllRepDailySBAccount,

@@ -13,6 +13,7 @@ router.get('/:id',staffAuth, FDAccountController.getCustomerFDAccountById);
 // router.post('/deposit', staffAuth, SBAccountController.saveSBContribution);
 router.post('/withdrawal', staffAuth, FDAccountController.withdrawFixedDeposit);
 router.post('/imaturewithdrawal', staffAuth, FDAccountController.withdrawImatureFixedDeposit);
+router.post('/fdstatement', staffAuth, FDAccountController.getFDStatement);
 
 
 module.exports = router;

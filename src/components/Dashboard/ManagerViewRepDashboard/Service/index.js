@@ -167,6 +167,37 @@ async function getAllRepDailyDSAccount(date = null, staff) {
     
     return totalBalance  ;
 }
+async function getAllRepDailyFDAccount(date = null, staff) {
+
+    let query = { package: 'FD', direction: 'Credit',createdBy:staff };
+   // Filter by date if provided or default to today
+   const targetDate = date ? new Date(date) : new Date();
+
+   // Set start of day
+   const startDate = new Date(targetDate);
+   startDate.setHours(0, 0, 0, 0);
+   
+   // Set end of day
+   const endDate = new Date(targetDate);
+   endDate.setHours(23, 59, 59, 999);
+   
+   query.createdAt = { $gte: startDate, $lte: endDate };
+
+    const transactions = await AccountTransaction.find(query);
+    
+ // Sum up all withdrawal amounts directly
+ const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0) || 0;
+    
+    // Calculate the sum of the latest balances
+    // const totalBalance = Array.from(balanceMap.values()).reduce((sum, balance) => sum + balance, 0);
+    //  const dswithdrawal = await getAllRepDailyDSAccountWithdrawalByDate(date,staff) ;
+    //  const charge = await getAllRepDailyDSAccountChargeByDate(date,staff);
+ 
+
+    // const Withdrawal = dswithdrawal + charge
+    
+    return totalBalance  ;
+}
 async function getAllRepDailyDSAccountChargeByDate(date = null, staff) {
   
     let query = { package: 'DS', direction: 'Charge',createdBy:staff };
@@ -645,6 +676,7 @@ module.exports = {
     // getAllDailySBAccountWithdrawalByDate,
     getAllRepSBandDSAccount,
     getAllRepDailyDSAccount,
+    getAllRepDailyFDAccount,
     // getAllDailyDSAccountCharge,
     getAllRepDailyDSAccountWithdrawal,
     getAllRepDailySBAccount,

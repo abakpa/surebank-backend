@@ -312,6 +312,38 @@ async function getAllBranchDailyDSAccount(date = null, staff) {
     
     return totalBalance  ;
 }
+async function getAllBranchDailyFDAccount(date = null, staff) {
+    const branch = await Staff.findOne({_id:staff})
+    const branchId = branch.branchId
+    let query = { package: 'FD', direction: 'Credit',branchId:branchId };
+   // Filter by date if provided or default to today
+   const targetDate = date ? new Date(date) : new Date();
+
+   // Set start of day
+   const startDate = new Date(targetDate);
+   startDate.setHours(0, 0, 0, 0);
+   
+   // Set end of day
+   const endDate = new Date(targetDate);
+   endDate.setHours(23, 59, 59, 999);
+   
+   query.createdAt = { $gte: startDate, $lte: endDate };
+
+    const transactions = await AccountTransaction.find(query);
+    
+ // Sum up all withdrawal amounts directly
+ const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0) || 0;
+    
+    // Calculate the sum of the latest balances
+    // const totalBalance = Array.from(balanceMap.values()).reduce((sum, balance) => sum + balance, 0);
+    //  const dswithdrawal = await getAllBranchDailyDSAccountWithdrawalByDate(date,staff) ;
+    //  const charge = await getAllBranchDailyDSAccountChargeByDate(date,staff);
+ 
+
+    // const Withdrawal = dswithdrawal + charge
+    
+    return totalBalance  ;
+}
 async function getAllBranchDailyDSAccountChargeByDate(date = null, staff) {
     const branch = await Staff.findOne({_id:staff})
     const branchId = branch.branchId
@@ -747,6 +779,7 @@ module.exports = {
     // getAllDailySBAccountWithdrawalByDate,
     getAllBranchSBandDSAccount,
     getAllBranchDailyDSAccount,
+    getAllBranchDailyFDAccount,
     // getAllDailyDSAccountCharge,
     getAllBranchDailyDSAccountWithdrawal,
     getAllBranchDailySBAccount,

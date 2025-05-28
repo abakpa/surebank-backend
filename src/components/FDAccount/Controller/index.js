@@ -29,6 +29,14 @@ const getInterest = async (req, res) => {
           return { success: false, message: 'An error occurred while updating', error };
         }
       };
+      const getFDStatement = async (req, res) => {
+        try {
+            const fdStatement = await FDAccountService.getFDStatement();
+            res.status(200).json(fdStatement);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+    };
 
 // Create a fixed deposit
 const createFDAccount = async (req, res) => {
@@ -172,5 +180,6 @@ module.exports = {
     updateFDAccount,
     createInterest,
     getInterest,
-    updateInterest
+    updateInterest,
+    getFDStatement
   };

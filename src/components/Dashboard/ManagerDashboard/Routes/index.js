@@ -8,6 +8,7 @@ router.post('/branchds',staffAuth, AcountTransactionController.getAllBranchDSAcc
 router.post('/branchsb',staffAuth, AcountTransactionController.getAllBranchSBAccount);
 router.post('/totalsbandds',staffAuth, AcountTransactionController.getAllBranchContribution);
 router.post('/dailybranchds', staffAuth,AcountTransactionController.getAllBranchDailyDSAccount);
+router.post('/dailybranchfd', staffAuth,AcountTransactionController.getAllBranchDailyFDAccount);
 router.post('/dailybranchsb',staffAuth, AcountTransactionController.getAllBranchDailySBAccount);
 router.post('/totaldailybranchcontribution',staffAuth, AcountTransactionController.getAllBranchDailyContribution);
 router.post('/dailybranchdswithdrawal',staffAuth, AcountTransactionController.getAllBranchDailyDSAccountWithdrawal);

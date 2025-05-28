@@ -124,6 +124,17 @@ const bcrypt = require('bcrypt')
                               res.status(500).json({ message: error.message });
                           }
                         }
+     const getAllBranchDailyFDAccount = async (req, res) => {
+                          try {
+                            const staff = req.staff.staffId;
+                            const {date} = req.body
+                  
+                              const DSAccount = await accountTransactionService.getAllBranchDailyFDAccount(date,staff);
+                              res.status(200).json(DSAccount);
+                          } catch (error) {
+                              res.status(500).json({ message: error.message });
+                          }
+                        }
       const getAllBranchDailyDSAccountWithdrawal = async (req, res) => {
                           try {
                             const staff = req.staff.staffId;
@@ -315,6 +326,7 @@ const bcrypt = require('bcrypt')
         getAllBranchSBAccountWithdrawal,
         getAllBranchContribution,
         getAllBranchDailyDSAccount,
+        getAllBranchDailyFDAccount,
         getAllBranchDailyDSAccountWithdrawal,
         getAllBranchDailyDSAccountCharge,
         getAllBranchDailySBAccount,
