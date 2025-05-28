@@ -27,7 +27,7 @@ const staffAuth = async(req, res, next) => {
     try {
         const payload = jwt.verify(token, process.env.JWT_SECRET_KEY);
 
-        req.staff = { staffId: payload.id, email: payload.email };
+        req.staff = { staffId: payload.id, phone: payload.phone };
 
         next();
     } catch (error) {

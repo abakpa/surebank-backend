@@ -1,7 +1,11 @@
 const mongoose = require('mongoose');
 
 const staffSchema = new mongoose.Schema({
-  name: {
+  firseName: {
+    type: String,
+    required: true
+  },
+  LastName: {
     type: String,
     required: true
   },

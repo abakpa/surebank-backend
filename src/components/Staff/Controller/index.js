@@ -18,12 +18,12 @@ const registerStaff = async (req, res) => {
   // const length = 12
   // const generatePassword = crypto.randomBytes(Math.ceil(length / 2)).toString('hex').slice(0, length);
   req.body.password = await bcrypt.hash(req.body.password,salt)
-    const { name, phone, email, password, address,role,branchId } = req.body;
+    const { firstName,lastName, phone, email, password, address,role,branchId } = req.body;
     const existingStaff = await staffService.getStaffByEmail(email);
     if (existingStaff) {
       return res.status(400).json({ message: 'Staff already exists' });
     }
-    const newStaff = await staffService.createStaff({ name, phone, email,password, address, password,role,branchId });
+    const newStaff = await staffService.createStaff({ firstName,lastName, phone, email,password, address, password,role,branchId });
 
     // const mailOptions = {
     //     from: process.env.EMAIL,
