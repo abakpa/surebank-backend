@@ -22,8 +22,8 @@ const customerLogin = async (req, res) => {
 };
 const staffLogin = async (req, res) => {
     try {
-        const { phone, password } = req.body;
-        const {staff,token} = await staffService.staffLogin(phone, password);
+        const { email, password } = req.body;
+        const {staff,token} = await staffService.staffLogin(email, password);
       
         res.status(200).json({
             message: 'Login successful',

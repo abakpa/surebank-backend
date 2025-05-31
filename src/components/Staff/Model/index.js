@@ -1,11 +1,11 @@
 const mongoose = require('mongoose');
 
 const staffSchema = new mongoose.Schema({
-  firseName: {
+  firstName: {
     type: String,
     required: true
   },
-  LastName: {
+  lastName: {
     type: String,
     required: true
   },

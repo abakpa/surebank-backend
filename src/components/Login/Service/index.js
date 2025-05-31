@@ -24,11 +24,11 @@ const customerLogin = async (phone, password) => {
         throw error;
     }
 };
-const staffLogin = async (phone, password) => {
+const staffLogin = async (email, password) => {
     try {
-        const staff = await Staff.findOne({ phone });
+        const staff = await Staff.findOne({ email });
         if (!staff) {
-            throw new Error('Invalid phone or password');
+            throw new Error('Invalid email or password');
         }
         if (staff.status !== "isActive") {
             throw new Error('Staff is deactivated');
@@ -37,7 +37,7 @@ const staffLogin = async (phone, password) => {
         if (!isMatch) {
             throw new Error('Invalid phone or password');
         }
-        const token = jwt.sign({ id: staff._id, phone: staff.phone },
+        const token = jwt.sign({ id: staff._id, email: staff.email },
             process.env.JWT_SECRET_KEY, { expiresIn: process.env.JWT_LIFETIME }
         );
         return {staff,token};
