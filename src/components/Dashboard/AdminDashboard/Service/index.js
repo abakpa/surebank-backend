@@ -811,7 +811,7 @@ const getExpenditureReport = async () => {
   
       // Fetch transactions and populate createdBy and customer details
       const transactions = await AccountTransaction.find({
-        package: { $in: ['SB', 'DS'] }, // Match either 'SB' or 'DS'
+        package: { $in: ['SB', 'DS','FD'] }, // Match either 'SB' or 'DS'
         direction: { $in: ['Debit', 'Credit'] }, // Match either 'Debit' or 'Credit'
         createdBy, // Ensuring createdBy is always included
       })

@@ -150,6 +150,7 @@ const getCustomerFDAccountById = async (req, res) => {
     }
         const updateFDAccount = async (req,res) => {
             const editedBy = req.staff.staffId;
+            const createdBy = req.staff.staffId;
             const {FDAccountNumber,fdamount,durationMonths} = req.body
             const currentDate = new Date();
             const startDate = currentDate.toLocaleString("en-GB", {
@@ -164,7 +165,7 @@ const getCustomerFDAccountById = async (req, res) => {
             maturityDate.setMonth(maturityDate.getMonth() + durationMonths);
             try {
           
-          const newAmount = await FDAccountService.updateFDAccountAmount({FDAccountNumber,fdamount,editedBy,startDate,maturityDate,durationMonths})
+          const newAmount = await FDAccountService.updateFDAccountAmount({FDAccountNumber,fdamount,editedBy,createdBy,startDate,maturityDate,durationMonths})
               res.status(201).json({ data: newAmount });
             } catch (error) {
               console.error('Error updating FDAccount:', error);

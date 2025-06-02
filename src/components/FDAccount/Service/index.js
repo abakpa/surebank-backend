@@ -517,6 +517,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
               maturityDate,
               durationMonths,
               editedBy,
+              createdBy,
               startDate,
             } = details;
         
@@ -566,6 +567,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
                   maturityDate,
                   startDate,
                   editedBy,
+                  createdBy,
                   status: "Active",
                   expenseInterest,
                   incomeInterest,

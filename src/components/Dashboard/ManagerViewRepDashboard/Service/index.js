@@ -347,7 +347,7 @@ async function getAllRepDSAccountPackage(date = null, staff) {
     // Build query with date filter
     const query = {
       createdAt: { $lte: endDate },
-      createdBy:staff
+      accountManagerId:staff
     };
   
     // Optionally filter by Rep
@@ -370,7 +370,7 @@ async function getAllRepSBAccountPackage(date = null, staff) {
     // Build query with date filter
     const query = {
       createdAt: { $lte: endDate },
-      createdBy:staff
+      accountManagerId:staff
     };
   
     // Optionally filter by Rep
@@ -580,9 +580,9 @@ const getRepExpenditureReport = async (staff) => {
     try {
   
       // Fetch transactions and populate createdBy and customer details
-      const transactions = await SBAccount.find({createdBy:staff})
+      const transactions = await SBAccount.find({accountManagerId:staff})
         .populate({
-          path: 'createdBy', // Populate createdBy to get branch details
+          path: 'accountManagerId', // Populate createdBy to get branch details
           model: 'Staff'
         })
           .populate ({
@@ -616,7 +616,7 @@ const getRepExpenditureReport = async (staff) => {
       // Build query with date filter
       const query = {
         createdAt: { $lte: endDate },
-        createdBy:staff
+        accountManagerId:staff
       };
     
       // Optionally filter by Rep
@@ -636,7 +636,7 @@ const getRepExpenditureReport = async (staff) => {
     // const branch = await Staff.findOne({_id:staff})
     // const branchId = branch.branchId
     try {
-      const query = {createdBy:staff};
+      const query = {accountManagerId:staff};
   
       // Set end of the provided date or today
       const endDate = date ? new Date(date) : new Date();
@@ -660,7 +660,7 @@ const getRepExpenditureReport = async (staff) => {
   }
   const getCustomerByRep = async (staffId) =>{
     try {
-        return await Customer.find({createdBy:staffId});
+        return await Customer.find({accountManagerId:staffId});
     } catch (error) {
         throw error;
     }

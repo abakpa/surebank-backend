@@ -338,7 +338,7 @@ async function getAllRepDSAccountPackage(date = null, staff) {
     // Build query with date filter
     const query = {
       createdAt: { $lte: endDate },
-      createdBy:staff
+      accountManagerId:staff
     };
   
     // Optionally filter by Rep
@@ -361,7 +361,7 @@ async function getAllRepSBAccountPackage(date = null, staff) {
     // Build query with date filter
     const query = {
       createdAt: { $lte: endDate },
-      createdBy:staff
+      accountManagerId:staff
     };
   
     // Optionally filter by Rep
@@ -571,9 +571,9 @@ const getRepExpenditureReport = async (staff) => {
     try {
   
       // Fetch transactions and populate createdBy and customer details
-      const transactions = await SBAccount.find({createdBy:staff})
+      const transactions = await SBAccount.find({accountManagerId:staff})
         .populate({
-          path: 'createdBy', // Populate createdBy to get branch details
+          path: 'accountManagerId', // Populate createdBy to get branch details
           model: 'Staff'
         })
           .populate ({

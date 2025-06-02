@@ -36,7 +36,7 @@ const getCustomerByBranch = async (staffId) =>{
   }
 const getCustomerByRep = async (staffId) =>{
     try {
-        return await Customer.find({createdBy:staffId});
+        return await Customer.find({accountManagerId:staffId});
     } catch (error) {
         throw error;
     }
@@ -54,24 +54,24 @@ const getCustomerById = async (customerId) =>{
   
       // Perform updates on all related collections
       const customerUpdate = await Customer.updateMany(
-        { createdBy: oldStaff },
-        { $set: { createdBy: newStaff } }
+        { accountManagerId: oldStaff },
+        { $set: { accountManagerId: newStaff } }
       );
       const accountUpdate = await Account.updateMany(
-        { createdBy: oldStaff },
-        { $set: { createdBy: newStaff } }
+        { accountManagerId: oldStaff },
+        { $set: { accountManagerId: newStaff } }
       );
       const FDAccountUpdate = await FDAccount.updateMany(
-        { createdBy: oldStaff },
-        { $set: { createdBy: newStaff } }
+        { accountManagerId: oldStaff },
+        { $set: { accountManagerId: newStaff } }
       );
       const DSAccountUpdate = await DSAccount.updateMany(
-        { createdBy: oldStaff },
-        { $set: { createdBy: newStaff } }
+        { accountManagerId: oldStaff },
+        { $set: { accountManagerId: newStaff } }
       );
       const SBAccountUpdate = await SBAccount.updateMany(
-        { createdBy: oldStaff },
-        { $set: { createdBy: newStaff } }
+        { accountManagerId: oldStaff },
+        { $set: { accountManagerId: newStaff } }
       );
   
       // Count total modified records
@@ -108,23 +108,23 @@ const getCustomerById = async (customerId) =>{
   
       const customerUpdate = await Customer.updateOne(
         { _id: customer },
-        { $set: { createdBy: newStaff } }
+        { $set: { accountManagerId: newStaff } }
       );
-      const accountUpdate = await Account.updateOne(
+      const accountUpdate = await Account.updateMany(
         { customerId: customer },
-        { $set: { createdBy: newStaff } }
+        { $set: { accountManagerId: newStaff } }
       );
-      const FDAccountUpdate = await FDAccount.updateOne(
+      const FDAccountUpdate = await FDAccount.updateMany(
         { customerId: customer },
-        { $set: { createdBy: newStaff } }
+        { $set: { accountManagerId: newStaff } }
       );
-      const DSAccountUpdate = await DSAccount.updateOne(
+      const DSAccountUpdate = await DSAccount.updateMany(
         { customerId: customer },
-        { $set: { createdBy: newStaff } }
+        { $set: { accountManagerId: newStaff } }
       );
-      const SBAccountUpdate = await SBAccount.updateOne(
+      const SBAccountUpdate = await SBAccount.updateMany(
         { customerId: customer },
-        { $set: { createdBy: newStaff } }
+        { $set: { accountManagerId: newStaff } }
       );
   
       const totalModified =

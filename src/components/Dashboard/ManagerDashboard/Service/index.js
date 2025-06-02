@@ -740,7 +740,7 @@ const getBranchExpenditureReport = async (staff) => {
       // Fetch transactions and populate createdBy and customer details
       const transactions = await SBAccount.find({branchId:branchId})
         .populate({
-          path: 'createdBy', // Populate createdBy to get branch details
+          path: 'accountManagerId', // Populate createdBy to get branch details
           model: 'Staff'
         })
           .populate ({
