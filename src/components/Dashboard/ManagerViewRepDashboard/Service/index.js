@@ -334,7 +334,8 @@ async function getAllRepDailySBandDSAccount(date = null, staff) {
 
   const DS = await getAllRepDailyDSAccount(date,staff)
   const SB = await getAllRepDailySBAccount(date,staff)
-  const totalContribution = DS + SB
+  const FD = await getAllRepDailyFDAccount(date,staff)
+  const totalContribution = DS + SB + FD
     
     return totalContribution;
 }
@@ -385,7 +386,8 @@ async function getAllRepSBAccountPackage(date = null, staff) {
 async function getAllRepAccountPackage(date = null, staff) {
 const sbPackage = await getAllRepSBAccountPackage(date,staff)    
 const dsPackage = await getAllRepDSAccountPackage(date,staff)    
-const packages = sbPackage + dsPackage
+const fdPackage = await getAllFDPackage(date,staff)    
+const packages = sbPackage + dsPackage + fdPackage
     return packages 
 }
 async function getRepSBAccountIncome(date = null, staff) {
@@ -548,7 +550,7 @@ const getRepExpenditureReport = async (staff) => {
   
       // Fetch transactions and populate createdBy and customer details
       const transactions = await AccountTransaction.find({
-        package: { $in: ['SB', 'DS'] }, // Match either 'SB' or 'DS'
+        package: { $in: ['SB', 'DS','FD'] }, // Match either 'SB' or 'DS'
         direction: { $in: ['Debit', 'Credit'] }, // Match either 'Debit' or 'Credit'
         createdBy, // Ensuring createdBy is always included
       })

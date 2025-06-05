@@ -655,7 +655,8 @@ async function getAllDailySBandDSAccount(date = null, branchId = null) {
 
   const DS = await getAllDailyDSAccount(date,branchId)
   const SB = await getAllDailySBAccount(date,branchId)
-  const totalContribution = DS + SB
+  const FD = await getAllDailyFDAccount(date,branchId)
+  const totalContribution = DS + SB + FD
     
     return totalContribution;
 }
@@ -842,7 +843,7 @@ const getExpenditureReport = async () => {
       // Fetch transactions and populate createdBy and customer details
       const transactions = await SBAccount.find({})
         .populate({
-          path: 'createdBy', // Populate createdBy to get branch details
+          path: 'accountManagerId', // Populate createdBy to get branch details
           model: 'Staff'
         })
           .populate ({

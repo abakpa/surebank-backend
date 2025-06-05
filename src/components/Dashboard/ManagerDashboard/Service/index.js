@@ -485,7 +485,8 @@ async function getAllBranchDailySBandDSAccount(date = null, staff) {
 
   const DS = await getAllBranchDailyDSAccount(date,staff)
   const SB = await getAllBranchDailySBAccount(date,staff)
-  const totalContribution = DS + SB
+  const FD = await getAllBranchDailyFDAccount(date,staff)
+  const totalContribution = DS + SB + FD
     
     return totalContribution;
 }
@@ -538,7 +539,8 @@ async function getAllBranchSBAccountPackage(date = null, staff) {
 async function getAllBranchAccountPackage(date = null, staff) {
 const sbPackage = await getAllBranchSBAccountPackage(date,staff)    
 const dsPackage = await getAllBranchDSAccountPackage(date,staff)    
-const packages = sbPackage + dsPackage
+const fdPackage = await getAllFDPackage(date,staff)    
+const packages = sbPackage + dsPackage + fdPackage
     return packages 
 }
 async function getBranchSBAccountIncome(date = null, staff) {

@@ -325,7 +325,8 @@ async function getAllRepDailySBandDSAccount(date = null, staff) {
 
   const DS = await getAllRepDailyDSAccount(date,staff)
   const SB = await getAllRepDailySBAccount(date,staff)
-  const totalContribution = DS + SB
+  const FD = await getAllRepDailyFDAccount(date,staff)
+  const totalContribution = DS + SB + FD
     
     return totalContribution;
 }
@@ -376,7 +377,8 @@ async function getAllRepSBAccountPackage(date = null, staff) {
 async function getAllRepAccountPackage(date = null, staff) {
 const sbPackage = await getAllRepSBAccountPackage(date,staff)    
 const dsPackage = await getAllRepDSAccountPackage(date,staff)    
-const packages = sbPackage + dsPackage
+const fdPackage = await getAllFDPackage(date,staff)    
+const packages = sbPackage + dsPackage + fdPackage
     return packages 
 }
 async function getRepSBAccountIncome(date = null, staff) {
