@@ -510,7 +510,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
           return { data:newContribution, message:"Withdrawal successful" };
         }
         const updateFDAccountAmount = async (details) => {
-          try {
+          // try {
             const {
               FDAccountNumber,
               fdamount,
@@ -539,9 +539,9 @@ const getAccountByAccountNumber = async (accountNumber) => {
               throw new Error("FDAccount or related main Account not found.");
             }
         
-            if (fdaccount.totalAmount !== 0) {
-              throw new Error("You cannot edit the amount while the package is running.");
-            }
+            // if (fdaccount.totalAmount !== 0) {
+            //   throw new Error("You cannot edit the amount while the package is running.");
+            // }
         
             // Fetch interest rates
             const interestData = await Interest.findOne();
@@ -600,16 +600,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
               direction: "Credit",
             });
         
-            // Update main account ledger balance
-            const updatedLedgerBalance = account.ledgerBalance + totalAmount;
-            await Account.findOneAndUpdate(
-              { accountNumber: fdaccount.accountNumber },
-              {
-                $set: {
-                  ledgerBalance: updatedLedgerBalance,
-                },
-              }
-            );
+       
         
             // Record interest as debit in FD account
             await AccountTransaction.DepositTransactionAccount({
@@ -626,9 +617,74 @@ const getAccountByAccountNumber = async (accountNumber) => {
               narration: "Interest",
               direction: "Debit",
             });
-        
+            if (fdaccount.totalAmount !== 0){
             // Credit interest to main account
             await AccountTransaction.DepositTransactionAccount({
+              createdBy: editedBy,
+              customerId: fdaccount.customerId,
+              amount: fdaccount.expenseInterest,
+              balance: account.availableBalance - fdaccount.expenseInterest,
+              branchId: account.branchId,
+              accountManagerId: account.accountManagerId,
+              accountNumber: account.accountNumber,
+              accountTypeId: account._id,
+              date: startDate,
+              package: "FD",
+              narration: "Reverse FD interest",
+              direction: "Debit",
+            });
+            await AccountTransaction.DepositTransactionAccount({
+              createdBy: editedBy,
+              customerId: fdaccount.customerId,
+              amount: expenseInterest,
+              balance: (account.availableBalance - fdaccount.expenseInterest) + expenseInterest,
+              branchId: account.branchId,
+              accountManagerId: account.accountManagerId,
+              accountNumber: account.accountNumber,
+              accountTypeId: account._id,
+              date: startDate,
+              package: "FD",
+              narration: "From FD account",
+              direction: "Credit",
+            });
+                 // Update main account ledger balance
+                 const updatedLedgerBalance = account.ledgerBalance - fdaccount.totalAmount;
+                 await Account.findOneAndUpdate(
+                   { accountNumber: fdaccount.accountNumber },
+                   {
+                     $set: {
+                       ledgerBalance: updatedLedgerBalance,
+                     },
+                   }
+                 );
+                 const updatedLedgerBalance2 = account.ledgerBalance + totalAmount;
+                 await Account.findOneAndUpdate(
+                   { accountNumber: fdaccount.accountNumber },
+                   {
+                     $set: {
+                       ledgerBalance: updatedLedgerBalance2,
+                     },
+                   }
+                 );
+            // Update available balance in main account
+            await Account.findOneAndUpdate(
+              { accountNumber: fdaccount.accountNumber },
+              {
+                $set: {
+                  availableBalance: account.availableBalance - fdaccount.expenseInterest,
+                },
+              }
+            );
+            await Account.findOneAndUpdate(
+              { accountNumber: fdaccount.accountNumber },
+              {
+                $set: {
+                  availableBalance: account.availableBalance + expenseInterest,
+                },
+              }
+            );
+          }else{
+                 await AccountTransaction.DepositTransactionAccount({
               createdBy: editedBy,
               customerId: fdaccount.customerId,
               amount: expenseInterest,
@@ -642,7 +698,16 @@ const getAccountByAccountNumber = async (accountNumber) => {
               narration: "From FD account",
               direction: "Credit",
             });
-        
+                     // Update main account ledger balance
+                     const updatedLedgerBalance = account.ledgerBalance + totalAmount;
+                     await Account.findOneAndUpdate(
+                       { accountNumber: fdaccount.accountNumber },
+                       {
+                         $set: {
+                           ledgerBalance: updatedLedgerBalance,
+                         },
+                       }
+                     );
             // Update available balance in main account
             await Account.findOneAndUpdate(
               { accountNumber: fdaccount.accountNumber },
@@ -652,19 +717,30 @@ const getAccountByAccountNumber = async (accountNumber) => {
                 },
               }
             );
+          }
+            await FDStatement.findOneAndUpdate(
+              { FDAccountNumber: FDAccountNumber },
+              {
+                $set: {
+                  expenseInterest: expenseInterest,
+                  incomeInterest: incomeInterest,
+                  profit:incomeInterest - expenseInterest
+                },
+              }
+            );
         
             return {
               success: true,
               message: "FD amount and interest updated successfully.",
               updatedFDAccount,
             };
-          } catch (error) {
-            console.error("FD update error:", error);
-            return {
-              success: false,
-              message: `An error occurred while updating the account: ${error.message}`,
-            };
-          }
+          // } catch (error) {
+          //   console.error("FD update error:", error);
+          //   return {
+          //     success: false,
+          //     message: `An error occurred while updating the account: ${error.message}`,
+          //   };
+          // }
         };
         
           

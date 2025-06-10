@@ -8,39 +8,35 @@ const FDAccount = require('../../../FDAccount/Model');
 
 
 async function getAllDSAccount(date = null, branchId = null) {
+  try {
+    let query = {}; // base query for DSAccount
 
-    let query = { package: 'DS', direction: 'Credit' };
-    
-   
     // Filter by date if provided or default to today
     const endDate = date ? new Date(date) : new Date();
     endDate.setHours(23, 59, 59, 999);
     query.createdAt = { $lte: endDate };
-  
-    // Filter by branch if provided
+
+    // Filter by branchId if provided
     if (branchId) {
       query.branchId = branchId;
     }
-    const transactions = await AccountTransaction.find(query);
-    
-    // // Sort transactions by createdAt in ascending order
-    // transactions.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    
-    // // Use a Map to store the latest balance for each accountTypeId
-    // const balanceMap = new Map();
-    
-    // transactions.forEach(tx => {
-    //     balanceMap.set(tx.accountTypeId, tx.balance);
-    // });
-    
-    // // Calculate the sum of the latest balances
-    // const totalBalance = Array.from(balanceMap.values()).reduce((sum, balance) => sum + balance, 0);
-    const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0) || 0;
-    const dswithdrawal = await getAllDSAccountWithdrawal(date,branchId);
-    const charge  = await getAllDSAccountCharge(date,branchId);
-    const Withdrawal = dswithdrawal + charge
-    
-    return totalBalance - Withdrawal;
+
+    // Aggregate total contribution
+    const result = await DSAccount.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: null,
+          totalContribution: { $sum: "$totalContribution" }
+        }
+      }
+    ]);
+
+    return result[0]?.totalContribution || 0;
+  } catch (error) {
+    console.error("Error calculating total DSAccount contribution:", error);
+    throw new Error("Failed to calculate total DSAccount contribution");
+  }
 }
 async function getAllDSAccountWithdrawal(date = null, branchId = null) {
     let query = { package: 'DS', direction: 'Debit' };
@@ -56,6 +52,7 @@ async function getAllDSAccountWithdrawal(date = null, branchId = null) {
 
 
     const transactions = await AccountTransaction.find(query);
+    // return transactions
 
     // Sum up all withdrawal amounts directly
     const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0) || 0;
@@ -84,36 +81,35 @@ async function getAllDSAccountCharge(date = null, branchId = null) {
 }
 
 async function getAllSBAccount(date = null, branchId = null) {
-    let query = { package: 'SB', direction: 'Credit' };
-    
-   
+  try {
+    let query = {}; // base query for DSAccount
+
     // Filter by date if provided or default to today
     const endDate = date ? new Date(date) : new Date();
     endDate.setHours(23, 59, 59, 999);
     query.createdAt = { $lte: endDate };
-  
-    // Filter by branch if provided
+
+    // Filter by branchId if provided
     if (branchId) {
       query.branchId = branchId;
     }
-    const transactions = await AccountTransaction.find(query);
-    
-    // Sort transactions by createdAt in ascending order
-    // transactions.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    
-    // // Use a Map to store the latest balance for each accountNumber
-    // const balanceMap = new Map();
-    
-    // transactions.forEach(tx => {
-    //     balanceMap.set(tx.accountTypeId, tx.balance);
-    // });
-    
-    // Calculate the sum of the latest balances
-    // const totalBalance = Array.from(balanceMap.values()).reduce((sum, balance) => sum + balance, 0);
-    const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0) || 0;
-    const SBWithdrawal = await getAllSBAccountWithdrawal(date,branchId)
-    
-    return totalBalance - SBWithdrawal;
+
+    // Aggregate total contribution
+    const result = await SBAccount.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: null,
+          balance: { $sum: "$balance" }
+        }
+      }
+    ]);
+
+    return result[0]?.balance || 0;
+  } catch (error) {
+    console.error("Error calculating total DSAccount contribution:", error);
+    throw new Error("Failed to calculate total DSAccount contribution");
+  }
 }
 async function getAllFDAccount(date = null, branchId = null) {
   try {

@@ -168,8 +168,8 @@ const getCustomerFDAccountById = async (req, res) => {
           const newAmount = await FDAccountService.updateFDAccountAmount({FDAccountNumber,fdamount,editedBy,createdBy,startDate,maturityDate,durationMonths})
               res.status(201).json({ data: newAmount });
             } catch (error) {
-              console.error('Error updating FDAccount:', error);
-              return { success: false, message: 'An error occurred while updating the amount', error };
+              // console.error('Error updating FDAccount:', error);
+              res.status(500).json({ message: error.message });
             }
           };
 module.exports = {

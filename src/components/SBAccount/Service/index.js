@@ -25,7 +25,7 @@ const createSBAccount = async (SBAccountData) => {
 
 const updateSBAccountAmount = async (details) => {
     const {SBAccountNumber,sellingPrice,productName,editedBy} = details
-    try {
+    // try {
       // Validate input
       if (!SBAccountNumber) {
         throw new Error('Invalid account number');
@@ -35,11 +35,13 @@ const updateSBAccountAmount = async (details) => {
         SBAccountNumber: SBAccountNumber,
         // productName: productName,
       });
-  
+      if (sbaccount.costPrice !== 0) {
+        throw new Error("This selling price has been approved");
+      }
       // Find and update the DSAccount by DSAccount
       const updatedSBAccount = await SBAccount.findOneAndUpdate(
         { SBAccountNumber }, // Find the account by accountNumber
-        { $set: { sellingPrice: sellingPrice, editedBy:editedBy, productName:productName } }, // Update only the amount field
+        { $set: { sellingPrice: sellingPrice, editedBy:editedBy, productName:productName,status:'booked' } }, // Update only the amount field
         { new: true } // Return the updated document
       );
   
@@ -49,14 +51,14 @@ const updateSBAccountAmount = async (details) => {
       }
   
       return { success: true, message: 'Updated successfully', updatedSBAccount };
-    } catch (error) {
-      throw new Error('An error occurred while updating the amount', error );
-    }
+    // } catch (error) {
+    //   throw new Error('An error occurred while updating the amount', error );
+    // }
   };
 
 const updateCostPrice = async (details) => {
     const {SBAccountNumber,costPrice,productName,editedBy} = details
-    try {
+    // try {
       // Validate input
       if (!SBAccountNumber) {
         throw new Error('Invalid account number');
@@ -67,7 +69,7 @@ const updateCostPrice = async (details) => {
         // productName: productName,
       });
       if (sbaccount.sellingPrice > sbaccount.balance) {
-        return {message:'The money must be completed before approval'};
+        throw new Error("The money must be completed before approval");
       }
       const profit = sbaccount.sellingPrice - costPrice
       // Find and update the DSAccount by DSAccount
@@ -83,9 +85,9 @@ const updateCostPrice = async (details) => {
       }
   
       return { success: true, message: 'Cost price updated successfully', updatedcostPrice };
-    } catch (error) {
-      throw new Error('An error occurred while updating the amount', error );
-    }
+    // } catch (error) {
+    //   throw new Error('An error occurred while updating the amount', error );
+    // }
   };
 
 const getAccountByAccountNumber = async (accountNumber) => {
@@ -318,7 +320,8 @@ const getAccountByAccountNumber = async (accountNumber) => {
       
           await SBAccount.findByIdAndUpdate(SBAccountId, {
             balance: newBalance,
-            status: 'sold'
+            status: 'sold',
+            costPrice:0
           });
       
           return { data: newContribution, message: "Product sold successful" };

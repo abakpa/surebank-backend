@@ -5,7 +5,6 @@ const bcrypt = require('bcrypt')
 
 
     const registerCustomer = async (req, res) => {
-      console.log("YYYYYY",req.body)
         try {
           const staffId = req.staff.staffId;
           const createdBy = staffId

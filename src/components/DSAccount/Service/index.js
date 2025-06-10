@@ -662,7 +662,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountTypeId: account._id,
         date: formattedDate,
         narration: "Withdrawal",
-        package:"DS",
+        package:"Account",
         direction: "Debit",
       });
       // const newBalance = dsaccount.totalContribution - contributionInput.amountPerDay;
