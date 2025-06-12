@@ -5,6 +5,7 @@ const {staffAuth} = require('../../../Middleware/index')
 
 // router.post('/', staffAuth, customerController.registerCustomer);
 router.post('/ds',staffAuth, AcountTransactionController.getAllDSAccount);
+router.post('/availablebalance',staffAuth, AcountTransactionController.getAllAvailableBalance);
 router.post('/dswithdrawal',staffAuth, AcountTransactionController.getAllDSAccountWithdrawal);
 router.get('/dscharge',staffAuth, AcountTransactionController.getAllDSAccountCharge);
 router.post('/dailyds',staffAuth, AcountTransactionController.getAllDailyDSAccount);

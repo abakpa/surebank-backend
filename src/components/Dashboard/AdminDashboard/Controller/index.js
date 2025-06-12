@@ -11,6 +11,15 @@ const bcrypt = require('bcrypt')
             res.status(500).json({ message: error.message });
         }
       }
+      const getAllAvailableBalance = async (req, res) => {
+        const {date,branchId} = req.body
+        try {
+            const availableBalance = await accountTransactionService.getAllAvailableBalance(date,branchId);
+            res.status(200).json(availableBalance);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
       const getAllDSAccountWithdrawal = async (req, res) => {
         try {
             const {date,branchId} = req.body
@@ -293,6 +302,7 @@ const bcrypt = require('bcrypt')
       }
 
   module.exports = {
+    getAllAvailableBalance,
     getAllDSAccount,
     getAllDSAccountWithdrawal,
     getAllDSAccountCharge,

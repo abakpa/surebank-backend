@@ -5,8 +5,40 @@ const SBAccount = require('../../../SBAccount/Model');
 const SureBankAccount = require('../../../SureBankAccount/Model');
 const Expenditure = require('../../../Expenditure/Model');
 const FDAccount = require('../../../FDAccount/Model');
+const Order = require('../../../SBAccount/Model/order');
 
 
+async function getAllAvailableBalance(date = null, branchId = null) {
+  try {
+    let query = {}; // base query for DSAccount
+
+    // Filter by date if provided or default to today
+    const endDate = date ? new Date(date) : new Date();
+    endDate.setHours(23, 59, 59, 999);
+    query.createdAt = { $lte: endDate };
+
+    // Filter by branchId if provided
+    if (branchId) {
+      query.branchId = branchId;
+    }
+
+    // Aggregate total contribution
+    const result = await Account.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: null,
+          availableBalance: { $sum: "$availableBalance" }
+        }
+      }
+    ]);
+
+    return result[0]?.availableBalance || 0;
+  } catch (error) {
+    console.error("Error calculating total DSAccount contribution:", error);
+    throw new Error("Failed to calculate total DSAccount contribution");
+  }
+}
 async function getAllDSAccount(date = null, branchId = null) {
   try {
     let query = {}; // base query for DSAccount
@@ -837,7 +869,7 @@ const getExpenditureReport = async () => {
     try {
   
       // Fetch transactions and populate createdBy and customer details
-      const transactions = await SBAccount.find({})
+      const transactions = await Order.find({})
         .populate({
           path: 'accountManagerId', // Populate createdBy to get branch details
           model: 'Staff'
@@ -867,6 +899,7 @@ const getExpenditureReport = async () => {
   
 
   module.exports = {
+    getAllAvailableBalance,
     getAllDSAccount,
     getAllDSAccountWithdrawal,
     getAllDSAccountCharge,

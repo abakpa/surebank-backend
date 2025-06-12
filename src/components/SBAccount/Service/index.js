@@ -1,6 +1,7 @@
 const Account = require('../../Account/Model');
 const  generateUniqueAccountNumber  = require('../../generateAccountNumber');
 const SBAccount = require('../Model/index');
+const Order = require('../Model/order');
 const AccountTransaction = require('../../AccountTransaction/Service/index');
 const SureBankAccount = require('../../SureBankAccount/Service/index');
 const sendSMS = require('../../sendSMS');
@@ -20,6 +21,8 @@ const createSBAccount = async (SBAccountData) => {
           const SBAccountNumber = await generateUniqueAccountNumber('SBA')
   const sbaccount = new SBAccount({...SBAccountData,customerId:existingSBAccountNumber.customerId,branchId:existingSBAccountNumber.branchId,SBAccountNumber});
   const newSBAccount = await sbaccount.save();
+  const order = new Order({...SBAccountData,customerId:existingSBAccountNumber.customerId,branchId:existingSBAccountNumber.branchId,SBAccountNumber});
+  const newOrder = await order.save();
   return ({message:"Account created successfilly", newSBAccount})
 };
 
@@ -49,7 +52,24 @@ const updateSBAccountAmount = async (details) => {
       if (!updatedSBAccount) {
         throw new Error('SBAccount not found or update failed');
       }
-  
+      const order = new Order({
+        customerId: updatedSBAccount.customerId,
+        accountNumber: updatedSBAccount.accountNumber,
+        SBAccountNumber: updatedSBAccount.SBAccountNumber,
+        createdBy: updatedSBAccount.createdBy,
+        productName: updatedSBAccount.productName,
+        productDescription: updatedSBAccount.productDescription,
+        editedBy: updatedSBAccount.editedBy,
+        accountManagerId: updatedSBAccount.accountManagerId,
+        branchId: updatedSBAccount.branchId,
+        status: updatedSBAccount.status,
+        startDate: updatedSBAccount.startDate,
+        sellingPrice: updatedSBAccount.sellingPrice,
+        costPrice: 0,
+        balance: 0,
+        profit: 0, 
+      });
+      const newOrder = await order.save();
       return { success: true, message: 'Updated successfully', updatedSBAccount };
     // } catch (error) {
     //   throw new Error('An error occurred while updating the amount', error );
@@ -323,6 +343,19 @@ const getAccountByAccountNumber = async (accountNumber) => {
             status: 'sold',
             costPrice:0
           });
+      
+          await Order.findOneAndUpdate(
+            {
+              SBAccountNumber: contributionInput.SBAccountNumber,
+              productName: contributionInput.productName
+            },
+            {
+              balance: newBalance,
+              status: 'sold',
+              costPrice: 0
+            }
+          );
+          
       
           return { data: newContribution, message: "Product sold successful" };
         }
