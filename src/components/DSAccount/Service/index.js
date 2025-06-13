@@ -577,7 +577,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         createdBy: contributionInput.createdBy,
         customerId: dsaccount.customerId,
         amount: contributionInput.amountPerDay,
-        balance: 0,
+        balance: newBalance,
         branchId: dsaccount.branchId,
         accountManagerId: dsaccount.accountManagerId,
         accountNumber: dsaccount.accountNumber,
@@ -586,6 +586,20 @@ const getCustomerDSAccountById = async (customerId) =>{
         narration: "Withdrawal",
         package:"DS",
         direction: "Debit",
+      });
+       await AccountTransaction.DepositTransactionAccount({
+        createdBy: contributionInput.createdBy,
+        customerId: dsaccount.customerId,
+        amount: newBalance,
+        balance: 0,
+        branchId: dsaccount.branchId,
+        accountManagerId: dsaccount.accountManagerId,
+        accountNumber: dsaccount.accountNumber,
+        accountTypeId: DSAccountId,
+        date: formattedDate,
+        narration: "Moved",
+        package:"DS",
+        direction: "Moved",
       });
       await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
