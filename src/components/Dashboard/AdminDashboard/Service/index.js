@@ -867,31 +867,52 @@ const getExpenditureReport = async () => {
   };
   const getOrder = async () => {
     try {
-  
-      // Fetch transactions and populate createdBy and customer details
-      const transactions = await Order.find({})
+      // Fetch all orders and populate necessary references
+      const orders = await Order.find({})
         .populate({
-          path: 'accountManagerId', // Populate createdBy to get branch details
-          model: 'Staff'
-        })
-          .populate ({
-            path: 'branchId',
-            model: 'Branch',
-          
+          path: 'accountManagerId',
+          model: 'Staff',
         })
         .populate({
-          path: 'customerId', // Populate customer details using customerId directly in AccountTransaction
+          path: 'branchId',
+          model: 'Branch',
+        })
+        .populate({
+          path: 'customerId',
           model: 'Customer',
         })
-        .sort({ status: 1 }); // Sort alphabetically (but not guaranteed for "booked" first)
-
-    // Custom sorting: "booked" first, then "sold"
-    transactions.sort((a, b) => (a.status === "booked" ? -1 : 1));
+        .sort({ status: 1 });
   
-      return transactions;
+      // Sort to show "booked" orders first
+      orders.sort((a, b) => (a.status === 'sold' ? -1 : 1));
+  
+      // Fetch all SB accounts separately
+      const sbAccounts = await SBAccount.find({})
+        .populate({
+          path: 'accountManagerId',
+          model: 'Staff',
+        })
+        .populate({
+          path: 'branchId',
+          model: 'Branch',
+        })
+        .populate({
+          path: 'customerId',
+          model: 'Customer',
+        })
+        .sort({ status: 1 });
+  
+      // Sort to show "booked" orders first
+      sbAccounts.sort((a, b) => (a.status === 'booked' ? -1 : 1));
+  
+      // Combine the result
+      return {
+        orders,
+        sbAccounts,
+      };
     } catch (error) {
-      console.error('Error fetching transactions:', error);
-      throw new Error('Failed to retrieve transactions');
+      console.error('Error fetching data:', error);
+      throw new Error('Failed to retrieve orders and SB accounts');
     }
   };
   

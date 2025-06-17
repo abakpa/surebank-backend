@@ -6,6 +6,7 @@ const SureBankAccount = require('../../../SureBankAccount/Model');
 const Expenditure = require('../../../Expenditure/Model');
 const Staff = require('../../../Staff/Model');
 const FDAccount = require('../../../FDAccount/Model');
+const Order = require('../../../SBAccount/Model/order');
 
 
 async function getAllRepDSAccount(date = null, staff) {
@@ -568,31 +569,52 @@ const getRepExpenditureReport = async (staff) => {
   };
   const getRepOrder = async (staff) => {
   
-    const branch = await Staff.findOne({_id:staff})
-    const branchId = branch.branchId
+    // const branch = await Staff.findOne({_id:staff})
+    // const branchId = branch.branchId
     try {
   
       // Fetch transactions and populate createdBy and customer details
-      const transactions = await SBAccount.find({accountManagerId:staff})
-        .populate({
-          path: 'accountManagerId', // Populate createdBy to get branch details
-          model: 'Staff'
-        })
-          .populate ({
-            path: 'branchId',
-            model: 'Branch',
-          
-        })
-        .populate({
-          path: 'customerId', // Populate customer details using customerId directly in AccountTransaction
-          model: 'Customer',
-        })
-        .sort({ status: 1 }); // Sort alphabetically (but not guaranteed for "booked" first)
-
-    // Custom sorting: "booked" first, then "sold"
-    transactions.sort((a, b) => (a.status === "booked" ? -1 : 1));
-  
-      return transactions;
+     // Fetch all orders and populate necessary references
+     const orders = await Order.find({accountManagerId:staff})
+     .populate({
+       path: 'accountManagerId',
+       model: 'Staff',
+     })
+     .populate({
+       path: 'branchId',
+       model: 'Branch',
+     })
+     .populate({
+       path: 'customerId',
+       model: 'Customer',
+     })
+     .sort({ status: 1 });
+ 
+   // Sort to show "booked" orders first
+   orders.sort((a, b) => (a.status === 'sold' ? -1 : 1));
+       // Fetch transactions and populate createdBy and customer details
+       const sbAccounts = await SBAccount.find({accountManagerId:staff})
+       .populate({
+         path: 'accountManagerId',
+         model: 'Staff',
+       })
+       .populate({
+         path: 'branchId',
+         model: 'Branch',
+       })
+       .populate({
+         path: 'customerId',
+         model: 'Customer',
+       })
+       .sort({ status: 1 });// Sort alphabetically (but not guaranteed for "booked" first)
+ 
+     // Custom sorting: "booked" first, then "sold"
+     sbAccounts.sort((a, b) => (a.status === 'booked' ? -1 : 1));
+   
+     return {
+       orders,
+       sbAccounts,
+     };
     } catch (error) {
       console.error('Error fetching transactions:', error);
       throw new Error('Failed to retrieve transactions');
