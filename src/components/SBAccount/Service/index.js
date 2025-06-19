@@ -295,7 +295,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
             date: formattedDate,
             package: "SB",
             narration: `${sbaccount.productName} sold`,
-            direction: "Debit",
+            direction: "Purchased",
           });
 
              const sureBankDeposit = {
