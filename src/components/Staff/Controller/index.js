@@ -7,16 +7,9 @@ const nodemailer = require('nodemailer')
 
 const registerStaff = async (req, res) => {
   try {
-    // const transporter = nodemailer.createTransport({
-    //     service: 'gmail', // You can use other services like Outlook, Yahoo, etc.
-    //     auth: {
-    //       user: process.env.EMAIL, // Your email address
-    //       pass: process.env.EMAIL_PASSWORD, // Your email password or app-specific password
-    //     },
-    //   });
+ 
   const salt = await bcrypt.genSalt()
-  // const length = 12
-  // const generatePassword = crypto.randomBytes(Math.ceil(length / 2)).toString('hex').slice(0, length);
+
   req.body.password = await bcrypt.hash(req.body.password,salt)
     const { firstName,lastName, phone, email, password, address,role,branchId } = req.body;
     const existingStaff = await staffService.getStaffByEmail(email);
@@ -25,15 +18,35 @@ const registerStaff = async (req, res) => {
     }
     const newStaff = await staffService.createStaff({ firstName,lastName, phone, email,password, address, password,role,branchId });
 
-    // const mailOptions = {
-    //     from: process.env.EMAIL,
-    //     to: email,
-    //     subject: 'Your Login Credentials',
-    //     text: `Hello ${name},\n\nYour account has been created successfully!\n\nHere are your login credentials:\nEmail: ${email}\nPassword: ${generatePassword}\n\nPlease keep them secure.\n\nBest regards,\nYour Team`,
-    //   };
-  
-      // await transporter.sendMail(mailOptions);
     res.status(201).json({ message: 'Staff registered successfully', user: newStaff });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+const resetStaffPassword = async (req, res) => {
+  try {
+    const { email, newPassword } = req.body;
+
+    // Check if staff exists
+    const existingStaff = await staffService.getStaffByEmail(email);
+    if (!existingStaff) {
+      return res.status(404).json({ message: 'Staff not found' });
+    }
+
+    // Hash the new password
+    const salt = await bcrypt.genSalt();
+    const password = await bcrypt.hash(newPassword, salt);
+
+    // Update password and set updatePassword to true
+    const updatedStaff = await staffService.resetStaffPassword(
+      existingStaff._id,
+      password
+    );
+
+    res.status(200).json({
+      message: 'Password reset successfully',
+      user: updatedStaff,
+    });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
@@ -66,10 +79,22 @@ const getBranchStaff = async (req, res) => {
             return { success: false, message: 'An error occurred while updating', error };
           }
         };
+     const updateStaffPassword = async (req,res) => {
+      const staff = req.params.id
+      const updatePassword = "true"
+          try {
+        const newData = await staffService.updateStaffPassword({staff,updatePassword})
+            res.status(201).json({ data: newData });
+          } catch (error) {
+            return { success: false, message: 'An error occurred while updating', error };
+          }
+        };
 
   module.exports = {
     registerStaff,
     getStaff,
     getBranchStaff,
-    updateStaff
+    updateStaff,
+    resetStaffPassword,
+    updateStaffPassword
   };

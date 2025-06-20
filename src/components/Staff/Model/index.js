@@ -26,6 +26,11 @@ const staffSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  updatePassword: {
+    type: String,
+    required: true,
+    default: "false"
+  },
   role: { 
     type: String, 
     required: true
