@@ -18,6 +18,33 @@ const bcrypt = require('bcrypt')
           res.status(500).json({ error: error.message });
         }
       };
+      const resetCustomerPassword = async (req, res) => {
+        try {
+          const { phone, newPassword } = req.body;
+          // Check if staff exists
+          const existingCustomer = await customerService.getCustomerByPhone(phone);
+          if (!existingCustomer) {
+            return res.status(404).json({ message: 'Customer not found' });
+          }
+      
+          // Hash the new password
+          const salt = await bcrypt.genSalt();
+          const password = await bcrypt.hash(newPassword, salt);
+      
+          // Update password and set updatePassword to true
+          const updatedCustomer = await customerService.resetCustomerPassword(
+            existingCustomer._id,
+            password
+          );
+      
+          res.status(200).json({
+            message: 'Password reset successfully',
+            user: updatedCustomer,
+          });
+        } catch (error) {
+          res.status(500).json({ message: 'Server error', error: error.message });
+        }
+      };
       const getCustomer = async (req, res) => {
         try {
             const customers = await customerService.getCustomers();
@@ -75,13 +102,36 @@ const bcrypt = require('bcrypt')
                   return { success: false, message: 'An error occurred while updating', error };
                 }
               };
+           const updateCustomerPhoneNumber = async (req,res) => {
+            const customer = req.params.id
+            const {phone} = req.body
+                try {
+              const newData = await customerService.updateCustomerPhoneNumber({customer,phone})
+                  res.status(201).json({ data: newData });
+                } catch (error) {
+                  return { success: false, message: 'An error occurred while updating', error };
+                }
+              };
+                 const updateCustomerPassword = async (req,res) => {
+                    const customer = req.params.id
+                    const updatePassword = "true"
+                        try {
+                      const newData = await customerService.updateCustomerPassword({customer,updatePassword})
+                          res.status(201).json({ data: newData });
+                        } catch (error) {
+                          return { success: false, message: 'An error occurred while updating', error };
+                        }
+                      };
 
   module.exports = {
     registerCustomer,
+    resetCustomerPassword,
     getCustomer,
     getCustomerById,
     getCustomerByBranch,
     getCustomerByRep,
     transferAllCustomer,
     transferCustomer,
+    updateCustomerPassword,
+    updateCustomerPhoneNumber
   };

@@ -41,7 +41,6 @@ require('dotenv').config()
       const newData = await SBAccountService.updateCostPrice({SBAccountNumber,costPrice,productName,editedBy})
           res.status(201).json({ message:newData.message });
         } catch (error) {
-          console.log("backend error",error.message)
           res.status(500).json({ message: error.message });
         }
       };

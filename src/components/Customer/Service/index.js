@@ -1,4 +1,5 @@
 const Account = require('../../Account/Model');
+const AccountTransaction = require('../../AccountTransaction/Model');
 const DSAccount = require('../../DSAccount/Model');
 const FDAccount = require('../../FDAccount/Model');
 const SBAccount = require('../../SBAccount/Model');
@@ -13,6 +14,26 @@ const createCustomer = async (customerData) => {
             }
   const customer = new Customer(customerData);
   return await customer.save();
+};
+const resetCustomerPassword = async (customerId, password) => {
+  try {
+    const updatedCustomer = await Customer.findByIdAndUpdate(
+      customerId,
+      { 
+        password: password,
+        updatePassword: 'false', // Indicates password was updated
+      },
+      { new: true } // Return the updated document
+    ).select('-password'); // Exclude password in response
+
+    if (!updatedCustomer) {
+      throw new Error('Customer not found');
+    }
+
+    return updatedCustomer;
+  } catch (error) {
+    throw error;
+  }
 };
 
 const getCustomerByPhone = async (phone) => {
@@ -48,6 +69,7 @@ const getCustomerById = async (customerId) =>{
         throw error;
     }
   }
+
   const transferAllCustomer = async (details) => {
     try {
       const { oldStaff, newStaff } = details;
@@ -154,7 +176,83 @@ const getCustomerById = async (customerId) =>{
       throw new Error("An error occurred while transferring records.");
     }
   };
+  const updateCustomerPhoneNumber = async (details) => {
+    try {
+      const { customer, phone } = details;
   
+      const customerUpdate = await Customer.updateOne(
+        { _id: customer },
+        { $set: { phone: phone } }
+      );
+      const accountUpdate = await Account.updateMany(
+        { customerId: customer },
+        { $set: { accountNumber: phone } }
+      );
+      const FDAccountUpdate = await FDAccount.updateMany(
+        { customerId: customer },
+        { $set: { accountNumber: phone } }
+      );
+      const DSAccountUpdate = await DSAccount.updateMany(
+        { customerId: customer },
+        { $set: { accountNumber: phone } }
+      );
+      const SBAccountUpdate = await SBAccount.updateMany(
+        { customerId: customer },
+        { $set: { accountNumber: phone } }
+      );
+      const accountTransactionUpdate = await AccountTransaction.updateMany(
+        { customerId: customer },
+        { $set: { accountNumber: phone } }
+      );
+  
+      const totalModified =
+        customerUpdate.modifiedCount +
+        accountUpdate.modifiedCount +
+        FDAccountUpdate.modifiedCount +
+        DSAccountUpdate.modifiedCount +
+        accountTransactionUpdate.modifiedCount +
+        SBAccountUpdate.modifiedCount;
+  
+      if (totalModified === 0) {
+        throw new Error("No records were updated.");
+      }
+  
+      return {
+        success: true,
+        message: `${totalModified} record(s) transferred successfully.`,
+        updated: {
+          customers: customerUpdate.modifiedCount,
+          accounts: accountUpdate.modifiedCount,
+          fdAccounts: FDAccountUpdate.modifiedCount,
+          dsAccounts: DSAccountUpdate.modifiedCount,
+          sbAccounts: SBAccountUpdate.modifiedCount,
+        },
+      };
+    } catch (error) {
+      console.error("Error transferring customers and accounts:", error);
+      throw new Error("An error occurred while transferring records.");
+    }
+  };
+  const updateCustomerPassword = async (details) => {
+    try {
+      const { customer, updatePassword } = details;
+  
+      const updatedCustomer = await Customer.findOneAndUpdate(
+        { _id: customer },
+        { $set: { updatePassword } },
+        { new: true }
+      );
+  
+      if (!updatedCustomer) {
+        throw new Error("Staff not found or update failed");
+      }
+  
+      return { success: true, message: "Updated successfully", updatedCustomer };
+    } catch (error) {
+      console.error("Error updating staff:", error);
+      throw new Error("An error occurred while updating the staff status.");
+    }
+  };
   
   
 
@@ -162,8 +260,12 @@ const getCustomerById = async (customerId) =>{
     createCustomer,
     getCustomers,
     getCustomerById,
+    getCustomerByPhone,
     getCustomerByBranch,
     getCustomerByRep,
     transferAllCustomer,
     transferCustomer,
+    resetCustomerPassword,
+    updateCustomerPassword,
+    updateCustomerPhoneNumber
   };

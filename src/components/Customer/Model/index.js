@@ -22,6 +22,11 @@ const customerSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  updatePassword: {
+    type: String,
+    required: true,
+    default: "false"
+  },
   accountManagerId: {
     type: String,
   },

@@ -10,7 +10,9 @@ const customerLogin = async (phone, password) => {
         if (!customer) {
             throw new Error('Invalid phone number or password');
         }
-  
+        if (customer.updatePassword !== "false") {
+            throw new Error('Update your password');
+        }
 
         const isMatch = await bcrypt.compare(password, customer.password);
         if (!isMatch) {
@@ -33,9 +35,12 @@ const staffLogin = async (email, password) => {
         if (staff.status !== "isActive") {
             throw new Error('Staff is deactivated');
         }
+        if (staff.updatePassword !== "false") {
+            throw new Error('Update your password');
+        }
         const isMatch = await bcrypt.compare(password, staff.password);
         if (!isMatch) {
-            throw new Error('Invalid phone or password');
+            throw new Error('Invalid email or password');
         }
         const token = jwt.sign({ id: staff._id, email: staff.email },
             process.env.JWT_SECRET_KEY, { expiresIn: process.env.JWT_LIFETIME }
