@@ -24,7 +24,7 @@ const bcrypt = require('bcrypt')
           // Check if staff exists
           const existingCustomer = await customerService.getCustomerByPhone(phone);
           if (!existingCustomer) {
-            return res.status(404).json({ message: 'Customer not found' });
+            return res.status(404).json({ message: 'Invalid Phone Number' });
           }
       
           // Hash the new password
