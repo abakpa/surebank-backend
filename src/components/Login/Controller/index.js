@@ -13,6 +13,7 @@ const customerLogin = async (req, res) => {
             customer: {
                 id: customer._id,
                 phone: customer.phone,
+                branchId:customer.branchId
             },
             token
         });
@@ -20,6 +21,52 @@ const customerLogin = async (req, res) => {
         res.status(400).json({ message: error.message });
     }
 };
+     const getCustomers = async (req, res) => {
+        try {
+            const customers = await customerService.getCustomers();
+            res.status(200).json(customers);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
+     const getBranchCustomers = async (req, res) => {
+        const branchId = req.params.id
+        try {
+            const customers = await customerService.getBranchCustomers(branchId);
+            res.status(200).json(customers);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
+     const getRepCustomers = async (req, res) => {
+        const repId = req.staff.staffId;
+        try {
+            const customers = await customerService.getRepCustomers(repId);
+            res.status(200).json(customers);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
+    const blockAllUsers = async (req, res) => {
+        try {
+          const result = await staffService.blockAllUsersService();
+          res.status(200).json(result);
+        } catch (error) {
+          res.status(500).json({ 
+            error: error.message || 'Failed to block all users' 
+          });
+        }
+      };
+    const unblockAllUsers = async (req, res) => {
+        try {
+          const result = await staffService.unblockAllUsersService();
+          res.status(200).json(result);
+        } catch (error) {
+          res.status(500).json({ 
+            error: error.message || 'Failed to unblock users' 
+          });
+        }
+      };   
 const staffLogin = async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -44,5 +91,10 @@ const staffLogin = async (req, res) => {
 
 module.exports = {
     customerLogin,
-    staffLogin
+    staffLogin,
+    getCustomers,
+    blockAllUsers,
+    unblockAllUsers,
+    getBranchCustomers,
+    getRepCustomers
 };

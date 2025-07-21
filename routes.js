@@ -16,6 +16,7 @@ const repDashboard = require('./src/components/Dashboard/RepDashboard/Routes/ind
 const mvrepDashboard = require('./src/components/Dashboard/ManagerViewRepDashboard/Routes/index');
 const expenditureRoutes = require('./src/components/Expenditure/Routes/index');
 const smsRoutes = require('./src/components/SMS/Routes/index');
+const customerWithdrawalRequestRoutes = require('./src/components/CustomerWithdrawalRequest/Routes/index');
 
 
 router.use('/api/branch', branchRoutes);
@@ -33,6 +34,7 @@ router.use('/api/repdashboard',repDashboard);
 router.use('/api/mvrepdashboard',mvrepDashboard);
 router.use('/api/expenditure', expenditureRoutes);
 router.use('/api/sms', smsRoutes);
+router.use('/api/customerwithdrawalrequest', customerWithdrawalRequestRoutes);
 
 
 module.exports = router;

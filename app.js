@@ -1,6 +1,6 @@
 const express = require('express');
 const mongoose = require('mongoose')
-const startFDMaturityJob = require('./Jobs/fdMaturityChecker'); 
+const { initAllCronJobs } = require('./Jobs/fdMaturityChecker'); // Destructure the export
 const http = require('http')
 const routes = require('./routes')
 require('dotenv').config()
@@ -12,7 +12,7 @@ const port = process.env.PORT || 4000;
 
 const mongoURI = process.env.MONGO_URI 
 
-mongoose.connect(mongoURI).then(()=>{console.log('MongoDb connected'),startFDMaturityJob();}).catch(err=>console.log(err))
+mongoose.connect(mongoURI).then(()=>{console.log('MongoDb connected');initAllCronJobs();}).catch(err=>console.log(err))
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

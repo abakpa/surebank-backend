@@ -1,4 +1,6 @@
 const jwt = require("jsonwebtoken");
+const Staff = require('../Staff/Model/index');
+
 
 const customerAuth = async(req, res, next) => {
     const authHeader = req.headers.authorization;
@@ -26,6 +28,11 @@ const staffAuth = async(req, res, next) => {
 
     try {
         const payload = jwt.verify(token, process.env.JWT_SECRET_KEY);
+        const staff = await Staff.findById(payload.id);
+        if (staff.tokenVersion !== payload.tokenVersion) {
+            throw new Error('Session expired')
+            // return res.status(401).json({ error: "Session expired" });
+          }
 
         req.staff = { staffId: payload.id, email: payload.email };
 

@@ -16,7 +16,7 @@ const registerStaff = async (req, res) => {
     if (existingStaff) {
       return res.status(400).json({ message: 'Staff already exists' });
     }
-    const newStaff = await staffService.createStaff({ firstName,lastName, phone, email,password, address, password,role,branchId });
+    const newStaff = await staffService.createStaff({ firstName,lastName, phone, email,password, address,role,branchId });
 
     res.status(201).json({ message: 'Staff registered successfully', user: newStaff });
   } catch (error) {
