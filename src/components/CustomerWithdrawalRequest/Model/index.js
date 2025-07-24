@@ -19,6 +19,10 @@ const customerWithdrawalRequestSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  packageNumber: {
+    type: String,
+    required: true,
+  },
   branchId: { 
     type: String, 
     ref:'Branch'
@@ -38,6 +42,12 @@ const customerWithdrawalRequestSchema = new mongoose.Schema({
     type: String, 
   },
   bankAccountNumber: { 
+    type: String, 
+  },
+  shippingAddress: { 
+    type: String, 
+  },
+  productName: { 
     type: String, 
   },
   amount: { 
