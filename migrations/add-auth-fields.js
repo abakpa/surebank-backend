@@ -22,7 +22,7 @@ async function migrate() {
       }
     );
 
-    console.log(`Updated ${result.modifiedCount} Staffs`);
+    // console.log(`Updated ${result.modifiedCount} Staffs`);
     process.exit(0);
   } catch (err) {
     console.error('Migration failed:', err);
