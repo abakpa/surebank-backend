@@ -15,8 +15,9 @@ const customerAuth = async(req, res, next) => {
 
         next();
     } catch (error) {
-        console.log(error);
-        res.send("invalid authentication");
+        return res.status(401).json({ message: error });
+
+        // res.send("invalid authentication");
     }
 };
 const staffAuth = async(req, res, next) => {
