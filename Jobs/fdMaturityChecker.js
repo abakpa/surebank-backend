@@ -32,8 +32,8 @@ const startFDMaturityJob = () => {
 
 // Schedule blocking non-admins at 8:00 PM daily
 const scheduleBlocking = () => {
-  cron.schedule('10 10 * * *', async () => {
-    console.log('Running 8PM block of non-admin users...');
+ cron.schedule('30 19 * * *', async () => {
+    console.log('Running 7:30PM block of non-admin users...');
     try {
       const result = await blockAllUsersService();
       console.log('Blocking result:', result);
@@ -48,8 +48,8 @@ const scheduleBlocking = () => {
 
 // Schedule unblocking at 7:00 AM daily
 const scheduleUnblocking = () => {
-  cron.schedule('15 10 * * *', async () => {
-    console.log('Running 7AM unblock of all users...');
+  cron.schedule('0 9 * * *', async () => {
+    console.log('Running 9AM unblock of all users...');
     try {
       const result = await unblockAllUsersService();
       console.log('Unblocking result:', result);
