@@ -247,6 +247,16 @@ const bcrypt = require('bcrypt')
             res.status(500).json({ message: error.message });
         }
       }
+      const deleteExpenditure = async (req, res) => {
+        // const {date,branchId} = req.body
+        const expenditureId = req.params.id
+        try {
+            const expenditure = await accountTransactionService.deleteExpenditure(expenditureId);
+            res.status(200).json(expenditure);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
       const getProfit = async (req, res) => {
         const {date,branchId} = req.body
         try {
@@ -329,6 +339,7 @@ const bcrypt = require('bcrypt')
     getFDAccountIncome,
     getAllSBandDSIncome,
     getAllExpenditure,
+    deleteExpenditure,
     getProfit,
     getSBIncomeReport,
     getDSIncomeReport,

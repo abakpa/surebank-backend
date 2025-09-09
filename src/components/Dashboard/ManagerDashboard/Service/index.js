@@ -611,7 +611,8 @@ async function getBranchAllSBandDSIncome(date = null, staff) {
     // Build query with date filter
     const query = {
       createdAt: { $lte: endDate },
-      branchId:branchId
+      branchId:branchId,
+      status:1
     };
   
  
@@ -687,7 +688,7 @@ const getBranchExpenditureReport = async (staff) => {
     const branch = await Staff.findOne({_id:staff})
     const branchId = branch.branchId
     try {
-      const report = await Expenditure.find({branchId:branchId})
+      const report = await Expenditure.find({branchId:branchId,status:1})
         .populate({
           path: 'createdBy',
           populate: {

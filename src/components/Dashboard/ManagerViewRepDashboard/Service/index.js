@@ -454,7 +454,8 @@ async function getRepAllSBandDSIncome(date = null, staff) {
     // Build query with date filter
     const query = {
       createdAt: { $lte: endDate },
-      createdBy:staff
+      createdBy:staff,
+      status:1
     };
   
  
@@ -527,7 +528,7 @@ const getRepDSIncomeReport = async (staff) => {
 const getRepExpenditureReport = async (staff) => {
   
     try {
-      const report = await Expenditure.find({createdBy:staff})
+      const report = await Expenditure.find({createdBy:staff,status:1})
         .populate({
           path: 'createdBy',
           populate: {

@@ -19,6 +19,10 @@ const expenditureSchema = new mongoose.Schema({
     ref:'Staff',
     required: true,
   },
+    status: {
+    type: Number,
+    default: 1,  // Status will be 1 by default
+  }
 },
 {timestamps:true}
 );

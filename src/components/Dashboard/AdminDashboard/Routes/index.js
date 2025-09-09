@@ -31,6 +31,7 @@ router.post('/dsincome',staffAuth, AcountTransactionController.getDSAccountIncom
 router.post('/fdincome',staffAuth, AcountTransactionController.getFDAccountIncome);
 router.post('/totalincome',staffAuth, AcountTransactionController.getAllSBandDSIncome);
 router.post('/totalexpenditure',staffAuth, AcountTransactionController.getAllExpenditure);
+router.put('/deleteexpenditure/:id',staffAuth, AcountTransactionController.deleteExpenditure);
 router.post('/profit',staffAuth, AcountTransactionController.getProfit);
 router.post('/sbincomereport',staffAuth, AcountTransactionController.getSBIncomeReport);
 router.post('/dsincomereport',staffAuth, AcountTransactionController.getDSIncomeReport);

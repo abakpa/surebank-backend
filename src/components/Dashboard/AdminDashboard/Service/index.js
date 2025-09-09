@@ -744,6 +744,7 @@ async function getAllExpenditure(date = null, branchId = null) {
     // Build query with date filter
     const query = {
       createdAt: { $lte: endDate },
+      status: 1, // Only fetch active expenditures
     };
   
     // Optionally filter by branch
@@ -758,6 +759,25 @@ async function getAllExpenditure(date = null, branchId = null) {
   
     return totalExpenditure;
 }
+const deleteExpenditure = async (expenditureId) => {
+  try {
+    const result = await Expenditure.findByIdAndUpdate(
+      expenditureId,
+      { status: 0 },
+      { new: true } // return the updated document
+    );
+
+    if (!result) {
+      throw new Error("Expenditure not found");
+    }
+
+    return result;
+  } catch (error) {
+    console.error("Error deleting expenditure:", error);
+    throw new Error("Failed to delete expenditure");
+  }
+};
+
 async function getProfit(date = null, branchId = null) {
     // Use today's date if none is provided
     const endDate = date ? new Date(date) : new Date();
@@ -817,7 +837,7 @@ const getDSIncomeReport = async () => {
   };
 const getExpenditureReport = async () => {
     try {
-      const report = await Expenditure.find({})
+      const report = await Expenditure.find({status: 1})
         .populate({
           path: 'createdBy',
           populate: {
@@ -950,6 +970,7 @@ const getExpenditureReport = async () => {
     getFDAccountIncome,
     getAllSBandDSIncome,
     getAllExpenditure,
+    deleteExpenditure,
     getProfit,
     getSBIncomeReport,
     getDSIncomeReport,
