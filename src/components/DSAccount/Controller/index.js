@@ -76,6 +76,39 @@ require('dotenv').config()
         res.status(500).json({ message: error.message });
       }
     }
+      const reverseDailyContribution = async (req, res) => {
+        try{
+        const contributionInput = req.body;
+        const createdBy = req.staff.staffId;
+        // const packageId = req.query;
+        const result = await DSAccountService.reverseDailyContribution({ ...contributionInput, createdBy});
+        res.status(200).json({data:result,message:'Withdrawal successful'});
+      }catch(error){
+        res.status(500).json({ message: error.message });
+      }
+    }
+      const reverseDailyContributionCharge = async (req, res) => {
+        try{
+        const contributionInput = req.body;
+        const createdBy = req.staff.staffId;
+        // const packageId = req.query;
+        const result = await DSAccountService.reverseDailyContributionCharge({ ...contributionInput, createdBy});
+        res.status(200).json({data:result,message:'Withdrawal successful'});
+      }catch(error){
+        res.status(500).json({ message: error.message });
+      }
+    }
+      const freeToWithdrawReversal = async (req, res) => {
+        try{
+        const contributionInput = req.body;
+        const createdBy = req.staff.staffId;
+        // const packageId = req.query;
+        const result = await DSAccountService.freeToWithdrawReversal({ ...contributionInput, createdBy});
+        res.status(200).json({data:result,message:'Withdrawal successful'});
+      }catch(error){
+        res.status(500).json({ message: error.message });
+      }
+    }
       const mainWithdrawal = async (req, res) => {
         try{
         const contributionInput = req.body;
@@ -95,5 +128,8 @@ require('dotenv').config()
     getCustomerDSAccountById,
     updateDSAccountAmount,
     withdrawDailyContribution,
+    reverseDailyContribution,
+    reverseDailyContributionCharge,
+    freeToWithdrawReversal,
     mainWithdrawal
   };

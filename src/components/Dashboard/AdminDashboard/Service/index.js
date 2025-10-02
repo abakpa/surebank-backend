@@ -89,6 +89,8 @@ async function getAllDSAccountWithdrawal(date = null, branchId = null) {
     // Sum up all withdrawal amounts directly
     const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0) || 0;
 
+     
+
     return totalBalance;
 }
 
@@ -350,6 +352,13 @@ async function getAllDailyDSAccount(date = null, branchId = null) {
     
  // Sum up all withdrawal amounts directly
  const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0) || 0;
+   // Step 2: Get reversal total
+    const reversalTotal = await getDailyReversalTotal(date, branchId);
+
+    // Step 3: Subtract reversals
+    const totalBalance1 = totalBalance - reversalTotal;
+
+    return totalBalance1;
     
     // Calculate the sum of the latest balances
     // const totalBalance = Array.from(balanceMap.values()).reduce((sum, balance) => sum + balance, 0);
@@ -359,7 +368,69 @@ async function getAllDailyDSAccount(date = null, branchId = null) {
 
     // const Withdrawal = dswithdrawal + charge
     
-    return totalBalance;
+    // return totalBalance;
+}
+
+// Function to fetch and calculate reversal total
+async function getReversalTotal(date = null, branchId = null) {
+  let query = { 
+  package: 'DS', 
+  direction: 'Debit', 
+  narration: 'Reversal' 
+};
+
+    const targetDate = date ? new Date(date) : new Date();
+
+    // Set start of day
+    const startDate = new Date(targetDate);
+    startDate.setHours(0, 0, 0, 0);
+
+    // Set end of day
+    const endDate = new Date(targetDate);
+    endDate.setHours(23, 59, 59, 999);
+
+    query.createdAt = { $gte: startDate, $lte: endDate };
+
+    if (branchId) {
+        query.branchId = branchId;
+    }
+
+    // Only fetch reversal transactions
+    // query.narration = { $regex: /^reversal$/i }; // case-insensitive match
+
+    const reversalTransactions = await AccountTransaction.find(query);
+    const reversalTotal = reversalTransactions.reduce((sum, tx) => sum + tx.amount, 0) || 0;
+    return reversalTotal;
+}
+async function getDailyReversalTotal(date = null, branchId = null) {
+  let query = { 
+  package: 'DS', 
+  direction: { $in: ['Debit', 'Credit'] }, 
+  narration: 'Reversal' 
+};
+
+    const targetDate = date ? new Date(date) : new Date();
+
+    // Set start of day
+    const startDate = new Date(targetDate);
+    startDate.setHours(0, 0, 0, 0);
+
+    // Set end of day
+    const endDate = new Date(targetDate);
+    endDate.setHours(23, 59, 59, 999);
+
+    query.createdAt = { $gte: startDate, $lte: endDate };
+
+    if (branchId) {
+        query.branchId = branchId;
+    }
+
+    // Only fetch reversal transactions
+    // query.narration = { $regex: /^reversal$/i }; // case-insensitive match
+
+    const reversalTransactions = await AccountTransaction.find(query);
+    const reversalTotal = reversalTransactions.reduce((sum, tx) => sum + tx.amount, 0) || 0;
+    return reversalTotal;
 }
 async function getAllDailyFDAccount(date = null, branchId = null) {
     let query = { package: 'FD', direction: 'Credit' };
@@ -455,8 +526,15 @@ async function getAllDailyDSAccountWithdrawal(date = null, branchId = null) {
   
     // Calculate the total amount of all debit transactions
     const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0);
+
+      const reversalTotal = await getReversalTotal(date, branchId);
+    // Step 3: Subtract reversals
+    const totalBalance1 = totalBalance - reversalTotal;
+    // console.log("LLLLL",transactions)
+
+    return totalBalance1;
   
-    return totalBalance;
+    // return totalBalance;
 }
 async function getAllDailyDSAccountChargeByDate(date = null, branchId = null) {
     let query = { package: 'DS', direction: 'Charge' };
@@ -635,6 +713,31 @@ async function getDSAccountIncome(date = null, branchId = null) {
     const query = {
       package: 'DS',
       direction: 'Credit',
+      createdAt: { $lte: endDate },
+    };
+  
+    if (branchId) {
+      query.branchId = branchId;
+    }
+  
+    const transactions = await SureBankAccount.find(query);
+  
+    const totalBalance1 = transactions.reduce((sum, tx) => sum + tx.amount, 0);
+
+    const dsIncomeReversal = await getDSAccountIncomeReversal(date,branchId)
+
+    const totalBalance = totalBalance1 - dsIncomeReversal
+  
+    return totalBalance;
+  }
+async function getDSAccountIncomeReversal(date = null, branchId = null) {
+    const endDate = date ? new Date(date) : new Date();
+    endDate.setHours(23, 59, 59, 999);
+  
+    const query = {
+      package: 'DS',
+      direction: 'Debit',
+      narration: 'DS Charge Reversal',
       createdAt: { $lte: endDate },
     };
   
@@ -956,6 +1059,8 @@ const getExpenditureReport = async () => {
     getAllDailySBAccountWithdrawalByDate,
     getAllSBandDSAccount,
     getAllDailyDSAccount,
+    getReversalTotal,
+    getDailyReversalTotal,
     getAllDailyFDAccount,
     getAllDailyDSAccountCharge,
     getAllDailyDSAccountWithdrawal,
@@ -967,6 +1072,7 @@ const getExpenditureReport = async () => {
     getAllAccountPackage,
     getSBAccountIncome,
     getDSAccountIncome,
+    getDSAccountIncomeReversal,
     getFDAccountIncome,
     getAllSBandDSIncome,
     getAllExpenditure,

@@ -148,7 +148,12 @@ async function getAllRepDailyDSAccount(date = null, staff) {
     
  // Sum up all withdrawal amounts directly
  const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0) || 0;
-    
+
+        const reversalTotal = await getDailyReversalTotal(date, staff);
+         // Step 3: Subtract reversals
+         const totalBalance1 = totalBalance - reversalTotal;
+     
+         return totalBalance1;
     // Calculate the sum of the latest balances
     // const totalBalance = Array.from(balanceMap.values()).reduce((sum, balance) => sum + balance, 0);
     //  const dswithdrawal = await getAllRepDailyDSAccountWithdrawalByDate(date,staff) ;
@@ -157,7 +162,37 @@ async function getAllRepDailyDSAccount(date = null, staff) {
 
     // const Withdrawal = dswithdrawal + charge
     
-    return totalBalance  ;
+    // return totalBalance  ;
+}
+async function getDailyReversalTotal(date = null, staff = null) {
+  let query = { 
+  package: 'DS', 
+  direction: { $in: ['Debit', 'Credit'] }, 
+  narration: 'Reversal' 
+};
+
+    const targetDate = date ? new Date(date) : new Date();
+
+    // Set start of day
+    const startDate = new Date(targetDate);
+    startDate.setHours(0, 0, 0, 0);
+
+    // Set end of day
+    const endDate = new Date(targetDate);
+    endDate.setHours(23, 59, 59, 999);
+
+    query.createdAt = { $gte: startDate, $lte: endDate };
+
+    if (staff) {
+        query.transactionOwnerId = staff;
+    }
+    // Only fetch reversal transactions
+    // query.narration = { $regex: /^reversal$/i }; // case-insensitive match
+
+    const reversalTransactions = await AccountTransaction.find(query);
+
+    const reversalTotal = reversalTransactions.reduce((sum, tx) => sum + tx.amount, 0) || 0;
+    return reversalTotal;
 }
 async function getAllRepDailyFDAccount(date = null, staff) {
 
@@ -706,4 +741,5 @@ module.exports = {
     getRepOrder,
     getAllFDPackage,
     getAllFDAccount,
+    getDailyReversalTotal
   };

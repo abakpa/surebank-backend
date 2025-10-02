@@ -12,6 +12,9 @@ router.get('/:id',staffAuth, DSAccountController.getCustomerDSAccountById);
 router.get('/customer/:id',customerAuth, DSAccountController.getCustomerDSAccountById);
 router.post('/deposit', staffAuth, DSAccountController.saveDailyContribution);
 router.post('/withdrawal', staffAuth, DSAccountController.withdrawDailyContribution);
+router.post('/reversal', staffAuth, DSAccountController.reverseDailyContribution);
+router.post('/chargereversal', staffAuth, DSAccountController.reverseDailyContributionCharge);
+router.post('/freetowithdrawreversal', staffAuth, DSAccountController.freeToWithdrawReversal);
 router.post('/mainwithdrawal', staffAuth, DSAccountController.mainWithdrawal);
 
 

@@ -162,6 +162,7 @@ const getCustomerDSAccountById = async (customerId) =>{
       
       await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
+        transactionOwnerId: contributionInput.createdBy,
         customerId: dsaccount.customerId,
         amount: contributionInput.amountPerDay,
         balance: dsaccount.totalContribution + contributionInput.amountPerDay,
@@ -181,6 +182,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         amount: totalContribution,
         balance: excessBalance,
         createdBy: dsaccount.createdBy,
+        transactionOwnerId: dsaccount.createdBy,
         narration: "Total DS",
         accountTypeId: DSAccountId,
         accountManagerId: dsaccount.accountManagerId,
@@ -192,6 +194,7 @@ const getCustomerDSAccountById = async (customerId) =>{
     
       await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
+        transactionOwnerId: contributionInput.createdBy,
         customerId: dsaccount.customerId,
         amount: totalContribution,
         balance: account.availableBalance + totalContribution,
@@ -217,6 +220,7 @@ const getCustomerDSAccountById = async (customerId) =>{
     
       const newContribution = await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
+        transactionOwnerId: contributionInput.createdBy,
         customerId: dsaccount.customerId,
         amount: charge,
         balance: excessBalance - charge,
@@ -262,6 +266,7 @@ const getCustomerDSAccountById = async (customerId) =>{
 
       await AccountTransaction.DepositTransactionAccount({
        createdBy: contributionInput.createdBy,
+       transactionOwnerId: contributionInput.createdBy,
        customerId: dsaccount.customerId,
        amount: contributionInput.amountPerDay,
        balance: dsaccount.totalContribution + contributionInput.amountPerDay,
@@ -280,6 +285,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         amount: dsaccount.totalContribution + contributionInput.amountPerDay,
         balance: 0,
         createdBy: dsaccount.createdBy,
+        transactionOwnerId: dsaccount.createdBy,
         narration: "Total DS",
         accountTypeId: DSAccountId,
         accountManagerId: dsaccount.accountManagerId,
@@ -290,6 +296,7 @@ const getCustomerDSAccountById = async (customerId) =>{
       });
       const toAvailableBalance = await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
+        transactionOwnerId: contributionInput.createdBy,
         customerId: dsaccount.customerId,
         amount:  dsaccount.totalContribution + contributionInput.amountPerDay,
         balance: account.availableBalance + dsaccount.totalContribution + contributionInput.amountPerDay,
@@ -327,6 +334,7 @@ const getCustomerDSAccountById = async (customerId) =>{
 
       await AccountTransaction.DepositTransactionAccount({
        createdBy: contributionInput.createdBy,
+       transactionOwnerId: contributionInput.createdBy,
        amount: contributionInput.amountPerDay,
        customerId: dsaccount.customerId,
        balance: dsaccount.totalContribution + contributionInput.amountPerDay,
@@ -343,6 +351,7 @@ const getCustomerDSAccountById = async (customerId) =>{
      // Log the charge as a new contribution
      const newContribution = await AccountTransaction.DepositTransactionAccount({
        createdBy: contributionInput.createdBy,
+       transactionOwnerId: contributionInput.createdBy,
        amount: chargeAmount,
        balance: contributionInput.amountPerDay - chargeAmount,
        customerId: dsaccount.customerId,
@@ -374,6 +383,7 @@ const getCustomerDSAccountById = async (customerId) =>{
         amount: (dsaccount.totalContribution + contributionInput.amountPerDay)-dsaccount.amountPerDay,
         balance: 0,
         createdBy: dsaccount.createdBy,
+        transactionOwnerId: dsaccount.createdBy,
         customerId: dsaccount.customerId,
         narration: "Total DS",
         accountTypeId: DSAccountId,
@@ -385,6 +395,7 @@ const getCustomerDSAccountById = async (customerId) =>{
       });
       const toAvailableBalance = await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
+        transactionOwnerId: contributionInput.createdBy,
         customerId: dsaccount.customerId,
         amount:  (dsaccount.totalContribution + contributionInput.amountPerDay)-dsaccount.amountPerDay,
         balance: (account.availableBalance + dsaccount.totalContribution + contributionInput.amountPerDay)-dsaccount.amountPerDay,
@@ -441,6 +452,7 @@ const getCustomerDSAccountById = async (customerId) =>{
       };
       const newContribution = await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
+        transactionOwnerId: contributionInput.createdBy,
         customerId: dsaccount.customerId,
         amount: contributionInput.amountPerDay,
         balance: dsaccount.totalContribution + contributionInput.amountPerDay,
@@ -466,6 +478,7 @@ const getCustomerDSAccountById = async (customerId) =>{
 
        await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
+        transactionOwnerId: contributionInput.createdBy,
         customerId: dsaccount.customerId,
         amount: contributionInput.amountPerDay,
         balance: dsaccount.totalContribution + contributionInput.amountPerDay,
@@ -482,6 +495,7 @@ const getCustomerDSAccountById = async (customerId) =>{
       // Log the charge as a new contribution
       const newContribution = await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
+        transactionOwnerId: contributionInput.createdBy,
         customerId: dsaccount.customerId,
         amount: chargeAmount,
         balance: contributionInput.amountPerDay - chargeAmount,
@@ -575,6 +589,7 @@ const getCustomerDSAccountById = async (customerId) =>{
   
       const newContribution = await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
+        transactionOwnerId: contributionInput.createdBy,
         customerId: dsaccount.customerId,
         amount: contributionInput.amountPerDay,
         balance: newBalance,
@@ -589,6 +604,7 @@ const getCustomerDSAccountById = async (customerId) =>{
       });
        await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
+        transactionOwnerId: contributionInput.createdBy,
         customerId: dsaccount.customerId,
         amount: newBalance,
         balance: 0,
@@ -603,6 +619,7 @@ const getCustomerDSAccountById = async (customerId) =>{
       });
       await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
+        transactionOwnerId: contributionInput.createdBy,
         customerId: dsaccount.customerId,
         amount:  newBalance,
         balance: account.availableBalance + newBalance,
@@ -634,6 +651,387 @@ const getCustomerDSAccountById = async (customerId) =>{
   
       return { newContribution };
     }
+    //No charge and no moved amount
+  const reverseDailyContribution = async (contributionInput) => {
+    // Retrieve customer account using the DS account number
+    const customerAccount = await getDSAccountByAccountNumber(contributionInput.DSAccountNumber);
+    if (!customerAccount) {
+      throw new Error('Account number does not exist.');
+    }
+  
+    // Check for an active package with the given account type
+    const dsaccount = await DSAccount.findOne({
+      DSAccountNumber: contributionInput.DSAccountNumber,
+      accountType: contributionInput.accountType,
+    });
+  
+    if (!dsaccount) {
+      throw new Error('Customer does not have an active package');
+    }
+  
+    const DSAccountId = dsaccount._id;
+    const currentDate = new Date();
+    const formattedDate = currentDate.toLocaleString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "2-digit", // Abbreviated year (YY)
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true, // Ensures AM/PM format
+    });
+  
+    if (contributionInput.amountPerDay > dsaccount.totalContribution) {
+      throw new Error("Insuffitient balance");
+    }
+  
+    // Retrieve and update ledger balance
+    const account = await Account.findOne({ accountNumber: dsaccount.accountNumber });
+  
+    if (!account) {
+      throw new Error('Account not found for ledger update');
+    }
+        const reverseCount = contributionInput.amountPerDay/dsaccount.amountPerDay
+
+    const newBalance = dsaccount.totalContribution - contributionInput.amountPerDay;
+  
+      const newContribution = await AccountTransaction.DepositTransactionAccount({
+        createdBy: contributionInput.createdBy,
+        transactionOwnerId: dsaccount.createdBy,
+        customerId: dsaccount.customerId,
+        amount: contributionInput.amountPerDay,
+        balance: newBalance,
+        branchId: dsaccount.branchId,
+        accountManagerId: dsaccount.accountManagerId,
+        accountNumber: dsaccount.accountNumber,
+        accountTypeId: DSAccountId,
+        date: formattedDate,
+        narration: "Reversal",
+        package:"DS",
+        direction: "Debit",
+      });
+      //  await AccountTransaction.DepositTransactionAccount({
+      //   createdBy: contributionInput.createdBy,
+      //   customerId: dsaccount.customerId,
+      //   amount: newBalance,
+      //   balance: 0,
+      //   branchId: dsaccount.branchId,
+      //   accountManagerId: dsaccount.accountManagerId,
+      //   accountNumber: dsaccount.accountNumber,
+      //   accountTypeId: DSAccountId,
+      //   date: formattedDate,
+      //   narration: "Moved",
+      //   package:"DS",
+      //   direction: "Moved",
+      // });
+      // await AccountTransaction.DepositTransactionAccount({
+      //   createdBy: contributionInput.createdBy,
+      //   customerId: dsaccount.customerId,
+      //   amount:  newBalance,
+      //   balance: account.availableBalance + newBalance,
+      //   branchId: account.branchId,
+      //   accountManagerId: account.accountManagerId,
+      //   accountNumber: account.accountNumber,
+      //   accountTypeId: account._id,
+      //   date: formattedDate,
+      //   narration: "From DS account",
+      //   package:"DS",
+      //   direction: "Transfer",
+      // });
+  
+      await Account.findOneAndUpdate(
+        { accountNumber: dsaccount.accountNumber },
+        {
+          $set: {
+            // availableBalance: account.availableBalance + newBalance,
+            ledgerBalance: account.ledgerBalance - contributionInput.amountPerDay,
+          },
+        }
+      );
+  
+      await DSAccount.findByIdAndUpdate(DSAccountId, {
+        // hasBeenCharged: 'false',
+        totalContribution:dsaccount.totalContribution - contributionInput.amountPerDay ,
+        totalCount: dsaccount.totalCount - reverseCount,
+      });
+  
+      return { newContribution };
+    }
+    //Charged but no moved amount
+const reverseDailyContributionCharge = async (contributionInput) => {
+  // 1. Retrieve customer DS account
+  const customerAccount = await getDSAccountByAccountNumber(contributionInput.DSAccountNumber);
+  if (!customerAccount) throw new Error("Account number does not exist.");
+
+  const dsaccount = await DSAccount.findOne({
+    DSAccountNumber: contributionInput.DSAccountNumber,
+    accountType: contributionInput.accountType,
+  });
+  if (!dsaccount) throw new Error("Customer does not have an active package");
+
+  const DSAccountId = dsaccount._id;
+  const currentDate = new Date();
+  const formattedDate = currentDate.toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+
+  // 2. Retrieve ledger account
+  const account = await Account.findOne({ accountNumber: dsaccount.accountNumber });
+  if (!account) throw new Error("Account not found for ledger update");
+
+  // -------------------
+  // Step A: Reverse DS Charge (Credit)
+  // -------------------
+  const balanceAfterChargeReversal = dsaccount.totalContribution + contributionInput.amountCharged;
+
+  const chargeReversalTx = await AccountTransaction.DepositTransactionAccount({
+    createdBy: contributionInput.createdBy,
+    transactionOwnerId: dsaccount.createdBy,
+    customerId: dsaccount.customerId,
+    amount: contributionInput.amountCharged,
+    balance: balanceAfterChargeReversal,
+    branchId: dsaccount.branchId,
+    accountManagerId: dsaccount.accountManagerId,
+    accountNumber: dsaccount.accountNumber,
+    accountTypeId: DSAccountId,
+    date: formattedDate,
+    narration: "Reversal",
+    package: "DS",
+    direction: "Credit",
+  });
+
+  // Mirror entry in SureBank
+  await SureBankAccount.DepositTransactionAccount({
+    package: "DS",
+    date: formattedDate,
+    direction: "Debit",
+    narration: "DS Charge Reversal",
+    branchId: dsaccount.branchId,
+    amount: contributionInput.amountCharged,
+    customerId: dsaccount.customerId,
+    type: DSAccountId,
+  });
+
+  // Update DS account
+  await DSAccount.findByIdAndUpdate(DSAccountId, {
+    hasBeenCharged: false,
+    totalContribution: balanceAfterChargeReversal,
+    totalCount: 0,
+  });
+
+  // Update Ledger Account
+  await Account.findOneAndUpdate(
+    { accountNumber: dsaccount.accountNumber },
+    {
+      $inc: { ledgerBalance: contributionInput.amountPerDay }, // restore ledger balance
+    }
+  );
+
+  // -------------------
+  // Step B: Reverse DS Daily Amount (Debit)
+  // -------------------
+  const balanceAfterAmountReversal = balanceAfterChargeReversal - contributionInput.amountPerDay;
+
+  const amountReversalTx = await AccountTransaction.DepositTransactionAccount({
+    createdBy: contributionInput.createdBy,
+    transactionOwnerId: dsaccount.createdBy,
+    customerId: dsaccount.customerId,
+    amount: contributionInput.amountPerDay,
+    balance: balanceAfterAmountReversal,
+    branchId: dsaccount.branchId,
+    accountManagerId: dsaccount.accountManagerId,
+    accountNumber: dsaccount.accountNumber,
+    accountTypeId: DSAccountId,
+    date: formattedDate,
+    narration: "Reversal",
+    package: "DS",
+    direction: "Debit",
+  });
+
+  // Update DS account again
+  await DSAccount.findByIdAndUpdate(DSAccountId, {
+    totalContribution: balanceAfterAmountReversal,
+  });
+
+  // Update Ledger Account again
+  await Account.findOneAndUpdate(
+    { accountNumber: dsaccount.accountNumber },
+    {
+      $inc: { ledgerBalance: -contributionInput.amountPerDay },
+    }
+  );
+
+  // -------------------
+  // Return results
+  // -------------------
+  return {
+    chargeReversalTx,
+    amountReversalTx,
+    finalBalance: balanceAfterAmountReversal,
+  };
+};
+
+const freeToWithdrawReversal = async (contributionInput) => {
+
+  // 1. Retrieve customer account (main account)
+  const customerAccount = await getAccountByAccountNumber(contributionInput.accountNumber);
+  if (!customerAccount) throw new Error("Account number does not exist.");
+
+  // 2. Retrieve DS account
+  const dsaccount = await DSAccount.findOne({
+    DSAccountNumber: contributionInput.DSAccountNumber,
+    accountType: contributionInput.accountType,
+  });
+  if (!dsaccount) throw new Error("Customer does not have an active package");
+
+  const DSAccountId = dsaccount._id;
+  const currentDate = new Date();
+  const formattedDate = currentDate.toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+
+  // 3. Validate available balance
+  const account = await Account.findOne({ accountNumber: contributionInput.accountNumber });
+  if (!account) throw new Error("Ledger account not found");
+
+  if (contributionInput.amountPerDay > account.availableBalance) {
+    throw new Error("Insufficient balance");
+  }
+
+  // -------------------
+  // Step A: Debit main account for moved amount
+  // -------------------
+  const debitMainAccountTx = await AccountTransaction.DepositTransactionAccount({
+    createdBy: contributionInput.createdBy,
+    transactionOwnerId: account.createdBy,
+    amount: contributionInput.amountPerDay,
+    balance: account.availableBalance - contributionInput.movedAmount,
+    branchId: account.branchId,
+    customerId: account.customerId,
+    accountManagerId: account.accountManagerId,
+    accountNumber: account.accountNumber,
+    accountTypeId: account._id,
+    date: formattedDate,
+    narration: "Reversal",
+    package: "Account",
+    direction: "Debit",
+  });
+
+  // -------------------
+  // Step B: Credit DS account with movedAmount
+  // -------------------
+  const newBalanceAfterMove = dsaccount.totalContribution + contributionInput.movedAmount;
+
+  const moveCreditTx = await AccountTransaction.DepositTransactionAccount({
+    createdBy: contributionInput.createdBy,
+    transactionOwnerId: dsaccount.createdBy,
+    customerId: dsaccount.customerId,
+    amount: contributionInput.movedAmount,
+    balance: newBalanceAfterMove,
+    branchId: dsaccount.branchId,
+    accountManagerId: dsaccount.accountManagerId,
+    accountNumber: dsaccount.accountNumber,
+    accountTypeId: DSAccountId,
+    date: formattedDate,
+    narration: "Reversal",
+    package: "DS",
+    direction: "Credit",
+  });
+
+  // -------------------
+  // Step C: DS Charge Reversal (Credit)
+  // -------------------
+  const newBalanceAfterCharge = newBalanceAfterMove + contributionInput.amountCharged;
+
+  const chargeReversalTx = await AccountTransaction.DepositTransactionAccount({
+    createdBy: contributionInput.createdBy,
+    transactionOwnerId: dsaccount.createdBy,
+    customerId: dsaccount.customerId,
+    amount: contributionInput.amountCharged,
+    balance: newBalanceAfterCharge,
+    branchId: dsaccount.branchId,
+    accountManagerId: dsaccount.accountManagerId,
+    accountNumber: dsaccount.accountNumber,
+    accountTypeId: DSAccountId,
+    date: formattedDate,
+    narration: "Reversal",
+    package: "DS",
+    direction: "Credit",
+  });
+
+  // Mirror entry in SureBank
+  await SureBankAccount.DepositTransactionAccount({
+    package: "DS",
+    date: formattedDate,
+    direction: "Debit",
+    narration: "DS Charge Reversal",
+    branchId: dsaccount.branchId,
+    amount: contributionInput.amountCharged,
+    customerId: dsaccount.customerId,
+    type: DSAccountId,
+  });
+
+  // -------------------
+  // Step D: Daily Amount Reversal (Debit)
+  // -------------------
+  const finalBalance = newBalanceAfterCharge - contributionInput.amountPerDay;
+  const newTotalCount = finalBalance/dsaccount.amountPerDay
+
+  const dailyAmountReversalTx = await AccountTransaction.DepositTransactionAccount({
+    createdBy: contributionInput.createdBy,
+    transactionOwnerId: dsaccount.createdBy,
+    customerId: dsaccount.customerId,
+    amount: contributionInput.amountPerDay,
+    balance: finalBalance,
+    branchId: dsaccount.branchId,
+    accountManagerId: dsaccount.accountManagerId,
+    accountNumber: dsaccount.accountNumber,
+    accountTypeId: DSAccountId,
+    date: formattedDate,
+    narration: "Reversal",
+    package: "DS",
+    direction: "Debit",
+  });
+
+  // -------------------
+  // Step E: Update Account + DSAccount
+  // -------------------
+  await Account.findOneAndUpdate(
+    { accountNumber: contributionInput.accountNumber },
+    {
+      $set: {
+        availableBalance: account.availableBalance - contributionInput.movedAmount,
+      },
+    }
+  );
+
+  await DSAccount.findByIdAndUpdate(DSAccountId, {
+    hasBeenCharged: true,
+    totalContribution: finalBalance,
+    totalCount: newTotalCount + 1,
+  });
+
+  // -------------------
+  // Return summary
+  // -------------------
+  return {
+    debitMainAccountTx,
+    moveCreditTx,
+    chargeReversalTx,
+    dailyAmountReversalTx,
+    finalBalance,
+  };
+};
+
   const mainWithdrawal = async (contributionInput) => {
     // Retrieve customer account using the DS account number
     const customerAccount = await getAccountByAccountNumber(contributionInput.accountNumber);
@@ -667,6 +1065,7 @@ const getCustomerDSAccountById = async (customerId) =>{
   
       const newContribution = await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
+        transactionOwnerId: contributionInput.createdBy,
         amount: contributionInput.amountPerDay,
         balance: account.availableBalance - contributionInput.amountPerDay,
         branchId: account.branchId,
@@ -709,5 +1108,8 @@ const getCustomerDSAccountById = async (customerId) =>{
     getCustomerDSAccountById,
     updateDSAccountAmount,
     withdrawDailyContribution,
+    reverseDailyContribution,
+    reverseDailyContributionCharge,
+    freeToWithdrawReversal,
     mainWithdrawal
   };

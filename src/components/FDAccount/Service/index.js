@@ -113,6 +113,7 @@ const createFDAccount = async (FDAccountData) => {
   const FDAccountId = newFDAccount._id;
   const newContribution = await AccountTransaction.DepositTransactionAccount({
     createdBy: FDAccountData.createdBy,
+    transactionOwnerId: FDAccountData.createdBy,
     customerId:existingFDAccountNumber.customerId,
     amount: newFDAccount.fdamount,
     balance: newFDAccount.totalAmount,
@@ -135,6 +136,7 @@ const createFDAccount = async (FDAccountData) => {
   );
   const newContribution2 = await AccountTransaction.DepositTransactionAccount({
     createdBy: FDAccountData.createdBy,
+    transactionOwnerId: FDAccountData.createdBy,
     amount: expenseInterest,
     customerId:existingFDAccountNumber.customerId,
     balance: totalAmount - expenseInterest,
@@ -149,6 +151,7 @@ const createFDAccount = async (FDAccountData) => {
   });
       await AccountTransaction.DepositTransactionAccount({
           createdBy: FDAccountData.createdBy,
+          transactionOwnerId: FDAccountData.createdBy,
           customerId:existingFDAccountNumber.customerId,
           amount:  expenseInterest,
           balance: account.availableBalance + expenseInterest,
@@ -277,6 +280,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
 
             const newContribution = await AccountTransaction.DepositTransactionAccount({
                 createdBy: contributionInput.createdBy,
+                transactionOwnerId: contributionInput.createdBy,
                 amount: contributionInput.amount,
                 balance: sbaccount.balance + contributionInput.amount,
                 branchId: sbaccount.branchId,
@@ -354,6 +358,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
       
           const newContribution = await AccountTransaction.DepositTransactionAccount({
             createdBy: contributionInput.createdBy,
+            transactionOwnerId: contributionInput.createdBy,
             amount: fdaccount.fdamount,
             customerId:customerAccount.customerId,
             balance: 0,
@@ -428,6 +433,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
         const amountFromLedgerBalance = contributionInput.fdamount + charge
           const newContribution1 = await AccountTransaction.DepositTransactionAccount({
             createdBy: contributionInput.createdBy,
+            transactionOwnerId: contributionInput.createdBy,
             amount: charge,
             customerId:customerAccount.customerId,
             balance: balanceAfterCharge,
@@ -442,6 +448,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
           });
           const newContribution = await AccountTransaction.DepositTransactionAccount({
             createdBy: contributionInput.createdBy,
+            transactionOwnerId: contributionInput.createdBy,
             amount: contributionInput.fdamount,
             customerId:customerAccount.customerId,
             balance: 0,
@@ -456,6 +463,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
           });
               await AccountTransaction.DepositTransactionAccount({
                   createdBy: contributionInput.createdBy,
+                  transactionOwnerId: contributionInput.createdBy,
                   customerId:customerAccount.customerId,
                   amount:  newBalance,
                   balance: account.availableBalance + newBalance,
@@ -790,6 +798,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
       
           const newContribution = await AccountTransaction.DepositTransactionAccount({
             createdBy: contributionInput.createdBy,
+            transactionOwnerId: contributionInput.createdBy,
             amount: sbaccount.sellingPrice,
             balance: newBalance,
             branchId: sbaccount.branchId,

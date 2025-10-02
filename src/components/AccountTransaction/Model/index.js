@@ -19,6 +19,10 @@ const accountTransactionSchema = new mongoose.Schema({
     ref:'Staff',
     required: true,
   },
+  transactionOwnerId: {
+ type: String,
+    required: true,
+  },
   accountManagerId: {
     type: String,
     required: true,
