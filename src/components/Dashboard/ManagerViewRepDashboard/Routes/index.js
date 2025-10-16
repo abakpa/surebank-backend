@@ -29,6 +29,8 @@ router.post('/repfdpackage/:id',staffAuth,  AcountTransactionController.getAllFD
 router.post('/repfd/:id',staffAuth,  AcountTransactionController.getAllFDAccount);
 router.post('/branchstaff/:id',staffAuth,AcountTransactionController.getBranchStaff);
 router.get('/repcustomer/:id',staffAuth, AcountTransactionController.getCustomerByRep);
+router.post('/referral/:id',staffAuth,AcountTransactionController.getReferralStaff);
+router.post('/referraldetails/:id',staffAuth,AcountTransactionController.getReferralStaffDetails);
 
 
 

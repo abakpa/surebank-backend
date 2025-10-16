@@ -36,6 +36,9 @@ const staffSchema = new mongoose.Schema({
     required: true
 
   },
+  referral: { 
+    type: String, 
+  },
   status: { 
     type: String, 
     required: true,

@@ -300,6 +300,26 @@ const getBranchStaff = async (req, res) => {
                           res.status(500).json({ message: error.message });
                       }
                     }
+                    const getReferralStaff = async (req, res) => {
+                            const staffs = req.params.id
+                      const {date} = req.body
+                        try {
+                            const staff = await accountTransactionService.getReferralStaff(staffs,date);
+                            res.status(200).json(staff);
+                        } catch (error) {
+                            res.status(500).json({ message: error.message });
+                        }
+                      }
+                    const getReferralStaffDetails = async (req, res) => {
+                            const staffs = req.params.id
+                      const {date} = req.body
+                        try {
+                            const staff = await accountTransactionService.getReferralStaffDetails(staffs,date);
+                            res.status(200).json(staff);
+                        } catch (error) {
+                            res.status(500).json({ message: error.message });
+                        }
+                      }
 
       module.exports = {
         getAllRepDSAccount,
@@ -331,5 +351,7 @@ const getBranchStaff = async (req, res) => {
         getTransaction,
         getRepOrder,
         getBranchStaff,
-        getCustomerByRep
+        getCustomerByRep,
+        getReferralStaff,
+        getReferralStaffDetails
       };

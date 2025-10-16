@@ -704,6 +704,67 @@ const getRepExpenditureReport = async (staff) => {
         throw error;
     }
   }
+  // const getReferralStaff = async (staffs) =>{
+  //   try {
+  //       return await Staff.find({referral:staffs});
+  //   } catch (error) {
+  //       throw error;
+  //   }
+  // }
+    async function getReferralStaff(staffs, date = null) {
+    // const branch = await Staff.findOne({_id:staff})
+    // const branchId = branch.branchId
+    try {
+      // Use today's date if none is provided
+      const endDate = date ? new Date(date) : new Date();
+      endDate.setHours(23, 59, 59, 999); // Include the full day
+    
+      // Build query with date filter
+      const query = {
+        createdAt: { $lte: endDate },
+        referral:staffs
+      };
+    
+      // Optionally filter by Rep
+      // if (RepId) {
+      //   query.RepId = RepId;
+      // }
+    
+      // Count matching documents
+      const countReferral = await Staff.countDocuments(query);
+      return countReferral;
+    } catch (error) {
+      console.error("Error fetching Referral accounts:", error);
+      return { totalBalance: 0, count: 0 };
+    }
+  }
+    async function getReferralStaffDetails(staffs, date = null) {
+    // const branch = await Staff.findOne({_id:staff})
+    // const branchId = branch.branchId
+    try {
+      // Use today's date if none is provided
+      const endDate = date ? new Date(date) : new Date();
+      endDate.setHours(23, 59, 59, 999); // Include the full day
+    
+      // Build query with date filter
+      const query = {
+        createdAt: { $lte: endDate },
+        referral:staffs
+      };
+    
+      // Optionally filter by Rep
+      // if (RepId) {
+      //   query.RepId = RepId;
+      // }
+    
+      // Count matching documents
+      const referralDetails = await Staff.find(query);
+      return referralDetails;
+    } catch (error) {
+      console.error("Error fetching Referral accounts:", error);
+      return { totalBalance: 0, count: 0 };
+    }
+  }
 module.exports = {
     getAllRepDSAccount,
     getAllRepDSAccountWithdrawal,
@@ -737,5 +798,7 @@ module.exports = {
     getAllFDPackage,
     getAllFDAccount,
     getBranchStaff,
-    getCustomerByRep
+    getCustomerByRep,
+      getReferralStaff,
+      getReferralStaffDetails
   };

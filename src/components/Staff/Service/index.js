@@ -39,6 +39,7 @@ const getStaff = async () =>{
       throw error;
   }
 }
+
 const getBranchStaff = async (staff) =>{
   const branch = await Staff.findOne({_id:staff})
   const branchId = branch.branchId

@@ -11,12 +11,12 @@ const registerStaff = async (req, res) => {
   const salt = await bcrypt.genSalt()
 
   req.body.password = await bcrypt.hash(req.body.password,salt)
-    const { firstName,lastName, phone, email, password, address,role,branchId } = req.body;
+    const { firstName,lastName, phone, email, password, address,role,branchId,referral } = req.body;
     const existingStaff = await staffService.getStaffByEmail(email);
     if (existingStaff) {
       return res.status(400).json({ message: 'Staff already exists' });
     }
-    const newStaff = await staffService.createStaff({ firstName,lastName, phone, email,password, address,role,branchId });
+    const newStaff = await staffService.createStaff({ firstName,lastName, phone, email,password, address,role,branchId,referral });
 
     res.status(201).json({ message: 'Staff registered successfully', user: newStaff });
   } catch (error) {
@@ -59,6 +59,7 @@ const getStaff = async (req, res) => {
         res.status(500).json({ message: error.message });
     }
   }
+
 const getBranchStaff = async (req, res) => {
 
   const staffId = req.staff.staffId;
