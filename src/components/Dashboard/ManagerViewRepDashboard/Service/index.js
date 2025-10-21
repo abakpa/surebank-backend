@@ -7,6 +7,7 @@ const Expenditure = require('../../../Expenditure/Model');
 const Staff = require('../../../Staff/Model');
 const FDAccount = require('../../../FDAccount/Model');
 const Customer = require('../../../Customer/Model/index')
+const Order =require('../../../SBAccount/Model/order')
 
 const getBranchStaff = async (staff) =>{
   // const branch = await Staff.findOne({_id:staff})
@@ -765,6 +766,50 @@ const getRepExpenditureReport = async (staff) => {
       return { totalBalance: 0, count: 0 };
     }
   }
+
+
+/**
+ * Count number of orders managed by each staff within a given date range.
+ * @param {Array} staffList - List of staff objects containing _id
+ * @param {String | null} startDate - Start date (ISO string or null)
+ * @param {String | null} endDate - End date (ISO string or null)
+ * @returns {Object} - { staffId1: count1, staffId2: count2, ... }
+ */
+async function getStaffOrderCounts(staffList, startDate = null, endDate = null) {
+  try {
+    // Build date range filter
+    const dateFilter = {};
+    if (startDate) dateFilter.$gte = new Date(startDate);
+    if (endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      dateFilter.$lte = end;
+    }
+
+    const counts = {};
+
+    // Run all count queries in parallel for performance
+    const promises = staffList.map(async (staff) => {
+      const query = { accountManagerId: staff._id };
+
+      if (Object.keys(dateFilter).length > 0) {
+        query.createdAt = dateFilter;
+      }
+
+      const count = await Order.countDocuments(query);
+      counts[staff._id] = count;
+    });
+
+    await Promise.all(promises); // Wait for all async operations
+    return counts;
+  } catch (error) {
+    console.error("Error counting staff orders:", error);
+    throw new Error("Failed to get staff order counts");
+  }
+}
+
+
+
 module.exports = {
     getAllRepDSAccount,
     getAllRepDSAccountWithdrawal,
@@ -773,11 +818,9 @@ module.exports = {
     getAllRepSBAccountWithdrawal,
     getAllRepDailyDSAccountChargeByDate,
     getAllRepDailyDSAccountWithdrawalByDate,
-    // getAllDailySBAccountWithdrawalByDate,
     getAllRepSBandDSAccount,
     getAllRepDailyDSAccount,
     getAllRepDailyFDAccount,
-    // getAllDailyDSAccountCharge,
     getAllRepDailyDSAccountWithdrawal,
     getAllRepDailySBAccount,
     getAllRepDailySBAccountWithdrawal,
@@ -800,5 +843,6 @@ module.exports = {
     getBranchStaff,
     getCustomerByRep,
       getReferralStaff,
-      getReferralStaffDetails
+      getReferralStaffDetails,
+      getStaffOrderCounts
   };

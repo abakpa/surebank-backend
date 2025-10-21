@@ -31,6 +31,7 @@ router.post('/branchstaff/:id',staffAuth,AcountTransactionController.getBranchSt
 router.get('/repcustomer/:id',staffAuth, AcountTransactionController.getCustomerByRep);
 router.post('/referral/:id',staffAuth,AcountTransactionController.getReferralStaff);
 router.post('/referraldetails/:id',staffAuth,AcountTransactionController.getReferralStaffDetails);
+router.post("/referral/orders/:id", staffAuth,AcountTransactionController.getReferralStaffOrderCounts);
 
 
 

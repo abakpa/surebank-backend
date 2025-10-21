@@ -1,4 +1,5 @@
 const accountTransactionService = require('../Service/index');
+const Staff = require('../../../Staff/Model/index');
 // const staffService = require('../../../Staff/Service/index')
 require('dotenv').config()
 const bcrypt = require('bcrypt')
@@ -321,6 +322,41 @@ const getBranchStaff = async (req, res) => {
                         }
                       }
 
+/**
+ * Controller to handle referral staff order counting
+ */
+async function getReferralStaffOrderCounts(req, res) {
+            const referralId = req.params.id
+
+  try {
+    const { startDate, endDate } = req.body;
+
+    if (!referralId) {
+      return res.status(400).json({ message: "referralId is required" });
+    }
+
+    // Get all staff referred by this referral
+    const staffList = await Staff.find({ referral: referralId });
+
+    if (!staffList || staffList.length === 0) {
+      return res.status(404).json({ message: "No staff found for this referral" });
+    }
+
+    // Call service function to count orders per staff
+    const counts = await accountTransactionService.getStaffOrderCounts(staffList, startDate, endDate);
+
+    res.status(200).json({
+      message: "Referral staff order counts fetched successfully",
+      data: counts,
+    });
+  } catch (error) {
+    console.error("Error in getReferralStaffOrderCounts:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+}
+
+
+
       module.exports = {
         getAllRepDSAccount,
         getAllRepDSAccountWithdrawal,
@@ -353,5 +389,6 @@ const getBranchStaff = async (req, res) => {
         getBranchStaff,
         getCustomerByRep,
         getReferralStaff,
-        getReferralStaffDetails
+        getReferralStaffDetails,
+        getReferralStaffOrderCounts
       };
