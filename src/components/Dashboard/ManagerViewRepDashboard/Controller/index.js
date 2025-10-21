@@ -311,22 +311,44 @@ const getBranchStaff = async (req, res) => {
                             res.status(500).json({ message: error.message });
                         }
                       }
-                    const getReferralStaffDetails = async (req, res) => {
-                            const staffs = req.params.id
-                      const {date} = req.body
-                        try {
-                            const staff = await accountTransactionService.getReferralStaffDetails(staffs,date);
-                            res.status(200).json(staff);
-                        } catch (error) {
-                            res.status(500).json({ message: error.message });
-                        }
-                      }
+const getReferralStaffDetails = async (req, res) => {
+  const referralId = req.params.id;
+  const { date } = req.body;
+
+  try {
+    if (!referralId) {
+      return res.status(400).json({ message: "Referral ID is required" });
+    }
+
+    // 🔁 Get the referral chain
+    const referralDetails = await accountTransactionService.getReferralStaffDetails(referralId, date);
+
+    if (!referralDetails || referralDetails.length === 0) {
+      return res.status(404).json({ message: "No referred staff found in the chain" });
+    }
+
+    // ✅ Structured response
+    res.status(200).json({
+      message: "Referral chain staff details fetched successfully",
+      totalCount: referralDetails.length,
+      data: referralDetails,
+    });
+  } catch (error) {
+    console.error("Error in getReferralStaffDetails controller:", error);
+    res.status(500).json({
+      message: "Server error while fetching referral chain staff details",
+      error: error.message,
+    });
+  }
+};
+
+
 
 /**
  * Controller to handle referral staff order counting
  */
 async function getReferralStaffOrderCounts(req, res) {
-            const referralId = req.params.id
+  const referralId = req.params.id;
 
   try {
     const { startDate, endDate } = req.body;
@@ -335,18 +357,50 @@ async function getReferralStaffOrderCounts(req, res) {
       return res.status(400).json({ message: "referralId is required" });
     }
 
-    // Get all staff referred by this referral
-    const staffList = await Staff.find({ referral: referralId });
+    // Recursive function to get all referred staff (chain referrals)
+    const getAllReferredStaff = async (referralIds, collected = new Map()) => {
+      // Find all staff referred by any of these referralIds
+      const referredStaff = await Staff.find({ referral: { $in: referralIds } });
 
-    if (!staffList || staffList.length === 0) {
+      if (!referredStaff.length) return collected;
+
+      for (const staff of referredStaff) {
+        if (!collected.has(staff._id.toString())) {
+          collected.set(staff._id.toString(), staff);
+        }
+      }
+
+      const nextReferralIds = referredStaff.map((s) => s._id);
+      return getAllReferredStaff(nextReferralIds, collected);
+    };
+
+    // Start recursive referral search
+    const initialStaffList = await Staff.find({ referral: referralId });
+    if (!initialStaffList.length) {
       return res.status(404).json({ message: "No staff found for this referral" });
     }
 
-    // Call service function to count orders per staff
-    const counts = await accountTransactionService.getStaffOrderCounts(staffList, startDate, endDate);
+    // Collect all staff recursively
+    const allStaffMap = new Map();
+    for (const staff of initialStaffList) {
+      allStaffMap.set(staff._id.toString(), staff);
+    }
+
+    await getAllReferredStaff(initialStaffList.map((s) => s._id), allStaffMap);
+
+    // Convert map to array
+    const allStaffList = Array.from(allStaffMap.values());
+
+    // Count orders for all staff (chain)
+    const counts = await accountTransactionService.getStaffOrderCounts(
+      allStaffList,
+      startDate,
+      endDate
+    );
 
     res.status(200).json({
-      message: "Referral staff order counts fetched successfully",
+      message: "Referral chain staff order counts fetched successfully",
+      totalStaff: allStaffList.length,
       data: counts,
     });
   } catch (error) {
@@ -354,6 +408,7 @@ async function getReferralStaffOrderCounts(req, res) {
     res.status(500).json({ message: "Server error", error: error.message });
   }
 }
+
 
 
 

@@ -713,8 +713,7 @@ const getRepExpenditureReport = async (staff) => {
   //   }
   // }
     async function getReferralStaff(staffs, date = null) {
-    // const branch = await Staff.findOne({_id:staff})
-    // const branchId = branch.branchId
+  
     try {
       // Use today's date if none is provided
       const endDate = date ? new Date(date) : new Date();
@@ -725,12 +724,6 @@ const getRepExpenditureReport = async (staff) => {
         createdAt: { $lte: endDate },
         referral:staffs
       };
-    
-      // Optionally filter by Rep
-      // if (RepId) {
-      //   query.RepId = RepId;
-      // }
-    
       // Count matching documents
       const countReferral = await Staff.countDocuments(query);
       return countReferral;
@@ -739,33 +732,46 @@ const getRepExpenditureReport = async (staff) => {
       return { totalBalance: 0, count: 0 };
     }
   }
-    async function getReferralStaffDetails(staffs, date = null) {
-    // const branch = await Staff.findOne({_id:staff})
-    // const branchId = branch.branchId
-    try {
-      // Use today's date if none is provided
-      const endDate = date ? new Date(date) : new Date();
-      endDate.setHours(23, 59, 59, 999); // Include the full day
-    
-      // Build query with date filter
-      const query = {
+async function getReferralStaffDetails(referralId, date = null) {
+  try {
+    const endDate = date ? new Date(date) : new Date();
+    endDate.setHours(23, 59, 59, 999); // Include full day
+
+    // Recursive helper to get full referral chain
+    const fetchReferralChain = async (id, collected = new Set()) => {
+      if (collected.has(id)) return []; // Prevent loops
+      collected.add(id);
+
+      const directReferrals = await Staff.find({
+        referral: id,
         createdAt: { $lte: endDate },
-        referral:staffs
-      };
-    
-      // Optionally filter by Rep
-      // if (RepId) {
-      //   query.RepId = RepId;
-      // }
-    
-      // Count matching documents
-      const referralDetails = await Staff.find(query);
-      return referralDetails;
-    } catch (error) {
-      console.error("Error fetching Referral accounts:", error);
-      return { totalBalance: 0, count: 0 };
-    }
+      }).lean();
+
+      let allReferrals = [...directReferrals];
+
+      for (const staff of directReferrals) {
+        const nextLevel = await fetchReferralChain(staff._id.toString(), collected);
+        allReferrals = allReferrals.concat(nextLevel);
+      }
+
+      return allReferrals;
+    };
+
+    // Fetch the full chain
+    const referralChain = await fetchReferralChain(referralId);
+
+    // ❌ Exclude the staff with the referralId from the final list (safety)
+    const filteredChain = referralChain.filter(
+      (staff) => staff._id.toString() !== referralId.toString()
+    );
+
+    return filteredChain;
+  } catch (error) {
+    console.error("Error fetching Referral chain:", error);
+    throw new Error("Failed to retrieve referral chain");
   }
+}
+
 
 
 /**
@@ -777,7 +783,6 @@ const getRepExpenditureReport = async (staff) => {
  */
 async function getStaffOrderCounts(staffList, startDate = null, endDate = null) {
   try {
-    // Build date range filter
     const dateFilter = {};
     if (startDate) dateFilter.$gte = new Date(startDate);
     if (endDate) {
@@ -788,10 +793,8 @@ async function getStaffOrderCounts(staffList, startDate = null, endDate = null) 
 
     const counts = {};
 
-    // Run all count queries in parallel for performance
     const promises = staffList.map(async (staff) => {
       const query = { accountManagerId: staff._id };
-
       if (Object.keys(dateFilter).length > 0) {
         query.createdAt = dateFilter;
       }
@@ -800,13 +803,14 @@ async function getStaffOrderCounts(staffList, startDate = null, endDate = null) 
       counts[staff._id] = count;
     });
 
-    await Promise.all(promises); // Wait for all async operations
+    await Promise.all(promises);
     return counts;
   } catch (error) {
     console.error("Error counting staff orders:", error);
     throw new Error("Failed to get staff order counts");
   }
 }
+
 
 
 
