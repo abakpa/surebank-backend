@@ -8,6 +8,7 @@ const {customerAuth} = require('../../Middleware/index')
 router.post('/', staffAuth, customerController.registerCustomer);
 router.get('/branchcustomer', staffAuth, customerController.getCustomerByBranch);
 router.get('/repcustomer', staffAuth, customerController.getCustomerByRep);
+router.get('/ecommerce', staffAuth, customerController.getEcommerceCustomers);
 router.get('/', staffAuth,customerController.getCustomer);
 router.get('/:id',staffAuth, customerController.getCustomerById);
 router.get('/customer/:id',customerAuth, customerController.getCustomerById);

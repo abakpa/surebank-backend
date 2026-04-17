@@ -120,6 +120,26 @@ require('dotenv').config()
         res.status(500).json({ message: error.message });
       }
     }
+      const mainDeposit = async (req, res) => {
+        try{
+        const contributionInput = req.body;
+        const createdBy = req.staff.staffId;
+        const result = await DSAccountService.mainDeposit({ ...contributionInput, createdBy});
+        res.status(200).json({data:result,message:'Deposit successful'});
+      }catch(error){
+        res.status(500).json({ message: error.message });
+      }
+    }
+      const transferWalletToPackageAccount = async (req, res) => {
+        try{
+        const contributionInput = req.body;
+        const createdBy = req.staff.staffId;
+        const result = await DSAccountService.transferWalletToPackageAccount({ ...contributionInput, createdBy});
+        res.status(200).json({data:result,message:'Wallet transferred successfully'});
+      }catch(error){
+        res.status(500).json({ message: error.message });
+      }
+    }
 
   module.exports = {
     createDSAccount,
@@ -131,5 +151,7 @@ require('dotenv').config()
     reverseDailyContribution,
     reverseDailyContributionCharge,
     freeToWithdrawReversal,
-    mainWithdrawal
+    mainWithdrawal,
+    mainDeposit,
+    transferWalletToPackageAccount
   };

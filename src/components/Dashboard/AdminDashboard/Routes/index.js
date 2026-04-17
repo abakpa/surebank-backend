@@ -38,6 +38,11 @@ router.post('/dsincomereport',staffAuth, AcountTransactionController.getDSIncome
 router.post('/expenditurereport',staffAuth, AcountTransactionController.getExpenditureReport);
 router.post('/transaction', staffAuth, AcountTransactionController.getTransaction);
 router.post('/order', staffAuth, AcountTransactionController.getOrder);
+router.post('/ecommerceincome', staffAuth, AcountTransactionController.getEcommerceIncome);
+router.post('/dailyecommerceincome', staffAuth, AcountTransactionController.getDailyEcommerceIncome);
+router.post('/ecommerceincomereport', staffAuth, AcountTransactionController.getEcommerceIncomeReport);
+router.post('/ecommercedeposit', staffAuth, AcountTransactionController.getEcommerceDeposit);
+router.post('/ecommercedepositreport', staffAuth, AcountTransactionController.getEcommerceDepositReport);
 
 
 module.exports = router;

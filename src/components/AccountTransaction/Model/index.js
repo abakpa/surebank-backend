@@ -54,6 +54,10 @@ const accountTransactionSchema = new mongoose.Schema({
   package: { 
     type: String, 
     required:true
+  },
+  excludeFromStaffStats: {
+    type: Boolean,
+    default: false,
   }
 },
 {timestamps:true}

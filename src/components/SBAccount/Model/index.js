@@ -34,6 +34,11 @@ SBAccountNumber: {
   accountManagerId: {
     type: String,
   },
+  paymentReference: {
+    type: String,
+    unique: true,
+    sparse: true,
+  },
   branchId: { 
     type: String, 
     ref:'Branch'

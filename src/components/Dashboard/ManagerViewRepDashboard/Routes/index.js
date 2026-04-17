@@ -25,6 +25,8 @@ router.post('/repdsincomereport/:id',staffAuth, AcountTransactionController.getR
 router.post('/repexpenditurereport/:id',staffAuth, AcountTransactionController.getRepExpenditureReport);
 router.post('/reptransaction/:id',staffAuth,  AcountTransactionController.getTransaction);
 router.post('/reporder/:id',staffAuth,  AcountTransactionController.getRepOrder);
+router.post('/repecommercedeposit/:id',staffAuth,  AcountTransactionController.getRepEcommerceDeposit);
+router.post('/repecommercedepositreport/:id',staffAuth,  AcountTransactionController.getRepEcommerceDepositReport);
 router.post('/repfdpackage/:id',staffAuth,  AcountTransactionController.getAllFDPackage);
 router.post('/repfd/:id',staffAuth,  AcountTransactionController.getAllFDAccount);
 router.post('/branchstaff/:id',staffAuth,AcountTransactionController.getBranchStaff);

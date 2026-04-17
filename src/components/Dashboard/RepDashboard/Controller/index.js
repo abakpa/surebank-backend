@@ -279,6 +279,28 @@ const bcrypt = require('bcrypt')
                 }
               }
 
+              const getRepEcommerceDeposit = async (req, res) => {
+                const staff = req.staff.staffId;
+                const { date } = req.body;
+                try {
+                    const ecommerceDeposit = await accountTransactionService.getRepEcommerceDeposit(date, staff);
+                    res.status(200).json(ecommerceDeposit);
+                } catch (error) {
+                    res.status(500).json({ message: error.message });
+                }
+              }
+
+              const getRepEcommerceDepositReport = async (req, res) => {
+                const staff = req.staff.staffId;
+                const { date } = req.body;
+                try {
+                    const report = await accountTransactionService.getRepEcommerceDepositReport(date, staff);
+                    res.status(200).json(report);
+                } catch (error) {
+                    res.status(500).json({ message: error.message });
+                }
+              }
+
       module.exports = {
         getAllRepDSAccount,
         getAllRepDSAccountWithdrawal,
@@ -308,4 +330,6 @@ const bcrypt = require('bcrypt')
         getRepExpenditureReport,
         getTransaction,
         getRepOrder,
+        getRepEcommerceDeposit,
+        getRepEcommerceDepositReport,
       };
