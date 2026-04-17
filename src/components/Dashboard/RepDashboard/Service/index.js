@@ -5,18 +5,121 @@ const SBAccount = require('../../../SBAccount/Model');
 const SureBankAccount = require('../../../SureBankAccount/Model');
 const Expenditure = require('../../../Expenditure/Model');
 const Staff = require('../../../Staff/Model');
+
+const normalizeDateInput = (dateInput) => {
+  if (dateInput && typeof dateInput === 'object' && !Array.isArray(dateInput)) {
+    return {
+      date: dateInput.date || '',
+      startDate: dateInput.startDate || '',
+      endDate: dateInput.endDate || '',
+    };
+  }
+
+  return { date: dateInput || '', startDate: '', endDate: '' };
+};
+
+const getStartOfDay = (value) => {
+  const date = new Date(value);
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
+
+const getEndOfDay = (value) => {
+  const date = new Date(value);
+  date.setHours(23, 59, 59, 999);
+  return date;
+};
+
+const buildCumulativeCreatedAtQuery = (dateInput) => {
+  const { date, startDate, endDate } = normalizeDateInput(dateInput);
+
+  if (startDate || endDate) {
+    const createdAt = {};
+    if (startDate) {
+      createdAt.$gte = getStartOfDay(startDate);
+    }
+    createdAt.$lte = endDate ? getEndOfDay(endDate) : getEndOfDay(new Date());
+    return createdAt;
+  }
+
+  return { $lte: date ? getEndOfDay(date) : getEndOfDay(new Date()) };
+};
+
+const buildDailyCreatedAtQuery = (dateInput) => {
+  const { date, startDate, endDate } = normalizeDateInput(dateInput);
+
+  if (startDate || endDate) {
+    const createdAt = {};
+    if (startDate) {
+      createdAt.$gte = getStartOfDay(startDate);
+    }
+    createdAt.$lte = endDate ? getEndOfDay(endDate) : getEndOfDay(new Date());
+    return createdAt;
+  }
+
+  const effectiveDate = date || new Date();
+  return {
+    $gte: getStartOfDay(effectiveDate),
+    $lte: getEndOfDay(effectiveDate),
+  };
+};
 const FDAccount = require('../../../FDAccount/Model');
 const Order = require('../../../SBAccount/Model/order');
+const EcommerceOrder = require('../../../EcommerceOrder/Model');
+
+const ECOMMERCE_DEPOSIT_NARRATION_PATTERN = /^(Wallet Funding|Order Payment to Wallet)/i;
+const STAFF_STATS_QUERY_FILTER = { $ne: true };
+
+const formatCustomerName = (customer) => {
+  if (!customer) return 'N/A';
+  return `${customer.firstName || ''} ${customer.lastName || ''}`.trim() || customer.phone || 'N/A';
+};
+
+const normalizeOrderStatus = ({ status, paymentStatus }) => {
+  const normalizedStatus = String(status || '').toLowerCase();
+  const normalizedPaymentStatus = String(paymentStatus || '').toLowerCase();
+
+  if (normalizedPaymentStatus === 'paid') {
+    return 'paid';
+  }
+
+  if (['paid', 'sold'].includes(normalizedStatus)) {
+    return 'paid';
+  }
+
+  return 'booked';
+};
+const getEcommerceProductName = (order, fallbackAccount) => {
+  const itemNames = Array.isArray(order.items)
+    ? order.items
+        .map((item) => item?.productName || item?.name || '')
+        .filter(Boolean)
+    : [];
+
+  if (itemNames.length > 0) {
+    return itemNames.join(', ');
+  }
+
+  return fallbackAccount?.productName || 'E-Commerce Order';
+};
+const getEcommerceSellingPrice = (order, fallbackAccount) => {
+  const totalAmount = Number(order.totalAmount || 0);
+  if (totalAmount > 0) {
+    return totalAmount;
+  }
+
+  return Number(fallbackAccount?.sellingPrice || 0);
+};
 
 
 async function getAllRepDSAccount(date = null, staff) {
  
-    let query = { package: 'DS', direction: 'Credit',createdBy:staff };
+    let query = { package: 'DS', direction: 'Credit',createdBy:staff, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
    
     // Filter by date if provided or default to today
     const endDate = date ? new Date(date) : new Date();
     endDate.setHours(23, 59, 59, 999);
-    query.createdAt = { $lte: endDate };
+    query.createdAt = buildCumulativeCreatedAtQuery(date);
     const transactions = await AccountTransaction.find(query);
     
     // // Sort transactions by createdAt in ascending order
@@ -40,12 +143,12 @@ async function getAllRepDSAccount(date = null, staff) {
 }
 async function getAllRepDSAccountWithdrawal(date = null, staff) {
    
-    let query = { package: 'DS', direction: 'Debit',createdBy:staff };
+    let query = { package: 'DS', direction: 'Debit',createdBy:staff, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
 
      // Filter by date if provided or default to today
      const endDate = date ? new Date(date) : new Date();
      endDate.setHours(23, 59, 59, 999);
-     query.createdAt = { $lte: endDate };
+     query.createdAt = buildCumulativeCreatedAtQuery(date);
 
 
     const transactions = await AccountTransaction.find(query);
@@ -59,11 +162,11 @@ async function getAllRepDSAccountWithdrawal(date = null, staff) {
 
 async function getAllRepDSAccountCharge(date = null, staff) {
   
-    let query = { package: 'DS', direction: 'Charge',createdBy:staff };
+    let query = { package: 'DS', direction: 'Charge',createdBy:staff, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
        // Filter by date if provided or default to today
        const endDate = date ? new Date(date) : new Date();
        endDate.setHours(23, 59, 59, 999);
-       query.createdAt = { $lte: endDate };
+       query.createdAt = buildCumulativeCreatedAtQuery(date);
      
     const transactions = await AccountTransaction.find(query);
     
@@ -75,13 +178,13 @@ async function getAllRepDSAccountCharge(date = null, staff) {
 
 async function getAllRepSBAccount(date = null, staff) {
 
-    let query = { package: 'SB', direction: 'Credit',createdBy:staff };
+    let query = { package: 'SB', direction: 'Credit',createdBy:staff, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
     
    
     // Filter by date if provided or default to today
     const endDate = date ? new Date(date) : new Date();
     endDate.setHours(23, 59, 59, 999);
-    query.createdAt = { $lte: endDate };
+    query.createdAt = buildCumulativeCreatedAtQuery(date);
   
   
     const transactions = await AccountTransaction.find(query);
@@ -105,12 +208,12 @@ async function getAllRepSBAccount(date = null, staff) {
 }
 async function getAllRepSBAccountWithdrawal(date = null, staff ) {
  
-    let query = { package: 'SB', direction: 'Debit',createdBy:staff };
+    let query = { package: 'SB', direction: 'Debit',createdBy:staff, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
 
      // Filter by date if provided or default to today
      const endDate = date ? new Date(date) : new Date();
      endDate.setHours(23, 59, 59, 999);
-     query.createdAt = { $lte: endDate };
+     query.createdAt = buildCumulativeCreatedAtQuery(date);
 
 
     const transactions = await AccountTransaction.find(query);
@@ -130,7 +233,7 @@ async function getAllRepSBandDSAccount(date = null, staff) {
 }
 async function getAllRepDailyDSAccount(date = null, staff) {
 
-    let query = { package: 'DS', direction: 'Credit',createdBy:staff };
+    let query = { package: 'DS', direction: 'Credit',createdBy:staff, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
    // Filter by date if provided or default to today
    const targetDate = date ? new Date(date) : new Date();
 
@@ -142,7 +245,7 @@ async function getAllRepDailyDSAccount(date = null, staff) {
    const endDate = new Date(targetDate);
    endDate.setHours(23, 59, 59, 999);
    
-   query.createdAt = { $gte: startDate, $lte: endDate };
+   query.createdAt = buildDailyCreatedAtQuery(date);
 
     const transactions = await AccountTransaction.find(query);
     
@@ -168,7 +271,8 @@ async function getDailyReversalTotal(date = null, staff = null) {
   let query = { 
   package: 'DS', 
   direction: { $in: ['Debit', 'Credit'] }, 
-  narration: 'Reversal' 
+  narration: 'Reversal',
+  excludeFromStaffStats: STAFF_STATS_QUERY_FILTER
 };
 
     const targetDate = date ? new Date(date) : new Date();
@@ -181,7 +285,7 @@ async function getDailyReversalTotal(date = null, staff = null) {
     const endDate = new Date(targetDate);
     endDate.setHours(23, 59, 59, 999);
 
-    query.createdAt = { $gte: startDate, $lte: endDate };
+    query.createdAt = buildDailyCreatedAtQuery(date);
 
     if (staff) {
         query.transactionOwnerId = staff;
@@ -208,7 +312,7 @@ async function getAllRepDailyFDAccount(date = null, staff) {
    const endDate = new Date(targetDate);
    endDate.setHours(23, 59, 59, 999);
    
-   query.createdAt = { $gte: startDate, $lte: endDate };
+   query.createdAt = buildDailyCreatedAtQuery(date);
 
     const transactions = await AccountTransaction.find(query);
     
@@ -227,7 +331,7 @@ async function getAllRepDailyFDAccount(date = null, staff) {
 }
 async function getAllRepDailyDSAccountChargeByDate(date = null, staff) {
   
-    let query = { package: 'DS', direction: 'Charge',createdBy:staff };
+    let query = { package: 'DS', direction: 'Charge',createdBy:staff, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
     
    
     const targetDate = date ? new Date(date) : new Date();
@@ -240,7 +344,7 @@ async function getAllRepDailyDSAccountChargeByDate(date = null, staff) {
     const endDate = new Date(targetDate);
     endDate.setHours(23, 59, 59, 999);
     
-    query.createdAt = { $gte: startDate, $lte: endDate };
+    query.createdAt = buildDailyCreatedAtQuery(date);
     
 
   
@@ -254,7 +358,7 @@ async function getAllRepDailyDSAccountChargeByDate(date = null, staff) {
 }
 async function getAllRepDailyDSAccountWithdrawalByDate(date = null, staff) {
  
-    let query = { package: 'DS', direction: 'Debit',createdBy:staff };
+    let query = { package: 'DS', direction: 'Debit',createdBy:staff, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
   
     const targetDate = date ? new Date(date) : new Date();
 
@@ -266,7 +370,7 @@ async function getAllRepDailyDSAccountWithdrawalByDate(date = null, staff) {
     const endDate = new Date(targetDate);
     endDate.setHours(23, 59, 59, 999);
     
-    query.createdAt = { $gte: startDate, $lte: endDate };
+    query.createdAt = buildDailyCreatedAtQuery(date);
     
 
   
@@ -280,7 +384,7 @@ async function getAllRepDailyDSAccountWithdrawalByDate(date = null, staff) {
   }
   async function getAllRepDailySBAccount(date = null, staff) {
    
-    let query = { package: 'SB', direction: 'Credit',createdBy:staff };
+    let query = { package: 'SB', direction: 'Credit',createdBy:staff, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
     // Filter by date if provided or default to today
     const targetDate = date ? new Date(date) : new Date();
  
@@ -292,7 +396,7 @@ async function getAllRepDailyDSAccountWithdrawalByDate(date = null, staff) {
     const endDate = new Date(targetDate);
     endDate.setHours(23, 59, 59, 999);
     
-    query.createdAt = { $gte: startDate, $lte: endDate };
+    query.createdAt = buildDailyCreatedAtQuery(date);
     
      
   
@@ -307,7 +411,7 @@ async function getAllRepDailyDSAccountWithdrawalByDate(date = null, staff) {
 
 async function getAllRepDailySBAccountWithdrawal(date = null, staff) {
 
-    let query = { package: 'SB', direction: 'Debit',createdBy:staff };
+    let query = { package: 'SB', direction: 'Debit',createdBy:staff, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
   
     const targetDate = date ? new Date(date) : new Date();
 
@@ -319,7 +423,7 @@ async function getAllRepDailySBAccountWithdrawal(date = null, staff) {
     const endDate = new Date(targetDate);
     endDate.setHours(23, 59, 59, 999);
     
-    query.createdAt = { $gte: startDate, $lte: endDate };
+    query.createdAt = buildDailyCreatedAtQuery(date);
     
   
  
@@ -333,7 +437,7 @@ async function getAllRepDailySBAccountWithdrawal(date = null, staff) {
 }
 async function getAllRepDailyDSAccountWithdrawal(date = null, staff) {
   
-    let query = { package: 'DS', direction: 'Debit',createdBy:staff };
+    let query = { package: 'DS', direction: 'Debit',createdBy:staff, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
   
     const targetDate = date ? new Date(date) : new Date();
 
@@ -345,7 +449,7 @@ async function getAllRepDailyDSAccountWithdrawal(date = null, staff) {
     const endDate = new Date(targetDate);
     endDate.setHours(23, 59, 59, 999);
     
-    query.createdAt = { $gte: startDate, $lte: endDate };
+    query.createdAt = buildDailyCreatedAtQuery(date);
     
   
  
@@ -367,14 +471,8 @@ async function getAllRepDailySBandDSAccount(date = null, staff) {
     return totalContribution;
 }
 async function getAllRepDSAccountPackage(date = null, staff) {
-
-    // Use today's date if none is provided
-    const endDate = date ? new Date(date) : new Date();
-    endDate.setHours(23, 59, 59, 999); // Include the full day
-  
-    // Build query with date filter
     const query = {
-      createdAt: { $lte: endDate },
+      createdAt: buildCumulativeCreatedAtQuery(date),
       accountManagerId:staff
     };
   
@@ -390,14 +488,8 @@ async function getAllRepDSAccountPackage(date = null, staff) {
   
   
 async function getAllRepSBAccountPackage(date = null, staff) {
-
-    // Use today's date if none is provided
-    const endDate = date ? new Date(date) : new Date();
-    endDate.setHours(23, 59, 59, 999); // Include the full day
-  
-    // Build query with date filter
     const query = {
-      createdAt: { $lte: endDate },
+      createdAt: buildCumulativeCreatedAtQuery(date),
       accountManagerId:staff
     };
   
@@ -473,14 +565,8 @@ async function getRepAllSBandDSIncome(date = null, staff) {
       return totalContribution;
   }
   async function getRepAllExpenditure(date = null, staff) {
-  
-    // Use today's date if none is provided
-    const endDate = date ? new Date(date) : new Date();
-    endDate.setHours(23, 59, 59, 999); // Include the full day
-  
-    // Build query with date filter
     const query = {
-      createdAt: { $lte: endDate },
+      createdAt: buildCumulativeCreatedAtQuery(date),
       createdBy:staff,
       status:1
     };
@@ -580,6 +666,7 @@ const getRepExpenditureReport = async (staff) => {
       const transactions = await AccountTransaction.find({
         package: { $in: ['SB', 'DS'] }, // Match either 'SB' or 'DS'
         direction: { $in: ['Debit', 'Credit'] }, // Match either 'Debit' or 'Credit'
+        excludeFromStaffStats: STAFF_STATS_QUERY_FILTER,
         createdBy, // Ensuring createdBy is always included
       })
         .populate({
@@ -608,79 +695,170 @@ const getRepExpenditureReport = async (staff) => {
     // const branch = await Staff.findOne({_id:staff})
     // const branchId = branch.branchId
     try {
-  
-      // Fetch transactions and populate createdBy and customer details
-     // Fetch all orders and populate necessary references
-     const orders = await Order.find({accountManagerId:staff})
-     .populate({
-       path: 'accountManagerId',
-       model: 'Staff',
-     })
-     .populate({
-       path: 'branchId',
-       model: 'Branch',
-     })
-     .populate({
-       path: 'customerId',
-       model: 'Customer',
-     })
-     .sort({ status: 1 });
- 
-   // Sort to show "booked" orders first
-   orders.sort((a, b) => (a.status === 'sold' ? -1 : 1));
-       // Fetch transactions and populate createdBy and customer details
-       const sbAccounts = await SBAccount.find({accountManagerId:staff})
-       .populate({
-         path: 'accountManagerId',
-         model: 'Staff',
-       })
-       .populate({
-         path: 'branchId',
-         model: 'Branch',
-       })
-       .populate({
-         path: 'customerId',
-         model: 'Customer',
-       })
-       .sort({ status: 1 });// Sort alphabetically (but not guaranteed for "booked" first)
- 
-     // Custom sorting: "booked" first, then "sold"
-     sbAccounts.sort((a, b) => (a.status === 'booked' ? -1 : 1));
-   
-     return {
-       orders,
-       sbAccounts,
-     };
+      const [orders, sbAccounts, ecommerceOrders] = await Promise.all([
+        Order.find({ accountManagerId: staff })
+          .populate({
+            path: 'accountManagerId',
+            model: 'Staff',
+          })
+          .populate({
+            path: 'branchId',
+            model: 'Branch',
+          })
+          .populate({
+            path: 'customerId',
+            model: 'Customer',
+          }),
+        SBAccount.find({ accountManagerId: staff })
+          .select('_id customerId branchId accountManagerId productName productDescription sellingPrice status createdAt SBAccountNumber createdBy')
+          .populate({
+            path: 'accountManagerId',
+            model: 'Staff',
+          })
+          .populate({
+            path: 'branchId',
+            model: 'Branch',
+          })
+          .populate({
+            path: 'customerId',
+            model: 'Customer',
+          }),
+        EcommerceOrder.find({ accountManagerId: staff })
+          .select('_id customerId branchId accountManagerId items totalAmount status paymentStatus createdAt SBAccountNumber')
+          .populate({
+            path: 'accountManagerId',
+            model: 'Staff',
+          })
+          .populate({
+            path: 'branchId',
+            model: 'Branch',
+          })
+          .populate({
+            path: 'customerId',
+            model: 'Customer',
+          }),
+      ]);
+
+      const ecommerceSbAccountNumbers = new Set(
+        ecommerceOrders
+          .map((order) => order.SBAccountNumber)
+          .filter(Boolean)
+      );
+      const sbAccountMap = new Map(
+        sbAccounts
+          .filter((account) => account.SBAccountNumber)
+          .map((account) => [account.SBAccountNumber, account])
+      );
+
+      const normalizedEcommerceOrders = ecommerceOrders.map((order) => {
+        const fallbackAccount = order.SBAccountNumber
+          ? sbAccountMap.get(order.SBAccountNumber)
+          : null;
+
+        return {
+          _id: order._id,
+          customerId: order.customerId,
+          branchId: order.branchId,
+          accountManagerId: order.accountManagerId,
+          productName: getEcommerceProductName(order, fallbackAccount),
+          sellingPrice: getEcommerceSellingPrice(order, fallbackAccount),
+          status: normalizeOrderStatus(order),
+          createdAt: order.createdAt,
+        };
+      });
+
+      const filteredSbAccounts = sbAccounts.filter((account) => {
+        const isEcommerceDefaultAccount =
+          account.createdBy === 'ECOMMERCE_SYSTEM' &&
+          account.productDescription === 'Default SB Account for e-commerce customers';
+
+        return !ecommerceSbAccountNumbers.has(account.SBAccountNumber) && !isEcommerceDefaultAccount;
+      });
+
+      const items = [...orders, ...filteredSbAccounts, ...normalizedEcommerceOrders]
+        .map((item) => ({
+          _id: item._id,
+          customerId: item.customerId,
+          branchId: item.branchId,
+          accountManagerId: item.accountManagerId,
+          productName: item.productName,
+          sellingPrice: item.sellingPrice,
+          status: normalizeOrderStatus(item),
+          createdAt: item.createdAt,
+        }))
+        .sort((a, b) => {
+          const statusPriority = { booked: 0, paid: 1 };
+          const priorityA = statusPriority[a.status] ?? 99;
+          const priorityB = statusPriority[b.status] ?? 99;
+
+          if (priorityA !== priorityB) {
+            return priorityA - priorityB;
+          }
+
+          return new Date(b.createdAt) - new Date(a.createdAt);
+        });
+
+      return { items };
     } catch (error) {
       console.error('Error fetching transactions:', error);
       throw new Error('Failed to retrieve transactions');
     }
   };
+  const getRepEcommerceDeposit = async (date = null, staff) => {
+    const query = {
+      package: 'Wallet',
+      direction: 'Credit',
+      createdBy: staff,
+      narration: { $regex: ECOMMERCE_DEPOSIT_NARRATION_PATTERN }
+    };
+
+    const endDate = date ? new Date(date) : new Date();
+    endDate.setHours(23, 59, 59, 999);
+    query.createdAt = buildCumulativeCreatedAtQuery(date);
+
+    const transactions = await AccountTransaction.find(query).select('amount').lean();
+    return transactions.reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
+  };
+  const getRepEcommerceDepositReport = async (date = null, staff) => {
+    const query = {
+      package: 'Wallet',
+      direction: 'Credit',
+      createdBy: staff,
+      narration: { $regex: ECOMMERCE_DEPOSIT_NARRATION_PATTERN }
+    };
+
+    const endDate = date ? new Date(date) : new Date();
+    endDate.setHours(23, 59, 59, 999);
+    query.createdAt = buildCumulativeCreatedAtQuery(date);
+
+    const transactions = await AccountTransaction.find(query)
+      .populate({
+        path: 'customerId',
+        model: 'Customer',
+        select: 'firstName lastName phone'
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return transactions.map((transaction) => ({
+      _id: transaction._id,
+      customerName: formatCustomerName(transaction.customerId),
+      narration: transaction.narration,
+      amount: Number(transaction.amount || 0),
+      date: transaction.createdAt,
+    }));
+  };
   async function getAllFDPackage(date = null, staff) {
-    // const branch = await Staff.findOne({_id:staff})
-    // const branchId = branch.branchId
     try {
-      // Use today's date if none is provided
-      const endDate = date ? new Date(date) : new Date();
-      endDate.setHours(23, 59, 59, 999); // Include the full day
-    
-      // Build query with date filter
       const query = {
-        createdAt: { $lte: endDate },
-        createdBy:staff
+        accountManagerId: staff,
+        createdAt: buildCumulativeCreatedAtQuery(date),
       };
-    
-      // Optionally filter by Rep
-      // if (RepId) {
-      //   query.RepId = RepId;
-      // }
-    
-      // Count matching documents
-      const countPackage = await FDAccount.countDocuments(query);
-      return countPackage;
+
+      return await FDAccount.countDocuments(query);
     } catch (error) {
       console.error("Error fetching FD accounts:", error);
-      return { totalBalance: 0, count: 0 };
+      return 0;
     }
   }
   async function getAllFDAccount(date = null, staff) {
@@ -692,7 +870,7 @@ const getRepExpenditureReport = async (staff) => {
       // Set end of the provided date or today
       const endDate = date ? new Date(date) : new Date();
       endDate.setHours(23, 59, 59, 999);
-      query.createdAt = { $lte: endDate };
+      query.createdAt = buildCumulativeCreatedAtQuery(date);
   
       // Filter by branch if branchId is provided
       // if (branchId) {
@@ -739,6 +917,8 @@ module.exports = {
     getRepExpenditureReport,
     getTransaction,
     getRepOrder,
+    getRepEcommerceDeposit,
+    getRepEcommerceDepositReport,
     getAllFDPackage,
     getAllFDAccount,
     getDailyReversalTotal

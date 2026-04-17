@@ -1,5 +1,6 @@
 const Account = require('../../Account/Model');
 const AccountTransaction = require('../../AccountTransaction/Model');
+const Branch = require('../../Branch/Model');
 const DSAccount = require('../../DSAccount/Model');
 const FDAccount = require('../../FDAccount/Model');
 const SBAccount = require('../../SBAccount/Model');
@@ -40,9 +41,57 @@ const getCustomerByPhone = async (phone) => {
     return await Customer.findOne({ phone });
   };
 
-const getCustomers = async () =>{
+const getCustomers = async ({ page = 1, limit = 25, search = '' } = {}) =>{
     try {
-        return await Customer.find({});
+        const safePage = Math.max(parseInt(page, 10) || 1, 1);
+        const safeLimit = Math.min(Math.max(parseInt(limit, 10) || 25, 1), 100);
+        const trimmedSearch = search.trim();
+        const query = {};
+
+        if (trimmedSearch) {
+          const regex = new RegExp(trimmedSearch, 'i');
+          const matchingBranches = await Branch.find(
+            { name: { $regex: regex } },
+            { _id: 1 }
+          ).lean();
+
+          const branchIds = matchingBranches.map((branch) => branch._id.toString());
+
+          query.$or = [
+            { firstName: { $regex: regex } },
+            { lastName: { $regex: regex } },
+            { phone: { $regex: regex } },
+          ];
+
+          if (branchIds.length > 0) {
+            query.$or.push({ branchId: { $in: branchIds } });
+          }
+        }
+
+        const [items, total] = await Promise.all([
+          Customer.find(query)
+            .select('_id firstName lastName address phone branchId updatePassword')
+            .sort({ firstName: 1, lastName: 1, createdAt: -1 })
+            .skip((safePage - 1) * safeLimit)
+            .limit(safeLimit)
+            .lean(),
+          Customer.countDocuments(query),
+        ]);
+
+        return {
+          items,
+          total,
+          page: safePage,
+          limit: safeLimit,
+          totalPages: Math.max(Math.ceil(total / safeLimit), 1),
+        };
+    } catch (error) {
+        throw error;
+    }
+  }
+const getEcommerceCustomers = async () =>{
+    try {
+        return await Customer.find({ createdBy: 'ECOMMERCE_SYSTEM' });
     } catch (error) {
         throw error;
     }
@@ -259,6 +308,7 @@ const getCustomerById = async (customerId) =>{
   module.exports = {
     createCustomer,
     getCustomers,
+    getEcommerceCustomers,
     getCustomerById,
     getCustomerByPhone,
     getCustomerByBranch,

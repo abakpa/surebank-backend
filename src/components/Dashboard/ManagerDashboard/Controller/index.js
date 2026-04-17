@@ -313,6 +313,28 @@ const bcrypt = require('bcrypt')
                 }
               }
 
+              const getBranchEcommerceDeposit = async (req, res) => {
+                const staff = req.staff.staffId;
+                const { date } = req.body;
+                try {
+                    const ecommerceDeposit = await accountTransactionService.getBranchEcommerceDeposit(date, staff);
+                    res.status(200).json(ecommerceDeposit);
+                } catch (error) {
+                    res.status(500).json({ message: error.message });
+                }
+              }
+
+              const getBranchEcommerceDepositReport = async (req, res) => {
+                const staff = req.staff.staffId;
+                const { date } = req.body;
+                try {
+                    const report = await accountTransactionService.getBranchEcommerceDepositReport(date, staff);
+                    res.status(200).json(report);
+                } catch (error) {
+                    res.status(500).json({ message: error.message });
+                }
+              }
+
       module.exports = {
         getAllBranchDSAccount,
         getAllFDAccount,
@@ -345,4 +367,6 @@ const bcrypt = require('bcrypt')
         getBranchExpenditureReport,
         getTransaction,
         getBranchOrder,
+        getBranchEcommerceDeposit,
+        getBranchEcommerceDepositReport,
       };

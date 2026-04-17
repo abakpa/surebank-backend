@@ -15,7 +15,7 @@ const customerAuth = async(req, res, next) => {
 
         next();
     } catch (error) {
-        return res.status(401).json({ message: error });
+        return res.status(401).json({ message: 'Token expired or invalid' });
 
         // res.send("invalid authentication");
     }

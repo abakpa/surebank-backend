@@ -1,0 +1,158 @@
+const axios = require('axios');
+const crypto = require('crypto');
+
+const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY;
+const PAYSTACK_BASE_URL = 'https://api.paystack.co';
+
+// Check if Paystack key is configured
+if (!PAYSTACK_SECRET_KEY) {
+  console.warn('WARNING: PAYSTACK_SECRET_KEY is not set in environment variables');
+}
+
+const paystackApi = axios.create({
+  baseURL: PAYSTACK_BASE_URL,
+  headers: {
+    Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`,
+    'Content-Type': 'application/json'
+  }
+});
+
+/**
+ * Initialize a Paystack transaction
+ * @param {Object} data - Transaction data
+ * @param {string} data.email - Customer email
+ * @param {number} data.amount - Amount in kobo (multiply naira by 100)
+ * @param {string} data.reference - Unique transaction reference
+ * @param {string} data.callback_url - URL to redirect after payment
+ * @param {Object} data.metadata - Additional data to store with transaction
+ */
+const initializeTransaction = async (data) => {
+  try {
+    // Validate Paystack key is configured
+    if (!PAYSTACK_SECRET_KEY) {
+      throw new Error('Paystack is not configured. Please contact support.');
+    }
+
+    console.log('Initializing Paystack transaction for:', data.email, 'Amount:', data.amount);
+
+    const response = await paystackApi.post('/transaction/initialize', {
+      email: data.email,
+      amount: data.amount, // Amount in kobo
+      reference: data.reference,
+      callback_url: data.callback_url,
+      metadata: data.metadata,
+      channels: data.channels
+    });
+
+    console.log('Paystack API response status:', response.status);
+
+    return response.data;
+  } catch (error) {
+    console.error('Paystack initialization error:', error.response?.data || error.message);
+    throw new Error(error.response?.data?.message || 'Failed to initialize payment');
+  }
+};
+
+/**
+ * Verify a Paystack transaction
+ * @param {string} reference - Transaction reference
+ */
+const verifyTransaction = async (reference) => {
+  try {
+    const response = await paystackApi.get(`/transaction/verify/${reference}`);
+    return response.data;
+  } catch (error) {
+    console.error('Paystack verification error:', error.response?.data || error.message);
+    throw new Error(error.response?.data?.message || 'Failed to verify payment');
+  }
+};
+
+/**
+ * Generate a unique payment reference
+ * @param {string} prefix - Prefix for the reference
+ */
+const generateReference = (prefix = 'SB') => {
+  const timestamp = Date.now();
+  const randomBytes = crypto.randomBytes(8).toString('hex');
+  return `${prefix}_${timestamp}_${randomBytes}`;
+};
+
+/**
+ * Initialize payment for an order
+ * @param {Object} orderData - Order details
+ * @param {string} customerEmail - Customer's email
+ * @param {string} callbackUrl - URL to redirect after payment
+ * @param {number} amountToCharge - Pre-calculated amount to charge (optional)
+ */
+const initializeOrderPayment = async (orderData, customerEmail, callbackUrl, amountToCharge = null) => {
+  const reference = generateReference('ORD');
+
+  // Use pre-calculated amount if provided, otherwise calculate
+  let amount;
+  if (amountToCharge !== null && amountToCharge > 0) {
+    amount = amountToCharge;
+  } else if (orderData.paymentType === 'installment') {
+    amount = Math.ceil(orderData.totalAmount / orderData.installmentDuration);
+  } else {
+    amount = orderData.totalAmount;
+  }
+
+  // Convert to kobo (Paystack uses kobo, not naira)
+  const amountInKobo = Math.round(amount * 100);
+
+  console.log('Paystack payment initialization:', { amount, amountInKobo, email: customerEmail });
+
+  const paymentData = {
+    email: customerEmail,
+    amount: amountInKobo,
+    reference,
+    callback_url: callbackUrl,
+    channels: ['card', 'bank', 'ussd', 'qr', 'mobile_money', 'bank_transfer'],
+    metadata: {
+      custom_fields: [
+        {
+          display_name: 'Order Type',
+          variable_name: 'order_type',
+          value: orderData.paymentType
+        },
+        {
+          display_name: 'Product',
+          variable_name: 'product_name',
+          value: orderData.productName || 'E-Commerce Order'
+        },
+        {
+          display_name: 'Amount Due',
+          variable_name: 'amount_due',
+          value: `₦${amount.toLocaleString()}`
+        }
+      ],
+      order_data: orderData
+    }
+  };
+
+  console.log('Sending to Paystack:', JSON.stringify(paymentData, null, 2));
+
+  const result = await initializeTransaction(paymentData);
+
+  console.log('Paystack response:', JSON.stringify(result, null, 2));
+
+  // Validate Paystack response
+  if (!result || !result.data || !result.data.authorization_url) {
+    console.error('Invalid Paystack response structure:', result);
+    throw new Error('Invalid response from Paystack');
+  }
+
+  return {
+    ...result,
+    reference,
+    amount,
+    amountInKobo
+  };
+};
+
+module.exports = {
+  initializeTransaction,
+  verifyTransaction,
+  generateReference,
+  initializeOrderPayment
+};

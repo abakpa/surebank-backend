@@ -2,6 +2,7 @@ const express = require('express');
 const mongoose = require('mongoose')
 const { initAllCronJobs } = require('./Jobs/fdMaturityChecker'); // Destructure the export
 const http = require('http')
+const path = require('path')
 const routes = require('./routes')
 require('dotenv').config()
 const cors = require('cors');
@@ -10,13 +11,17 @@ const cors = require('cors');
 const app = express();
 const port = process.env.PORT || 8080;
 
-const mongoURI = process.env.MONGO_URI 
+const mongoURI = process.env.MONGO_URI
 
 mongoose.connect(mongoURI).then(()=>{console.log('MongoDb connected');initAllCronJobs();}).catch(err=>console.log(err))
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cors());
+
+// Serve static files from uploads directory
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
 const server = http.createServer(app)
 
 app.get('/', (req, res) => {

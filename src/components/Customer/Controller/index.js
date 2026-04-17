@@ -47,7 +47,16 @@ const bcrypt = require('bcrypt')
       };
       const getCustomer = async (req, res) => {
         try {
-            const customers = await customerService.getCustomers();
+            const { page, limit, search } = req.query;
+            const customers = await customerService.getCustomers({ page, limit, search });
+            res.status(200).json(customers);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
+      const getEcommerceCustomers = async (req, res) => {
+        try {
+            const customers = await customerService.getEcommerceCustomers();
             res.status(200).json(customers);
         } catch (error) {
             res.status(500).json({ message: error.message });
@@ -127,6 +136,7 @@ const bcrypt = require('bcrypt')
     registerCustomer,
     resetCustomerPassword,
     getCustomer,
+    getEcommerceCustomers,
     getCustomerById,
     getCustomerByBranch,
     getCustomerByRep,

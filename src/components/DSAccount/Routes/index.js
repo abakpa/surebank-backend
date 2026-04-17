@@ -16,6 +16,8 @@ router.post('/reversal', staffAuth, DSAccountController.reverseDailyContribution
 router.post('/chargereversal', staffAuth, DSAccountController.reverseDailyContributionCharge);
 router.post('/freetowithdrawreversal', staffAuth, DSAccountController.freeToWithdrawReversal);
 router.post('/mainwithdrawal', staffAuth, DSAccountController.mainWithdrawal);
+router.post('/maindeposit', staffAuth, DSAccountController.mainDeposit);
+router.post('/wallet-transfer', staffAuth, DSAccountController.transferWalletToPackageAccount);
 
 
 module.exports = router;
