@@ -68,6 +68,10 @@ const buildDailyCreatedAtQuery = (dateInput) => {
 const Order =require('../../../SBAccount/Model/order')
 
 const ECOMMERCE_DEPOSIT_NARRATION_PATTERN = /^(Wallet Funding|Order Payment to Wallet)/i;
+const STAFF_STATS_QUERY_FILTER = { $ne: true };
+const STAFF_TRANSACTION_EXCLUDED_NARRATION_QUERY = {
+  $not: /^(Wallet Transfer to SB Account|To (SB|DS) account .* from wallet)/i
+};
 
 const formatCustomerName = (customer) => {
   if (!customer) return 'N/A';
@@ -85,7 +89,7 @@ const getBranchStaff = async (staff) =>{
 }
 async function getAllRepDSAccount(date = null, staff) {
  
-    let query = { package: 'DS', direction: 'Credit',createdBy:staff };
+    let query = { package: 'DS', direction: 'Credit',createdBy:staff, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
    
     // Filter by date if provided or default to today
     const endDate = date ? new Date(date) : new Date();
@@ -114,7 +118,7 @@ async function getAllRepDSAccount(date = null, staff) {
 }
 async function getAllRepDSAccountWithdrawal(date = null, staff) {
    
-    let query = { package: 'DS', direction: 'Debit',createdBy:staff };
+    let query = { package: 'DS', direction: 'Debit',createdBy:staff, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
 
      // Filter by date if provided or default to today
      const endDate = date ? new Date(date) : new Date();
@@ -133,7 +137,7 @@ async function getAllRepDSAccountWithdrawal(date = null, staff) {
 
 async function getAllRepDSAccountCharge(date = null, staff) {
   
-    let query = { package: 'DS', direction: 'Charge',createdBy:staff };
+    let query = { package: 'DS', direction: 'Charge',createdBy:staff, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
        // Filter by date if provided or default to today
        const endDate = date ? new Date(date) : new Date();
        endDate.setHours(23, 59, 59, 999);
@@ -149,7 +153,13 @@ async function getAllRepDSAccountCharge(date = null, staff) {
 
 async function getAllRepSBAccount(date = null, staff) {
 
-    let query = { package: 'SB', direction: 'Credit',createdBy:staff };
+    let query = {
+      package: 'SB',
+      direction: 'Credit',
+      createdBy: staff,
+      excludeFromStaffStats: STAFF_STATS_QUERY_FILTER,
+      narration: STAFF_TRANSACTION_EXCLUDED_NARRATION_QUERY,
+    };
     
    
     // Filter by date if provided or default to today
@@ -179,7 +189,7 @@ async function getAllRepSBAccount(date = null, staff) {
 }
 async function getAllRepSBAccountWithdrawal(date = null, staff ) {
  
-    let query = { package: 'SB', direction: 'Debit',createdBy:staff };
+    let query = { package: 'SB', direction: 'Debit',createdBy:staff, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
 
      // Filter by date if provided or default to today
      const endDate = date ? new Date(date) : new Date();
@@ -204,7 +214,7 @@ async function getAllRepSBandDSAccount(date = null, staff) {
 }
 async function getAllRepDailyDSAccount(date = null, staff) {
 
-    let query = { package: 'DS', direction: 'Credit',createdBy:staff };
+    let query = { package: 'DS', direction: 'Credit',createdBy:staff, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
    // Filter by date if provided or default to today
    const targetDate = date ? new Date(date) : new Date();
 
@@ -302,7 +312,7 @@ async function getAllRepDailyFDAccount(date = null, staff) {
 }
 async function getAllRepDailyDSAccountChargeByDate(date = null, staff) {
   
-    let query = { package: 'DS', direction: 'Charge',createdBy:staff };
+    let query = { package: 'DS', direction: 'Charge',createdBy:staff, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
     
    
     const targetDate = date ? new Date(date) : new Date();
@@ -329,7 +339,7 @@ async function getAllRepDailyDSAccountChargeByDate(date = null, staff) {
 }
 async function getAllRepDailyDSAccountWithdrawalByDate(date = null, staff) {
  
-    let query = { package: 'DS', direction: 'Debit',createdBy:staff };
+    let query = { package: 'DS', direction: 'Debit',createdBy:staff, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
   
     const targetDate = date ? new Date(date) : new Date();
 
@@ -355,7 +365,13 @@ async function getAllRepDailyDSAccountWithdrawalByDate(date = null, staff) {
   }
   async function getAllRepDailySBAccount(date = null, staff) {
    
-    let query = { package: 'SB', direction: 'Credit',createdBy:staff };
+    let query = {
+      package: 'SB',
+      direction: 'Credit',
+      createdBy: staff,
+      excludeFromStaffStats: STAFF_STATS_QUERY_FILTER,
+      narration: STAFF_TRANSACTION_EXCLUDED_NARRATION_QUERY,
+    };
     // Filter by date if provided or default to today
     const targetDate = date ? new Date(date) : new Date();
  
@@ -382,7 +398,7 @@ async function getAllRepDailyDSAccountWithdrawalByDate(date = null, staff) {
 
 async function getAllRepDailySBAccountWithdrawal(date = null, staff) {
 
-    let query = { package: 'SB', direction: 'Debit',createdBy:staff };
+    let query = { package: 'SB', direction: 'Debit',createdBy:staff, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
   
     const targetDate = date ? new Date(date) : new Date();
 
@@ -408,7 +424,7 @@ async function getAllRepDailySBAccountWithdrawal(date = null, staff) {
 }
 async function getAllRepDailyDSAccountWithdrawal(date = null, staff) {
   
-    let query = { package: 'DS', direction: 'Debit',createdBy:staff };
+    let query = { package: 'DS', direction: 'Debit',createdBy:staff, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
   
     const targetDate = date ? new Date(date) : new Date();
 
@@ -683,6 +699,8 @@ const getRepExpenditureReport = async (staff) => {
       const transactions = await AccountTransaction.find({
         package: { $in: ['SB', 'DS','FD'] }, // Match either 'SB' or 'DS'
         direction: { $in: ['Debit', 'Credit'] }, // Match either 'Debit' or 'Credit'
+        excludeFromStaffStats: STAFF_STATS_QUERY_FILTER,
+        narration: STAFF_TRANSACTION_EXCLUDED_NARRATION_QUERY,
         createdBy, // Ensuring createdBy is always included
       })
         .populate({

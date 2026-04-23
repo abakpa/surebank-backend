@@ -21,12 +21,19 @@ const createOrder = async (req, res) => {
       accountNumber
     } = req.body;
 
+    const normalizedInstallmentFrequency = paymentType === 'installment'
+      ? (installmentFrequency || 'flexible')
+      : installmentFrequency;
+    const normalizedInstallmentDuration = paymentType === 'installment'
+      ? Number(installmentDuration || 0)
+      : installmentDuration;
+
     const order = await EcommerceOrderService.createOrder({
       customerId,
       accountNumber: accountNumber || req.customer.phone,
       paymentType,
-      installmentFrequency,
-      installmentDuration,
+      installmentFrequency: normalizedInstallmentFrequency,
+      installmentDuration: normalizedInstallmentDuration,
       shippingAddress,
       shippingCity,
       shippingState,
@@ -86,6 +93,58 @@ const payoffRemainingBalance = async (req, res) => {
       order
     });
   } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const initializeOrderDepositPayment = async (req, res) => {
+  try {
+    const customerId = req.customer.customerId;
+    const orderNumber = req.params.orderNumber;
+    const { amount, customerEmail, callbackUrl } = req.body;
+    const paymentAmount = Number(amount);
+
+    if (!Number.isFinite(paymentAmount) || paymentAmount <= 0) {
+      return res.status(400).json({ message: 'Valid payment amount is required' });
+    }
+
+    const order = await EcommerceOrderService.getOrderByNumber(orderNumber);
+    if (order.customerId?.toString() !== customerId.toString()) {
+      return res.status(403).json({ message: 'You are not allowed to pay for this order' });
+    }
+    if (order.paymentType !== 'installment' || !order.installmentPlan) {
+      return res.status(400).json({ message: 'Only pay-small-small orders can receive deposits' });
+    }
+
+    const remainingBalance = Number(order.installmentPlan.remainingBalance || 0);
+    if (remainingBalance <= 0) {
+      return res.status(400).json({ message: 'This order has already been fully paid' });
+    }
+    if (paymentAmount > remainingBalance) {
+      return res.status(400).json({ message: `Payment amount cannot exceed remaining balance of ₦${remainingBalance.toLocaleString()}` });
+    }
+
+    const email = customerEmail || order.customerEmail || `${customerId}@surebank.local`;
+    const paymentResult = await PaystackService.initializeOrderDepositPayment({
+      orderNumber,
+      customerId,
+      amount: paymentAmount,
+      customerEmail: email,
+      callbackUrl
+    });
+
+    res.status(200).json({
+      message: 'Order deposit payment initialized',
+      data: {
+        authorization_url: paymentResult.data.authorization_url,
+        access_code: paymentResult.data.access_code,
+        reference: paymentResult.reference,
+        amount: paymentAmount,
+        amountInKobo: paymentResult.amountInKobo
+      }
+    });
+  } catch (error) {
+    console.error('Initialize order deposit error:', error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -276,21 +335,20 @@ const initializePayment = async (req, res) => {
       accountNumber,
       callbackUrl,
       productId,
-      quantity = 1
+      quantity = 1,
+      firstPaymentAmount,
+      amountToPay,
+      initialPaymentAmount,
+      amountToCharge: requestedAmountToCharge,
+      amount
     } = req.body;
 
-    // Validate email
-    if (!customerEmail || !customerEmail.includes('@')) {
+    const paymentEmail = customerEmail || `${customerId}@surebank.local`;
+    if (!paymentEmail || !paymentEmail.includes('@')) {
       return res.status(400).json({ message: 'Please provide a valid email address' });
     }
 
-    // Validate installment duration for installment payments
-    const duration = parseInt(installmentDuration) || 1;
-    if (paymentType === 'installment' && duration < 1) {
-      return res.status(400).json({ message: 'Invalid installment duration' });
-    }
-
-    console.log('Initializing payment for:', { customerId, customerEmail, paymentType, productId, installmentDuration: duration });
+    console.log('Initializing payment for:', { customerId, customerEmail: paymentEmail, paymentType, productId });
 
     let totalAmount;
     let productName;
@@ -319,14 +377,25 @@ const initializePayment = async (req, res) => {
     // Calculate amount based on payment type - this is the amount to charge NOW
     let amountToCharge;
     if (paymentType === 'installment') {
-      // First installment payment (amount due now)
-      amountToCharge = Math.ceil(totalAmount / duration);
+      amountToCharge = Number(
+        firstPaymentAmount
+        || amountToPay
+        || initialPaymentAmount
+        || requestedAmountToCharge
+        || amount
+      );
+      if (!Number.isFinite(amountToCharge) || amountToCharge <= 0) {
+        return res.status(400).json({ message: 'Enter a valid first payment amount' });
+      }
+      if (amountToCharge > totalAmount) {
+        return res.status(400).json({ message: `First payment cannot exceed total amount of ₦${totalAmount.toLocaleString()}` });
+      }
     } else {
       // Outright payment - full amount
       amountToCharge = totalAmount;
     }
 
-    console.log('Payment amount calculation:', { totalAmount, duration, amountToCharge });
+    console.log('Payment amount calculation:', { totalAmount, amountToCharge });
 
     // Always use the phone from the authenticated customer (from JWT token)
     // This ensures we have the correct accountNumber even if frontend state is stale
@@ -336,10 +405,13 @@ const initializePayment = async (req, res) => {
     const paymentResult = await PaystackService.initializeOrderPayment(
       {
         paymentType,
-        installmentFrequency,
-        installmentDuration: duration,
+        installmentFrequency: paymentType === 'installment' ? 'flexible' : installmentFrequency,
+        installmentDuration: paymentType === 'installment' ? 0 : installmentDuration,
         totalAmount,
         amountToCharge, // Pass the calculated amount to charge
+        firstPaymentAmount: amountToCharge,
+        amountToPay: amountToCharge,
+        initialPaymentAmount: amountToCharge,
         productName,
         customerId,
         accountNumber: customerAccountNumber,
@@ -347,11 +419,11 @@ const initializePayment = async (req, res) => {
         shippingCity,
         shippingState,
         customerPhone,
-        customerEmail,
+        customerEmail: paymentEmail,
         notes,
         cartItems
       },
-      customerEmail,
+      paymentEmail,
       callbackUrl,
       amountToCharge // Pass amount directly
     );
@@ -399,9 +471,39 @@ const verifyPayment = async (req, res) => {
       });
     }
 
-    // Extract order data from metadata
-    const metadata = verificationResult.data.metadata;
+    const metadata = verificationResult.data.metadata || {};
+    const walletPaymentAmount = Number(verificationResult.data.amount || 0) / 100;
+
+    if (metadata.order_deposit_data) {
+      const depositData = metadata.order_deposit_data;
+      const order = await EcommerceOrderService.getOrderByNumber(depositData.orderNumber);
+
+      if (order.customerId?.toString() !== req.customer.customerId.toString()) {
+        return res.status(403).json({ message: 'You are not allowed to verify this payment' });
+      }
+
+      const result = await EcommerceOrderService.recordFlexibleInstallmentOrderPayment(
+        order._id,
+        walletPaymentAmount,
+        reference,
+        'PAYSTACK_PAYMENT'
+      );
+
+      return res.status(200).json({
+        message: 'Order deposit verified',
+        order: result.order,
+        paymentDetails: {
+          amount: walletPaymentAmount,
+          reference,
+          paidAt: verificationResult.data.paid_at
+        }
+      });
+    }
+
     const orderData = metadata.order_data;
+    if (!orderData) {
+      return res.status(400).json({ message: 'Payment metadata is missing order data' });
+    }
 
     console.log('Order data from Paystack:', {
       customerId: orderData.customerId,
@@ -424,8 +526,12 @@ const verifyPayment = async (req, res) => {
       customerId: orderData.customerId,
       accountNumber: orderData.accountNumber,
       paymentType: orderData.paymentType,
-      installmentFrequency: orderData.installmentFrequency,
-      installmentDuration: orderData.installmentDuration,
+      installmentFrequency: orderData.paymentType === 'installment'
+        ? (orderData.installmentFrequency || 'flexible')
+        : orderData.installmentFrequency,
+      installmentDuration: orderData.paymentType === 'installment'
+        ? Number(orderData.installmentDuration || 0)
+        : orderData.installmentDuration,
       shippingAddress: orderData.shippingAddress,
       shippingCity: orderData.shippingCity,
       shippingState: orderData.shippingState,
@@ -437,17 +543,15 @@ const verifyPayment = async (req, res) => {
 
     console.log('Order created:', order.orderNumber, 'Type:', orderData.paymentType);
 
-    const walletPaymentAmount = Number(verificationResult.data.amount || 0) / 100;
-    await EcommerceOrderService.recordWalletMovementForOrderPayment(
-      order._id,
-      walletPaymentAmount,
-      reference
-    );
-
     // If outright payment, mark as paid
     if (orderData.paymentType === 'outright') {
       console.log('Processing outright payment for order:', order._id);
       try {
+        await EcommerceOrderService.recordWalletMovementForOrderPayment(
+          order._id,
+          walletPaymentAmount,
+          reference
+        );
         await EcommerceOrderService.recordOutrightPayment(order._id, reference);
         console.log('Outright payment recorded successfully');
       } catch (paymentError) {
@@ -455,16 +559,13 @@ const verifyPayment = async (req, res) => {
         // Still continue - order was created
       }
     } else {
-      // For installment, record the first payment
-      const firstPaymentAmount = Math.ceil(order.totalAmount / orderData.installmentDuration);
-      console.log('Processing installment first payment:', firstPaymentAmount, 'SBAccountNumber:', order.SBAccountNumber);
+      console.log('Processing installment payment:', walletPaymentAmount, 'SBAccountNumber:', order.SBAccountNumber);
 
-      // Credit the SB Account with the first payment
       if (order.SBAccountNumber) {
         try {
           await EcommerceOrderService.creditSBAccountForOrderDirect(
             order._id,
-            firstPaymentAmount,
+            walletPaymentAmount,
             reference,
             'PAYSTACK_PAYMENT'
           );
@@ -528,8 +629,18 @@ const handlePaystackWebhook = async (req, res) => {
     if (event.event === 'charge.success') {
       const reference = event.data.reference;
       const metadata = event.data.metadata;
+      const walletPaymentAmount = Number(event.data.amount || 0) / 100;
 
-      if (metadata && metadata.order_data) {
+      if (metadata && metadata.order_deposit_data) {
+        const depositData = metadata.order_deposit_data;
+        const order = await EcommerceOrderService.getOrderByNumber(depositData.orderNumber);
+        await EcommerceOrderService.recordFlexibleInstallmentOrderPayment(
+          order._id,
+          walletPaymentAmount,
+          reference,
+          'PAYSTACK_WEBHOOK'
+        );
+      } else if (metadata && metadata.order_data) {
         const orderData = metadata.order_data;
 
         // Check if order already exists
@@ -540,8 +651,12 @@ const handlePaystackWebhook = async (req, res) => {
             customerId: orderData.customerId,
             accountNumber: orderData.accountNumber,
             paymentType: orderData.paymentType,
-            installmentFrequency: orderData.installmentFrequency,
-            installmentDuration: orderData.installmentDuration,
+            installmentFrequency: orderData.paymentType === 'installment'
+              ? (orderData.installmentFrequency || 'flexible')
+              : orderData.installmentFrequency,
+            installmentDuration: orderData.paymentType === 'installment'
+              ? Number(orderData.installmentDuration || 0)
+              : orderData.installmentDuration,
             shippingAddress: orderData.shippingAddress,
             shippingCity: orderData.shippingCity,
             shippingState: orderData.shippingState,
@@ -551,15 +666,13 @@ const handlePaystackWebhook = async (req, res) => {
             paymentReference: reference
           });
 
-          const walletPaymentAmount = Number(event.data.amount || 0) / 100;
-          await EcommerceOrderService.recordWalletMovementForOrderPayment(
-            order._id,
-            walletPaymentAmount,
-            reference
-          );
-
           // Handle payment based on type
           if (orderData.paymentType === 'outright') {
+            await EcommerceOrderService.recordWalletMovementForOrderPayment(
+              order._id,
+              walletPaymentAmount,
+              reference
+            );
             await EcommerceOrderService.recordOutrightPayment(order._id, reference);
 
             // Verify the update
@@ -573,11 +686,10 @@ const handlePaystackWebhook = async (req, res) => {
               await EcommerceOrderService.updateSBAccountToSold(verifyOrder.SBAccountNumber);
             }
           } else {
-            const firstPaymentAmount = Math.ceil(order.totalAmount / orderData.installmentDuration);
             if (order.SBAccountNumber) {
               await EcommerceOrderService.creditSBAccountForOrderDirect(
                 order._id,
-                firstPaymentAmount,
+                walletPaymentAmount,
                 reference,
                 'PAYSTACK_WEBHOOK'
               );
@@ -600,6 +712,7 @@ module.exports = {
   getOrderByNumber,
   getMyOrders,
   payoffRemainingBalance,
+  initializeOrderDepositPayment,
   getAllOrders,
   getOrdersByBranch,
   updateOrderStatus,

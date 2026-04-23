@@ -71,6 +71,9 @@ const EcommerceOrder = require('../../../EcommerceOrder/Model');
 
 const ECOMMERCE_DEPOSIT_NARRATION_PATTERN = /^(Wallet Funding|Order Payment to Wallet)/i;
 const STAFF_STATS_QUERY_FILTER = { $ne: true };
+const STAFF_TRANSACTION_EXCLUDED_NARRATION_QUERY = {
+  $not: /^(Wallet Transfer to SB Account|To (SB|DS) account .* from wallet)/i
+};
 
 const formatStaffName = (staff) => {
   if (!staff) return 'Ecommerce';
@@ -198,7 +201,13 @@ async function getAllBranchDSAccountCharge(date = null, staff) {
 async function getAllBranchSBAccount(date = null, staff) {
     const branch = await Staff.findOne({_id:staff})
     const branchId = branch.branchId
-    let query = { package: 'SB', direction: 'Credit',branchId:branchId, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
+    let query = {
+      package: 'SB',
+      direction: 'Credit',
+      branchId: branchId,
+      excludeFromStaffStats: STAFF_STATS_QUERY_FILTER,
+      narration: STAFF_TRANSACTION_EXCLUDED_NARRATION_QUERY,
+    };
     
    
     // Filter by date if provided or default to today
@@ -527,7 +536,13 @@ async function getAllBranchDailyDSAccountWithdrawalByDate(date = null, staff) {
   async function getAllBranchDailySBAccount(date = null, staff) {
     const branch = await Staff.findOne({_id:staff})
     const branchId = branch.branchId
-    let query = { package: 'SB', direction: 'Credit',branchId:branchId, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
+    let query = {
+      package: 'SB',
+      direction: 'Credit',
+      branchId: branchId,
+      excludeFromStaffStats: STAFF_STATS_QUERY_FILTER,
+      narration: STAFF_TRANSACTION_EXCLUDED_NARRATION_QUERY,
+    };
     // Filter by date if provided or default to today
     const targetDate = date ? new Date(date) : new Date();
  
@@ -889,6 +904,7 @@ const getBranchExpenditureReport = async (staff) => {
         package: { $in: ['SB', 'DS'] }, // Match either 'SB' or 'DS'
         direction: { $in: ['Debit', 'Credit'] }, // Match either 'Debit' or 'Credit'
         excludeFromStaffStats: STAFF_STATS_QUERY_FILTER,
+        narration: STAFF_TRANSACTION_EXCLUDED_NARRATION_QUERY,
         createdBy, // Ensuring createdBy is always included
       })
         .populate({

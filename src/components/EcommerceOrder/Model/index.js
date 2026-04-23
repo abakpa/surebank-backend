@@ -78,7 +78,7 @@ const ecommerceOrderSchema = new mongoose.Schema({
   installmentPlan: {
     frequency: {
       type: String,
-      enum: ['daily', 'weekly', 'monthly']
+      enum: ['daily', 'weekly', 'monthly', 'flexible']
     },
     duration: {
       type: Number
