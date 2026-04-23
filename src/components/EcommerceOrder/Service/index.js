@@ -76,6 +76,24 @@ const calculateInstallmentPlan = (totalAmount, frequency, duration) => {
   };
 };
 
+const calculateFlexibleInstallmentPlan = (totalAmount) => ({
+  frequency: 'flexible',
+  duration: 0,
+  amountPerPeriod: 0,
+  totalPaid: 0,
+  remainingBalance: totalAmount,
+  nextPaymentDate: null,
+  payments: []
+});
+
+const normalizePaymentAmount = (amount) => {
+  const numericAmount = Number(amount);
+  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+    throw new Error('Valid payment amount is required');
+  }
+  return numericAmount;
+};
+
 const getCustomerWalletAccount = async (order) => {
   let account = await Account.findOne({ accountNumber: order.accountNumber });
 
@@ -140,8 +158,8 @@ const createOrder = async (orderData) => {
     accountNumber,
     cartId,
     paymentType,
-    installmentFrequency,
-    installmentDuration,
+    installmentFrequency: rawInstallmentFrequency,
+    installmentDuration: rawInstallmentDuration,
     shippingAddress,
     shippingCity,
     shippingState,
@@ -151,6 +169,12 @@ const createOrder = async (orderData) => {
     branchId,
     paymentReference
   } = orderData;
+  const installmentFrequency = paymentType === 'installment'
+    ? (rawInstallmentFrequency || 'flexible')
+    : rawInstallmentFrequency;
+  const installmentDuration = paymentType === 'installment'
+    ? Number(rawInstallmentDuration || 0)
+    : rawInstallmentDuration;
 
   if (paymentReference) {
     const existingOrder = await EcommerceOrder.findOne({ paymentReference });
@@ -206,26 +230,25 @@ const createOrder = async (orderData) => {
 
   // Handle installment payment
   if (paymentType === 'installment') {
-    if (!installmentFrequency || !installmentDuration) {
-      throw new Error('Installment frequency and duration are required');
-    }
+    if (installmentFrequency && installmentFrequency !== 'flexible' && installmentDuration) {
+      if (installmentFrequency === 'daily' && (installmentDuration < 7 || installmentDuration > 90)) {
+        throw new Error('Daily installment duration must be between 7 and 90 days');
+      }
+      if (installmentFrequency === 'weekly' && (installmentDuration < 2 || installmentDuration > 52)) {
+        throw new Error('Weekly installment duration must be between 2 and 52 weeks');
+      }
+      if (installmentFrequency === 'monthly' && (installmentDuration < 2 || installmentDuration > 12)) {
+        throw new Error('Monthly installment duration must be between 2 and 12 months');
+      }
 
-    // Validate installment duration
-    if (installmentFrequency === 'daily' && (installmentDuration < 7 || installmentDuration > 90)) {
-      throw new Error('Daily installment duration must be between 7 and 90 days');
+      order.installmentPlan = calculateInstallmentPlan(
+        cart.totalAmount,
+        installmentFrequency,
+        installmentDuration
+      );
+    } else {
+      order.installmentPlan = calculateFlexibleInstallmentPlan(cart.totalAmount);
     }
-    if (installmentFrequency === 'weekly' && (installmentDuration < 2 || installmentDuration > 52)) {
-      throw new Error('Weekly installment duration must be between 2 and 52 weeks');
-    }
-    if (installmentFrequency === 'monthly' && (installmentDuration < 2 || installmentDuration > 12)) {
-      throw new Error('Monthly installment duration must be between 2 and 12 months');
-    }
-
-    order.installmentPlan = calculateInstallmentPlan(
-      cart.totalAmount,
-      installmentFrequency,
-      installmentDuration
-    );
 
     // Create SB Account for installment tracking
     const currentDate = new Date();
@@ -451,17 +474,30 @@ const creditSBAccountForOrder = async (orderId, amount, staffId) => {
     throw new Error('This order is not an installment order');
   }
 
+  const paymentAmount = normalizePaymentAmount(amount);
+  const remainingBalance = Number(order.installmentPlan?.remainingBalance || 0);
+  if (remainingBalance <= 0) {
+    throw new Error('This order has already been fully paid');
+  }
+  if (paymentAmount > remainingBalance) {
+    throw new Error(`Payment amount cannot exceed remaining balance of ₦${remainingBalance.toLocaleString()}`);
+  }
+  if (!order.SBAccountNumber || !(await SBAccount.findOne({ SBAccountNumber: order.SBAccountNumber }))) {
+    throw new Error('SB Account not found');
+  }
+
   const walletAccount = await getCustomerWalletAccount(order);
   const formattedDate = formatTransactionDate();
   const staffName = await getStaffDisplayName(staffId);
-  const newAvailableBalance = Number(walletAccount.availableBalance || 0) + amount;
-  const newLedgerBalance = Number(walletAccount.ledgerBalance || 0) + amount;
+  const newAvailableBalance = Number(walletAccount.availableBalance || 0) + paymentAmount;
+  const newLedgerBalance = Number(walletAccount.ledgerBalance || 0) + paymentAmount;
+  const transactionRef = `STAFF_ORDER_DEPOSIT_${Date.now()}`;
 
   await AccountTransaction.DepositTransactionAccount({
     createdBy: staffId,
     transactionOwnerId: staffId,
     customerId: walletAccount.customerId,
-    amount,
+    amount: paymentAmount,
     balance: newAvailableBalance,
     branchId: walletAccount.branchId,
     accountManagerId: walletAccount.accountManagerId || 'ECOMMERCE_SYSTEM',
@@ -484,13 +520,16 @@ const creditSBAccountForOrder = async (orderId, amount, staffId) => {
     { new: true }
   );
 
-  if (order.SBAccountNumber) {
-    await checkAndProcessPendingPayments(order.SBAccountNumber);
-  }
+  const paymentResult = await recordFlexibleInstallmentOrderPayment(
+    order._id,
+    paymentAmount,
+    transactionRef,
+    staffId,
+    { creditWallet: false }
+  );
+  const refreshedWalletAccount = await getCustomerWalletAccount(order);
 
-  const updatedOrder = await EcommerceOrder.findById(order._id);
-
-  return { walletAccount: updatedWalletAccount, order: updatedOrder };
+  return { walletAccount: refreshedWalletAccount || updatedWalletAccount, order: paymentResult.order, sbAccount: paymentResult.sbAccount };
 };
 
 // Debit SB Account for installment payment
@@ -583,6 +622,11 @@ const debitWalletForOrderPayment = async (order, amount, transactionRef) => {
   const formattedDate = formatTransactionDate();
   const newAvailableBalance = Number(account.availableBalance || 0) - amount;
   const newLedgerBalance = Number(account.ledgerBalance || 0) - amount;
+
+  if (newAvailableBalance < 0) {
+    throw new Error(`Insufficient wallet balance. Available: ₦${Number(account.availableBalance || 0).toLocaleString()}, Required: ₦${amount.toLocaleString()}`);
+  }
+
   const customerActor = order.customerId?.toString() || account.customerId;
   const reportingActor = getReportingStaffId(account.accountManagerId, customerActor);
   const debitNarration = order.paymentType === 'installment'
@@ -691,6 +735,7 @@ const creditSBAccountWithoutLedgerImpact = async (order, amount, transactionRef,
     narration: `Wallet Transfer to SB Account - Order: ${order.orderNumber} - Ref: ${transactionRef}`,
     package: "SB",
     direction: "Credit",
+    excludeFromStaffStats: true,
   });
 
   return await SBAccount.findByIdAndUpdate(
@@ -698,6 +743,72 @@ const creditSBAccountWithoutLedgerImpact = async (order, amount, transactionRef,
     { balance: sbAccount.balance + amount },
     { new: true }
   );
+};
+
+const recordFlexibleInstallmentOrderPayment = async (orderId, amount, transactionRef, source, options = {}) => {
+  const order = await EcommerceOrder.findById(orderId);
+  if (!order) {
+    throw new Error('Order not found');
+  }
+
+  if (order.paymentType !== 'installment' || !order.installmentPlan) {
+    throw new Error('This order is not a pay-small-small order');
+  }
+  if (!order.SBAccountNumber) {
+    throw new Error('This order does not have an SB Account');
+  }
+  const existingSBAccount = await SBAccount.findOne({ SBAccountNumber: order.SBAccountNumber });
+  if (!existingSBAccount) {
+    throw new Error('SB Account not found');
+  }
+
+  const paymentAmount = normalizePaymentAmount(amount);
+  const remainingBalance = Number(order.installmentPlan.remainingBalance || 0);
+  if (remainingBalance <= 0) {
+    throw new Error('This order has already been fully paid');
+  }
+  if (paymentAmount > remainingBalance) {
+    throw new Error(`Payment amount cannot exceed remaining balance of ₦${remainingBalance.toLocaleString()}`);
+  }
+
+  const alreadyRecorded = order.installmentPlan.payments?.some(
+    (payment) => payment.transactionRef === transactionRef
+  );
+  if (alreadyRecorded) {
+    return { order, sbAccount: await SBAccount.findOne({ SBAccountNumber: order.SBAccountNumber }) };
+  }
+
+  if (options.creditWallet !== false) {
+    await creditWalletForOrderPayment(order, paymentAmount, transactionRef);
+  }
+
+  await debitWalletForOrderPayment(order, paymentAmount, transactionRef);
+  const sbAccount = await creditSBAccountWithoutLedgerImpact(order, paymentAmount, transactionRef, source);
+
+  order.installmentPlan.payments.push({
+    date: new Date(),
+    amount: paymentAmount,
+    status: 'paid',
+    paidAt: new Date(),
+    transactionRef
+  });
+
+  order.installmentPlan.totalPaid = Number(order.installmentPlan.totalPaid || 0) + paymentAmount;
+  order.installmentPlan.remainingBalance = Math.max(0, remainingBalance - paymentAmount);
+  order.installmentPlan.nextPaymentDate = null;
+
+  if (order.installmentPlan.remainingBalance <= 0) {
+    order.paymentStatus = 'paid';
+    order.status = 'paid';
+    await updateSBAccountToSold(order.SBAccountNumber);
+  } else {
+    order.paymentStatus = 'partial';
+    order.status = 'partially_paid';
+  }
+
+  await order.save();
+
+  return { order: await EcommerceOrder.findById(order._id), sbAccount };
 };
 
 const transferWalletToSBForPayment = async (order, amount, transactionRef, source = 'SYSTEM_AUTO') => {
@@ -762,14 +873,28 @@ const payoffRemainingBalanceFromWallet = async (orderNumber, customerId) => {
     throw new Error('This order has already been fully paid');
   }
 
-  const pendingPayments = order.installmentPlan.payments.filter((payment) => payment.status === 'pending');
-  if (pendingPayments.length === 0) {
-    throw new Error('No pending payments found for this order');
-  }
-
   const transactionRef = `WALLET_PAYOFF_${Date.now()}`;
   await debitWalletForInstallmentPayoff(order, remainingBalance, transactionRef);
   const fundedSBAccount = await creditSBAccountWithoutLedgerImpact(order, remainingBalance, transactionRef, customerId.toString());
+
+  const pendingPayments = order.installmentPlan.payments.filter((payment) => payment.status === 'pending');
+  if (pendingPayments.length === 0) {
+    order.installmentPlan.payments.push({
+      date: new Date(),
+      amount: remainingBalance,
+      status: 'paid',
+      paidAt: new Date(),
+      transactionRef
+    });
+    order.installmentPlan.totalPaid = Number(order.installmentPlan.totalPaid || 0) + remainingBalance;
+    order.installmentPlan.remainingBalance = 0;
+    order.installmentPlan.nextPaymentDate = null;
+    order.paymentStatus = 'paid';
+    order.status = 'paid';
+    await updateSBAccountToSold(order.SBAccountNumber);
+    await order.save();
+    return await EcommerceOrder.findById(order._id);
+  }
 
   let workingSBAccount = fundedSBAccount;
 
@@ -1130,108 +1255,7 @@ const getOrderByReference = async (paymentReference) => {
 
 // Credit SB Account directly (used by Paystack payment flow)
 const creditSBAccountForOrderDirect = async (orderId, amount, transactionRef, source) => {
-  const order = await EcommerceOrder.findById(orderId);
-  if (!order) {
-    throw new Error('Order not found');
-  }
-
-  if (order.paymentType !== 'installment' || !order.SBAccountNumber) {
-    throw new Error('This order does not have an associated SB Account');
-  }
-
-  const sbAccount = await SBAccount.findOne({ SBAccountNumber: order.SBAccountNumber });
-  if (!sbAccount) {
-    throw new Error('SB Account not found');
-  }
-
-  const currentDate = new Date();
-  const formattedDate = currentDate.toLocaleString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-  });
-
-  // Update Account ledger balance
-  const account = await Account.findOne({ accountNumber: sbAccount.accountNumber });
-  if (!account) {
-    throw new Error('Customer account not found');
-  }
-
-  // Create transaction record for deposit
-  // Use 'ECOMMERCE_SYSTEM' as default accountManagerId for ecommerce customers who don't have one
-  const effectiveAccountManagerId = sbAccount.accountManagerId || 'ECOMMERCE_SYSTEM';
-  const reportingActor = getReportingStaffId(effectiveAccountManagerId, source);
-
-  await AccountTransaction.DepositTransactionAccount({
-    createdBy: reportingActor,
-    transactionOwnerId: source,
-    customerId: sbAccount.customerId,
-    amount: amount,
-    balance: sbAccount.balance + amount,
-    branchId: sbAccount.branchId || 'ECOMMERCE',
-    accountManagerId: effectiveAccountManagerId,
-    accountNumber: sbAccount.accountNumber,
-    accountTypeId: sbAccount._id,
-    date: formattedDate,
-    narration: `Paystack Payment - Order: ${order.orderNumber} - Ref: ${transactionRef}`,
-    package: "SB",
-    direction: "Credit",
-  });
-
-  // Update Account ledger balance
-  await Account.findOneAndUpdate(
-    { accountNumber: sbAccount.accountNumber },
-    { $set: { ledgerBalance: account.ledgerBalance + amount } }
-  );
-
-  // Update SB Account balance
-  const updatedSBAccount = await SBAccount.findByIdAndUpdate(
-    sbAccount._id,
-    { balance: sbAccount.balance + amount },
-    { new: true }
-  );
-
-  // Now process the first installment payment
-  // Find the first pending payment
-  const pendingPaymentIndex = order.installmentPlan.payments.findIndex(
-    p => p.status === 'pending'
-  );
-
-  if (pendingPaymentIndex !== -1) {
-    // Debit the amount from SB Account for the installment
-    await debitSBAccountForPayment(updatedSBAccount, amount, order, source);
-
-    // Update the payment record
-    order.installmentPlan.payments[pendingPaymentIndex].status = 'paid';
-    order.installmentPlan.payments[pendingPaymentIndex].paidAt = new Date();
-    order.installmentPlan.payments[pendingPaymentIndex].transactionRef = transactionRef;
-
-    // Update totals
-    order.installmentPlan.totalPaid += amount;
-    order.installmentPlan.remainingBalance -= amount;
-
-    // Update next payment date
-    const nextPending = order.installmentPlan.payments.find(p => p.status === 'pending');
-    order.installmentPlan.nextPaymentDate = nextPending ? nextPending.date : null;
-
-    // Update payment status
-    if (order.installmentPlan.remainingBalance <= 0) {
-      order.paymentStatus = 'paid';
-      order.status = 'paid';
-      // Update SBAccount status to sold
-      await updateSBAccountToSold(order.SBAccountNumber);
-    } else {
-      order.paymentStatus = 'partial';
-      order.status = 'partially_paid';
-    }
-
-    await order.save();
-  }
-
-  return { sbAccount: updatedSBAccount, order };
+  return await recordFlexibleInstallmentOrderPayment(orderId, amount, transactionRef, source);
 };
 
 module.exports = {
@@ -1253,6 +1277,7 @@ module.exports = {
   checkAndProcessPendingPayments,
   getOrderByReference,
   creditSBAccountForOrderDirect,
+  recordFlexibleInstallmentOrderPayment,
   updateSBAccountToSold,
   recordWalletMovementForOrderPayment,
   payoffRemainingBalanceFromWallet

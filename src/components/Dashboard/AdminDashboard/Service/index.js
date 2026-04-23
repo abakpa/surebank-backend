@@ -73,6 +73,9 @@ const mongoose = require('mongoose');
 
 const ECOMMERCE_DEPOSIT_NARRATION_PATTERN = /^(Wallet Funding|Order Payment to Wallet)/i;
 const STAFF_STATS_QUERY_FILTER = { $ne: true };
+const STAFF_TRANSACTION_EXCLUDED_NARRATION_QUERY = {
+  $not: /^(Wallet Transfer to SB Account|To (SB|DS) account .* from wallet)/i
+};
 
 const buildEcommerceDepositTransactionQuery = ({ date = null, branchId = null, createdBy = null } = {}) => {
   const query = {
@@ -691,7 +694,12 @@ async function getAllDailyDSAccountWithdrawalByDate(date = null, branchId = null
 
 
 async function getAllDailySBAccount(date = null, branchId = null) {
-    let query = { package: 'SB', direction: 'Credit', excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
+    let query = {
+      package: 'SB',
+      direction: 'Credit',
+      excludeFromStaffStats: STAFF_STATS_QUERY_FILTER,
+      narration: STAFF_TRANSACTION_EXCLUDED_NARRATION_QUERY,
+    };
     // Filter by date if provided or default to today
     const targetDate = date ? new Date(date) : new Date();
  
@@ -1045,6 +1053,7 @@ const getExpenditureReport = async () => {
         package: { $in: ['SB', 'DS','FD'] }, // Match either 'SB' or 'DS'
         direction: { $in: ['Debit', 'Credit'] }, // Match either 'Debit' or 'Credit'
         excludeFromStaffStats: STAFF_STATS_QUERY_FILTER,
+        narration: STAFF_TRANSACTION_EXCLUDED_NARRATION_QUERY,
         createdBy, // Ensuring createdBy is always included
       })
         .populate({

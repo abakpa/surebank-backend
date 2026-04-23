@@ -89,10 +89,18 @@ const initializeOrderPayment = async (orderData, customerEmail, callbackUrl, amo
 
   // Use pre-calculated amount if provided, otherwise calculate
   let amount;
-  if (amountToCharge !== null && amountToCharge > 0) {
-    amount = amountToCharge;
+  const explicitAmount = Number(
+    amountToCharge
+    || orderData.amountToCharge
+    || orderData.firstPaymentAmount
+    || orderData.amountToPay
+    || orderData.initialPaymentAmount
+  );
+
+  if (Number.isFinite(explicitAmount) && explicitAmount > 0) {
+    amount = explicitAmount;
   } else if (orderData.paymentType === 'installment') {
-    amount = Math.ceil(orderData.totalAmount / orderData.installmentDuration);
+    throw new Error('First payment amount is required for pay-small-small orders');
   } else {
     amount = orderData.totalAmount;
   }
@@ -150,9 +158,53 @@ const initializeOrderPayment = async (orderData, customerEmail, callbackUrl, amo
   };
 };
 
+const initializeOrderDepositPayment = async ({ orderNumber, customerId, amount, customerEmail, callbackUrl }) => {
+  const reference = generateReference('ORDDEP');
+  const amountInKobo = Math.round(Number(amount) * 100);
+
+  const result = await initializeTransaction({
+    email: customerEmail,
+    amount: amountInKobo,
+    reference,
+    callback_url: callbackUrl,
+    channels: ['card', 'bank', 'ussd', 'qr', 'mobile_money', 'bank_transfer'],
+    metadata: {
+      custom_fields: [
+        {
+          display_name: 'Order Deposit',
+          variable_name: 'order_number',
+          value: orderNumber
+        },
+        {
+          display_name: 'Amount',
+          variable_name: 'amount',
+          value: `₦${Number(amount).toLocaleString()}`
+        }
+      ],
+      order_deposit_data: {
+        orderNumber,
+        customerId,
+        amount: Number(amount)
+      }
+    }
+  });
+
+  if (!result || !result.data || !result.data.authorization_url) {
+    throw new Error('Invalid response from Paystack');
+  }
+
+  return {
+    ...result,
+    reference,
+    amount: Number(amount),
+    amountInKobo
+  };
+};
+
 module.exports = {
   initializeTransaction,
   verifyTransaction,
   generateReference,
-  initializeOrderPayment
+  initializeOrderPayment,
+  initializeOrderDepositPayment
 };

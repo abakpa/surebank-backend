@@ -13,6 +13,7 @@ const createProduct = async (req, res) => {
       images,
       stock,
       sku,
+      isActive,
       allowInstallment,
       minInstallmentAmount,
       branchId
@@ -28,6 +29,7 @@ const createProduct = async (req, res) => {
       images,
       stock,
       sku,
+      isActive,
       allowInstallment,
       minInstallmentAmount,
       branchId,

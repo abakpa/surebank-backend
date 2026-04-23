@@ -7,6 +7,7 @@ const { staffAuth, customerAuth } = require('../../Middleware/index');
 router.get('/my-orders', customerAuth, EcommerceOrderController.getMyOrders);
 router.get('/number/:orderNumber', customerAuth, EcommerceOrderController.getOrderByNumber);
 router.post('/number/:orderNumber/payoff', customerAuth, EcommerceOrderController.payoffRemainingBalance);
+router.post('/number/:orderNumber/deposit/initialize', customerAuth, EcommerceOrderController.initializeOrderDepositPayment);
 
 // Payment routes (Paystack)
 router.post('/payment/initialize', customerAuth, EcommerceOrderController.initializePayment);
