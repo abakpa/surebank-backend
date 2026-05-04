@@ -1,5 +1,17 @@
 const mongoose = require('mongoose');
 
+const subCategorySchema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  isActive: {
+    type: Boolean,
+    default: true
+  }
+}, { _id: true });
+
 const productCategorySchema = new mongoose.Schema({
   name: {
     type: String,
@@ -13,6 +25,10 @@ const productCategorySchema = new mongoose.Schema({
   image: {
     type: String,
     default: ''
+  },
+  subcategories: {
+    type: [subCategorySchema],
+    default: []
   },
   isActive: {
     type: Boolean,

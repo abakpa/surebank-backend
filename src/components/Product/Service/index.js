@@ -1,12 +1,35 @@
 const Product = require('../Model/index');
 const ProductCategory = require('../../ProductCategory/Model/index');
 
-const createProduct = async (productData) => {
-  // Verify category exists
-  const category = await ProductCategory.findById(productData.categoryId);
+const validateCategoryAndSubcategory = async (productData, existingProduct = null) => {
+  const categoryId = productData.categoryId || existingProduct?.categoryId;
+  const subCategoryId =
+    Object.prototype.hasOwnProperty.call(productData, 'subCategoryId')
+      ? productData.subCategoryId
+      : existingProduct?.subCategoryId;
+
+  const category = await ProductCategory.findById(categoryId);
   if (!category) {
     throw new Error('Category not found');
   }
+
+  if (subCategoryId) {
+    const matchingSubCategory = (category.subcategories || []).find(
+      (subCategory) =>
+        subCategory._id.toString() === String(subCategoryId) &&
+        subCategory.isActive !== false
+    );
+
+    if (!matchingSubCategory) {
+      throw new Error('Subcategory not found for selected category');
+    }
+  }
+
+  return category;
+};
+
+const createProduct = async (productData) => {
+  await validateCategoryAndSubcategory(productData);
 
   // Generate SKU if not provided
   if (!productData.sku) {
@@ -22,6 +45,10 @@ const getAllProducts = async (filters = {}) => {
 
   if (filters.categoryId) {
     query.categoryId = filters.categoryId;
+  }
+
+  if (filters.subCategoryId) {
+    query.subCategoryId = filters.subCategoryId;
   }
 
   if (filters.minPrice) {
@@ -60,6 +87,15 @@ const getProductsByCategory = async (categoryId) => {
 };
 
 const updateProduct = async (productId, updateData) => {
+  if (updateData.categoryId || Object.prototype.hasOwnProperty.call(updateData, 'subCategoryId')) {
+    const existingProduct = await Product.findById(productId);
+    if (!existingProduct) {
+      throw new Error('Product not found');
+    }
+
+    await validateCategoryAndSubcategory(updateData, existingProduct);
+  }
+
   const product = await Product.findByIdAndUpdate(
     productId,
     { $set: updateData },
