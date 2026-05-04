@@ -7,6 +7,7 @@ const createProduct = async (req, res) => {
       name,
       description,
       categoryId,
+      subCategoryId,
       costPrice,
       price,
       profit,
@@ -23,6 +24,7 @@ const createProduct = async (req, res) => {
       name,
       description,
       categoryId,
+      subCategoryId,
       costPrice: costPrice || 0,
       price,
       profit: profit || 0,
@@ -47,9 +49,10 @@ const createProduct = async (req, res) => {
 
 const getAllProducts = async (req, res) => {
   try {
-    const { categoryId, minPrice, maxPrice, search } = req.query;
+    const { categoryId, subCategoryId, minPrice, maxPrice, search } = req.query;
     const products = await ProductService.getAllProducts({
       categoryId,
+      subCategoryId,
       minPrice: minPrice ? parseFloat(minPrice) : undefined,
       maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
       search

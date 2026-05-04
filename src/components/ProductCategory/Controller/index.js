@@ -1,14 +1,36 @@
 const ProductCategoryService = require('../Service/index');
 
+const parseSubcategories = (value) => {
+  if (!value) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch (error) {
+      throw new Error('Invalid subcategories payload');
+    }
+  }
+
+  return [];
+};
+
 const createCategory = async (req, res) => {
   try {
     const createdBy = req.staff.staffId;
     const { name, description, image } = req.body;
+    const subcategories = parseSubcategories(req.body.subcategories);
 
     const category = await ProductCategoryService.createCategory({
       name,
       description,
       image,
+      subcategories,
       createdBy
     });
 
@@ -57,7 +79,11 @@ const getCategoryById = async (req, res) => {
 const updateCategory = async (req, res) => {
   try {
     const categoryId = req.params.id;
-    const updateData = req.body;
+    const updateData = { ...req.body };
+
+    if (Object.prototype.hasOwnProperty.call(updateData, 'subcategories')) {
+      updateData.subcategories = parseSubcategories(updateData.subcategories);
+    }
 
     const category = await ProductCategoryService.updateCategory(categoryId, updateData);
 
