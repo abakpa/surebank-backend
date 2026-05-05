@@ -108,6 +108,24 @@ const getCustomerWalletAccount = async (order) => {
   return account;
 };
 
+const getWalletAccountForCustomer = async ({ customerId, accountNumber }) => {
+  let account = null;
+
+  if (accountNumber) {
+    account = await Account.findOne({ accountNumber });
+  }
+
+  if (!account && customerId) {
+    account = await Account.findOne({ customerId: customerId.toString() });
+  }
+
+  if (!account) {
+    throw new Error('Customer wallet account not found');
+  }
+
+  return account;
+};
+
 const getStaffDisplayName = async (staffId) => {
   if (!staffId) return 'Staff';
   const staff = await Staff.findById(staffId).select('firstName lastName').lean();
@@ -670,6 +688,66 @@ const recordWalletMovementForOrderPayment = async (orderId, amount, transactionR
   await debitWalletForOrderPayment(order, amount, transactionRef);
 
   return order;
+};
+
+const createOrderAndPayFromWallet = async ({
+  customerId,
+  accountNumber,
+  paymentType,
+  installmentFrequency,
+  installmentDuration,
+  shippingAddress,
+  shippingCity,
+  shippingState,
+  customerPhone,
+  customerEmail,
+  notes,
+  branchId,
+  paymentAmount
+}) => {
+  const normalizedPaymentAmount = normalizePaymentAmount(paymentAmount);
+  const walletAccount = await getWalletAccountForCustomer({
+    customerId,
+    accountNumber
+  });
+
+  if (Number(walletAccount.availableBalance || 0) < normalizedPaymentAmount) {
+    throw new Error(
+      `Insufficient wallet balance. Available: ₦${Number(walletAccount.availableBalance || 0).toLocaleString()}, Required: ₦${normalizedPaymentAmount.toLocaleString()}`
+    );
+  }
+
+  const transactionRef = `WALLET_ORDER_${Date.now()}`;
+  const order = await createOrder({
+    customerId,
+    accountNumber,
+    paymentType,
+    installmentFrequency,
+    installmentDuration,
+    shippingAddress,
+    shippingCity,
+    shippingState,
+    customerPhone,
+    customerEmail,
+    notes,
+    branchId,
+    paymentReference: transactionRef
+  });
+
+  if (paymentType === 'outright') {
+    await debitWalletForOrderPayment(order, normalizedPaymentAmount, transactionRef);
+    await recordOutrightPayment(order._id, transactionRef);
+  } else {
+    await recordFlexibleInstallmentOrderPayment(
+      order._id,
+      normalizedPaymentAmount,
+      transactionRef,
+      customerId.toString(),
+      { creditWallet: false }
+    );
+  }
+
+  return await EcommerceOrder.findById(order._id);
 };
 
 const debitWalletForScheduledPayment = async (order, amount, transactionRef, source = 'SYSTEM_AUTO') => {
@@ -1280,5 +1358,6 @@ module.exports = {
   recordFlexibleInstallmentOrderPayment,
   updateSBAccountToSold,
   recordWalletMovementForOrderPayment,
-  payoffRemainingBalanceFromWallet
+  payoffRemainingBalanceFromWallet,
+  createOrderAndPayFromWallet
 };
