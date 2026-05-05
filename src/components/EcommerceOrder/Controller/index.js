@@ -340,7 +340,8 @@ const initializePayment = async (req, res) => {
       amountToPay,
       initialPaymentAmount,
       amountToCharge: requestedAmountToCharge,
-      amount
+      amount,
+      paymentSource = 'bank'
     } = req.body;
 
     const paymentEmail = customerEmail || `${customerId}@surebank.local`;
@@ -400,6 +401,33 @@ const initializePayment = async (req, res) => {
     // Always use the phone from the authenticated customer (from JWT token)
     // This ensures we have the correct accountNumber even if frontend state is stale
     const customerAccountNumber = req.customer.phone;
+
+    if (paymentSource === 'wallet') {
+      const order = await EcommerceOrderService.createOrderAndPayFromWallet({
+        customerId,
+        accountNumber: customerAccountNumber,
+        paymentType,
+        installmentFrequency: paymentType === 'installment' ? 'flexible' : installmentFrequency,
+        installmentDuration: paymentType === 'installment' ? 0 : installmentDuration,
+        shippingAddress,
+        shippingCity,
+        shippingState,
+        customerPhone,
+        customerEmail: paymentEmail,
+        notes,
+        paymentAmount: amountToCharge
+      });
+
+      return res.status(200).json({
+        message: 'Wallet payment completed',
+        data: {
+          paymentSource: 'wallet',
+          order,
+          amount: amountToCharge,
+          reference: order.paymentReference
+        }
+      });
+    }
 
     // Initialize Paystack payment with the correct amount
     const paymentResult = await PaystackService.initializeOrderPayment(
