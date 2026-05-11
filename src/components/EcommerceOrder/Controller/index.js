@@ -335,6 +335,7 @@ const initializePayment = async (req, res) => {
       accountNumber,
       callbackUrl,
       productId,
+      variationId,
       quantity = 1,
       firstPaymentAmount,
       amountToPay,
@@ -349,7 +350,7 @@ const initializePayment = async (req, res) => {
       return res.status(400).json({ message: 'Please provide a valid email address' });
     }
 
-    console.log('Initializing payment for:', { customerId, customerEmail: paymentEmail, paymentType, productId });
+    console.log('Initializing payment for:', { customerId, customerEmail: paymentEmail, paymentType, productId, variationId });
 
     let totalAmount;
     let productName;
@@ -357,13 +358,15 @@ const initializePayment = async (req, res) => {
 
     // If productId is provided, get product directly (no stock check for payment)
     if (productId) {
-      const productInfo = await CartService.getProductForPayment(productId, quantity);
+      const productInfo = await CartService.getProductForPayment(productId, quantity, variationId || '');
       totalAmount = productInfo.subtotal;
-      productName = productInfo.productName;
+      productName = productInfo.variationName
+        ? `${productInfo.productName} - ${productInfo.variationName}`
+        : productInfo.productName;
       cartItems = [productInfo];
 
       // Also add to cart for order creation later (skip stock check)
-      await CartService.addToCart({ customerId }, productId, quantity, true);
+      await CartService.addToCart({ customerId }, productId, quantity, true, variationId || '');
     } else {
       // Use existing cart
       const cart = await Cart.findOne({ customerId });

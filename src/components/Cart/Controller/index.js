@@ -21,7 +21,7 @@ const getCart = async (req, res) => {
 
 const addToCart = async (req, res) => {
   try {
-    const { productId, quantity, sessionId } = req.body;
+    const { productId, quantity, sessionId, variationId } = req.body;
 
     let identifier = {};
     if (req.customer) {
@@ -32,7 +32,7 @@ const addToCart = async (req, res) => {
       return res.status(400).json({ message: 'Session ID or authentication required' });
     }
 
-    const cart = await CartService.addToCart(identifier, productId, quantity || 1);
+    const cart = await CartService.addToCart(identifier, productId, quantity || 1, false, variationId || '');
 
     res.status(200).json({
       message: 'Item added to cart',
@@ -45,7 +45,7 @@ const addToCart = async (req, res) => {
 
 const updateCartItem = async (req, res) => {
   try {
-    const { productId, quantity, sessionId } = req.body;
+    const { productId, quantity, sessionId, variationId } = req.body;
 
     let identifier = {};
     if (req.customer) {
@@ -56,7 +56,7 @@ const updateCartItem = async (req, res) => {
       return res.status(400).json({ message: 'Session ID or authentication required' });
     }
 
-    const cart = await CartService.updateCartItem(identifier, productId, quantity);
+    const cart = await CartService.updateCartItem(identifier, productId, quantity, false, variationId || '');
 
     res.status(200).json({
       message: 'Cart updated',
@@ -71,6 +71,7 @@ const removeFromCart = async (req, res) => {
   try {
     const productId = req.params.productId;
     const sessionId = req.query.sessionId;
+    const variationId = req.query.variationId || '';
 
     let identifier = {};
     if (req.customer) {
@@ -81,7 +82,7 @@ const removeFromCart = async (req, res) => {
       return res.status(400).json({ message: 'Session ID or authentication required' });
     }
 
-    const cart = await CartService.removeFromCart(identifier, productId);
+    const cart = await CartService.removeFromCart(identifier, productId, variationId);
 
     res.status(200).json({
       message: 'Item removed from cart',

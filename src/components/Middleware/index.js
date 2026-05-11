@@ -35,7 +35,7 @@ const staffAuth = async(req, res, next) => {
             // return res.status(401).json({ error: "Session expired" });
           }
 
-        req.staff = { staffId: payload.id, email: payload.email };
+        req.staff = { staffId: payload.id, email: payload.email, role: staff.role };
 
         next();
     } catch (error) {

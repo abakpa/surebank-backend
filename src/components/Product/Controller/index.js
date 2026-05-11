@@ -1,5 +1,31 @@
 const ProductService = require('../Service/index');
 
+const applyVariationImages = (variations, variationImages) => {
+  if (!variationImages || Object.keys(variationImages).length === 0) {
+    return variations;
+  }
+
+  let parsedVariations = variations;
+  if (typeof parsedVariations === 'string') {
+    try {
+      parsedVariations = JSON.parse(parsedVariations);
+    } catch (error) {
+      return variations;
+    }
+  }
+
+  if (!Array.isArray(parsedVariations)) {
+    return variations;
+  }
+
+  const nextVariations = parsedVariations.map((variation, index) => ({
+    ...variation,
+    image: variationImages[index] || variation.image || ''
+  }));
+
+  return JSON.stringify(nextVariations);
+};
+
 const createProduct = async (req, res) => {
   try {
     const createdBy = req.staff.staffId;
@@ -12,13 +38,18 @@ const createProduct = async (req, res) => {
       price,
       profit,
       images,
+      hasVariations,
+      variationOptions,
+      variations,
       stock,
       sku,
       isActive,
       allowInstallment,
       minInstallmentAmount,
-      branchId
+      branchId,
+      variationImages
     } = req.body;
+    const nextVariations = applyVariationImages(variations, variationImages);
 
     const product = await ProductService.createProduct({
       name,
@@ -29,6 +60,9 @@ const createProduct = async (req, res) => {
       price,
       profit: profit || 0,
       images,
+      hasVariations,
+      variationOptions,
+      variations: nextVariations,
       stock,
       sku,
       isActive,
@@ -95,7 +129,11 @@ const getProductsByCategory = async (req, res) => {
 const updateProduct = async (req, res) => {
   try {
     const productId = req.params.id;
-    const updateData = req.body;
+    const updateData = { ...req.body };
+    if (req.body.variations !== undefined || req.body.variationImages !== undefined) {
+      updateData.variations = applyVariationImages(req.body.variations, req.body.variationImages);
+    }
+    delete updateData.variationImages;
 
     const product = await ProductService.updateProduct(productId, updateData);
 
@@ -121,9 +159,9 @@ const deleteProduct = async (req, res) => {
 const updateStock = async (req, res) => {
   try {
     const productId = req.params.id;
-    const { quantity, operation } = req.body;
+    const { quantity, operation, variationId } = req.body;
 
-    const product = await ProductService.updateProductStock(productId, quantity, operation);
+    const product = await ProductService.updateProductStock(productId, quantity, operation, variationId || '');
 
     res.status(200).json({
       message: 'Stock updated successfully',

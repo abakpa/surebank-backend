@@ -6,6 +6,19 @@ const cartItemSchema = new mongoose.Schema({
     ref: 'Product',
     required: true
   },
+  variationId: {
+    type: String,
+    default: ''
+  },
+  variationName: {
+    type: String,
+    default: ''
+  },
+  selectedOptions: {
+    type: Map,
+    of: String,
+    default: {}
+  },
   productName: {
     type: String,
     required: true
