@@ -438,7 +438,7 @@ const updateOrderStatus = async (orderId, status, processedBy) => {
       previousStatus !== 'delivered' && previousStatus !== 'completed') {
     for (const item of order.items) {
       try {
-        await ProductService.updateProductStock(item.productId, item.quantity, 'decrease');
+        await ProductService.updateProductStock(item.productId, item.quantity, 'decrease', item.variationId || '');
       } catch (err) {
         console.error(`Failed to reduce stock for product ${item.productId}:`, err.message);
         // Continue with order status update even if stock update fails
@@ -1299,7 +1299,7 @@ const cancelOrder = async (orderId, reason) => {
 
   // Restore stock
   for (const item of order.items) {
-    await ProductService.updateProductStock(item.productId, item.quantity, 'increase');
+    await ProductService.updateProductStock(item.productId, item.quantity, 'increase', item.variationId || '');
   }
 
   order.status = 'cancelled';

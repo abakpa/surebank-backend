@@ -21,6 +21,7 @@ const customerWithdrawalRequestRoutes = require('./src/components/CustomerWithdr
 // E-commerce routes
 const productRoutes = require('./src/components/Product/Routes/index');
 const productCategoryRoutes = require('./src/components/ProductCategory/Routes/index');
+const productReviewRoutes = require('./src/components/ProductReview/Routes/index');
 const cartRoutes = require('./src/components/Cart/Routes/index');
 const ecommerceOrderRoutes = require('./src/components/EcommerceOrder/Routes/index');
 const ecommerceAuthRoutes = require('./src/components/EcommerceAuth/Routes/index');
@@ -45,6 +46,7 @@ router.use('/api/customerwithdrawalrequest', customerWithdrawalRequestRoutes);
 // E-commerce API routes
 router.use('/api/products', productRoutes);
 router.use('/api/categories', productCategoryRoutes);
+router.use('/api/product-reviews', productReviewRoutes);
 router.use('/api/cart', cartRoutes);
 router.use('/api/ecommerce/orders', ecommerceOrderRoutes);
 router.use('/api/ecommerce/auth', ecommerceAuthRoutes);

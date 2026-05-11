@@ -1,6 +1,33 @@
 const Cart = require('../Model/index');
 const Product = require('../../Product/Model/index');
 
+const getVariationSelection = (product, variationId) => {
+  if (!product.hasVariations) {
+    return null;
+  }
+
+  if (!variationId) {
+    throw new Error('Please select a product variation');
+  }
+
+  const variation = product.variations.id(variationId);
+  if (!variation || variation.isActive === false) {
+    throw new Error('Product variation is not available');
+  }
+
+  return variation;
+};
+
+const getSelectedOptions = (variation) => {
+  if (!variation?.optionValues) {
+    return {};
+  }
+
+  return variation.optionValues instanceof Map
+    ? Object.fromEntries(variation.optionValues)
+    : variation.optionValues;
+};
+
 const getOrCreateCart = async (identifier) => {
   let cart;
 
@@ -24,7 +51,7 @@ const getOrCreateCart = async (identifier) => {
   return cart;
 };
 
-const addToCart = async (identifier, productId, quantity = 1, skipStockCheck = false) => {
+const addToCart = async (identifier, productId, quantity = 1, skipStockCheck = false, variationId = '') => {
   const product = await Product.findById(productId);
   if (!product) {
     throw new Error('Product not found');
@@ -34,15 +61,21 @@ const addToCart = async (identifier, productId, quantity = 1, skipStockCheck = f
     throw new Error('Product is not available');
   }
 
+  const variation = getVariationSelection(product, variationId);
+  const selectedStock = variation ? variation.stock : product.stock;
+  const selectedPrice = variation ? variation.price : product.price;
+  const selectedImage = variation?.image || (product.images && product.images.length > 0 ? product.images[0] : '');
+  const normalizedVariationId = variation ? variation._id.toString() : '';
+
   // Only check stock if not skipping (for regular cart operations)
-  if (!skipStockCheck && product.stock < quantity) {
+  if (!skipStockCheck && selectedStock < quantity) {
     throw new Error('Insufficient stock');
   }
 
   let cart = await getOrCreateCart(identifier);
 
   const existingItemIndex = cart.items.findIndex(
-    item => item.productId === productId
+    item => item.productId === productId && (item.variationId || '') === normalizedVariationId
   );
 
   if (existingItemIndex > -1) {
@@ -52,11 +85,14 @@ const addToCart = async (identifier, productId, quantity = 1, skipStockCheck = f
   } else {
     cart.items.push({
       productId: product._id.toString(),
+      variationId: normalizedVariationId,
+      variationName: variation?.name || '',
+      selectedOptions: variation ? getSelectedOptions(variation) : {},
       productName: product.name,
-      price: product.price,
+      price: selectedPrice,
       quantity,
-      subtotal: product.price * quantity,
-      image: product.images && product.images.length > 0 ? product.images[0] : ''
+      subtotal: selectedPrice * quantity,
+      image: selectedImage
     });
   }
 
@@ -67,11 +103,11 @@ const addToCart = async (identifier, productId, quantity = 1, skipStockCheck = f
   return await cart.save();
 };
 
-const updateCartItem = async (identifier, productId, quantity, skipStockCheck = false) => {
+const updateCartItem = async (identifier, productId, quantity, skipStockCheck = false, variationId = '') => {
   let cart = await getOrCreateCart(identifier);
 
   const itemIndex = cart.items.findIndex(
-    item => item.productId === productId
+    item => item.productId === productId && (item.variationId || '') === (variationId || '')
   );
 
   if (itemIndex === -1) {
@@ -82,8 +118,13 @@ const updateCartItem = async (identifier, productId, quantity, skipStockCheck = 
     cart.items.splice(itemIndex, 1);
   } else {
     const product = await Product.findById(productId);
+    if (!product) {
+      throw new Error('Product not found');
+    }
+    const variation = getVariationSelection(product, variationId);
+    const selectedStock = variation ? variation.stock : product.stock;
     // Only check stock if not skipping (for regular cart operations)
-    if (!skipStockCheck && product.stock < quantity) {
+    if (!skipStockCheck && selectedStock < quantity) {
       throw new Error('Insufficient stock');
     }
     cart.items[itemIndex].quantity = quantity;
@@ -97,10 +138,12 @@ const updateCartItem = async (identifier, productId, quantity, skipStockCheck = 
   return await cart.save();
 };
 
-const removeFromCart = async (identifier, productId) => {
+const removeFromCart = async (identifier, productId, variationId = '') => {
   let cart = await getOrCreateCart(identifier);
 
-  cart.items = cart.items.filter(item => item.productId !== productId);
+  cart.items = cart.items.filter(
+    item => !(item.productId === productId && (item.variationId || '') === (variationId || ''))
+  );
 
   // Recalculate totals
   cart.totalAmount = cart.items.reduce((sum, item) => sum + item.subtotal, 0);
@@ -138,7 +181,7 @@ const mergeGuestCartToCustomer = async (sessionId, customerId) => {
   // Merge items
   for (const guestItem of guestCart.items) {
     const existingIndex = customerCart.items.findIndex(
-      item => item.productId === guestItem.productId
+      item => item.productId === guestItem.productId && (item.variationId || '') === (guestItem.variationId || '')
     );
 
     if (existingIndex > -1) {
@@ -161,19 +204,26 @@ const mergeGuestCartToCustomer = async (sessionId, customerId) => {
 };
 
 // Get product details for payment (no stock check)
-const getProductForPayment = async (productId, quantity = 1) => {
+const getProductForPayment = async (productId, quantity = 1, variationId = '') => {
   const product = await Product.findById(productId);
   if (!product) {
     throw new Error('Product not found');
   }
 
+  const variation = getVariationSelection(product, variationId);
+  const selectedPrice = variation ? variation.price : product.price;
+  const selectedImage = variation?.image || (product.images && product.images.length > 0 ? product.images[0] : '');
+
   return {
     productId: product._id.toString(),
+    variationId: variation ? variation._id.toString() : '',
+    variationName: variation?.name || '',
+    selectedOptions: variation ? getSelectedOptions(variation) : {},
     productName: product.name,
-    price: product.price,
+    price: selectedPrice,
     quantity,
-    subtotal: product.price * quantity,
-    image: product.images && product.images.length > 0 ? product.images[0] : ''
+    subtotal: selectedPrice * quantity,
+    image: selectedImage
   };
 };
 

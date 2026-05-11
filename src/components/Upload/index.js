@@ -37,28 +37,46 @@ const uploadSingle = upload.single('image');
 
 // Upload middleware for multiple files
 const uploadMultiple = upload.array('images', 5); // Max 5 images
+const uploadProductFileFields = upload.any();
 
 // Handle upload for product images
 const uploadProductImages = (req, res, next) => {
-  uploadMultiple(req, res, async (err) => {
+  uploadProductFileFields(req, res, async (err) => {
     if (err instanceof multer.MulterError) {
       if (err.code === 'LIMIT_FILE_SIZE') {
         return res.status(400).json({ message: 'File too large. Maximum size is 5MB.' });
-      }
-      if (err.code === 'LIMIT_FILE_COUNT') {
-        return res.status(400).json({ message: 'Too many files. Maximum is 5 images.' });
       }
       return res.status(400).json({ message: err.message });
     } else if (err) {
       return res.status(400).json({ message: err.message });
     }
 
+    const productImages = (req.files || []).filter((file) => file.fieldname === 'images');
+    const variationImages = (req.files || []).filter((file) => /^variationImage_\d+$/.test(file.fieldname));
+
+    if (productImages.length > 5) {
+      return res.status(400).json({ message: 'Too many product images. Maximum is 5 images.' });
+    }
+
     // Add image URLs to request body
-    if (req.files && req.files.length > 0) {
+    if (productImages.length > 0 || variationImages.length > 0) {
       try {
-        req.body.images = await Promise.all(
-          req.files.map((file) => uploadImageBuffer(file, 'surebank/products'))
-        );
+        if (productImages.length > 0) {
+          req.body.images = await Promise.all(
+            productImages.map((file) => uploadImageBuffer(file, 'surebank/products'))
+          );
+        }
+
+        if (variationImages.length > 0) {
+          const uploadedVariationImages = {};
+          await Promise.all(
+            variationImages.map(async (file) => {
+              const index = file.fieldname.replace('variationImage_', '');
+              uploadedVariationImages[index] = await uploadImageBuffer(file, 'surebank/products/variations');
+            })
+          );
+          req.body.variationImages = uploadedVariationImages;
+        }
       } catch (uploadError) {
         return res.status(500).json({ message: uploadError.message });
       }
