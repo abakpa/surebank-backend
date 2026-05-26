@@ -625,6 +625,69 @@ async function getAllBranchDailyDSAccountWithdrawal(date = null, staff) {
  
      return totalBalance1;
 }
+async function getAllBranchFreeToWithdrawWithdrawal(date = null, staff) {
+    const branch = await Staff.findOne({_id: staff});
+    const branchId = branch.branchId;
+    const query = {
+      package: 'Account',
+      direction: 'Debit',
+      narration: 'Withdrawal',
+      branchId,
+      excludeFromStaffStats: STAFF_STATS_QUERY_FILTER,
+      createdAt: buildDailyCreatedAtQuery(date)
+    };
+
+    const transactions = await AccountTransaction.find(query);
+    return transactions.reduce((sum, tx) => sum + tx.amount, 0) || 0;
+}
+async function getBranchFreeToWithdrawWithdrawalReport(date = null, staff) {
+    const branch = await Staff.findOne({_id: staff}).select('branchId').lean();
+    const branchId = branch?.branchId ? branch.branchId.toString() : null;
+    if (!branchId) {
+      return [];
+    }
+
+    const query = {
+      package: 'Account',
+      direction: 'Debit',
+      narration: 'Withdrawal',
+      branchId,
+      excludeFromStaffStats: STAFF_STATS_QUERY_FILTER,
+      createdAt: buildDailyCreatedAtQuery(date)
+    };
+
+    const transactions = await AccountTransaction.find(query)
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const customerIds = [...new Set(
+      transactions
+        .map((transaction) => transaction.customerId?.toString())
+        .filter(isValidObjectId)
+    )];
+    const staffIds = [...new Set(
+      transactions
+        .map((transaction) => transaction.createdBy?.toString())
+        .filter(isValidObjectId)
+    )];
+
+    const [customers, staffList] = await Promise.all([
+      Customer.find({ _id: { $in: customerIds } }).select('_id firstName lastName phone').lean(),
+      Staff.find({ _id: { $in: staffIds } }).select('_id firstName lastName').lean(),
+    ]);
+
+    const customerMap = new Map(customers.map((customer) => [customer._id.toString(), customer]));
+    const staffMap = new Map(staffList.map((member) => [member._id.toString(), member]));
+
+    return transactions.map((transaction) => ({
+      _id: transaction._id,
+      customerName: formatCustomerName(customerMap.get(transaction.customerId?.toString()) || null),
+      narration: transaction.narration,
+      amount: Number(transaction.amount || 0),
+      date: transaction.createdAt,
+      staffName: formatStaffName(staffMap.get(transaction.createdBy?.toString()) || null),
+    }));
+}
 async function getReversalTotal(date = null, branchId = null) {
   let query = { 
   package: 'DS', 
@@ -1149,6 +1212,8 @@ module.exports = {
     getAllBranchDailyFDAccount,
     // getAllDailyDSAccountCharge,
     getAllBranchDailyDSAccountWithdrawal,
+    getAllBranchFreeToWithdrawWithdrawal,
+    getBranchFreeToWithdrawWithdrawalReport,
     getAllBranchDailySBAccount,
     getAllBranchDailySBAccountWithdrawal,
     getAllBranchDailySBandDSAccount,

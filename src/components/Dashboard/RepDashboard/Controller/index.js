@@ -111,6 +111,26 @@ const bcrypt = require('bcrypt')
                               res.status(500).json({ message: error.message });
                           }
                         }
+      const getAllRepFreeToWithdrawWithdrawal = async (req, res) => {
+                          try {
+                            const staff = req.staff.staffId;
+                            const {date} = req.body
+                              const withdrawal = await accountTransactionService.getAllRepFreeToWithdrawWithdrawal(date,staff);
+                              res.status(200).json(withdrawal);
+                          } catch (error) {
+                              res.status(500).json({ message: error.message });
+                          }
+                        }
+      const getRepFreeToWithdrawWithdrawalReport = async (req, res) => {
+                          try {
+                            const staff = req.staff.staffId;
+                            const {date} = req.body
+                              const report = await accountTransactionService.getRepFreeToWithdrawWithdrawalReport(date,staff);
+                              res.status(200).json(report);
+                          } catch (error) {
+                              res.status(500).json({ message: error.message });
+                          }
+                        }
       const getAllRepDailyDSAccountCharge = async (req, res) => {
                           try {
                               const {date,RepId} = req.body
@@ -313,6 +333,8 @@ const bcrypt = require('bcrypt')
         getAllRepDailyDSAccount,
         getAllRepDailyFDAccount,
         getAllRepDailyDSAccountWithdrawal,
+        getAllRepFreeToWithdrawWithdrawal,
+        getRepFreeToWithdrawWithdrawalReport,
         getAllRepDailyDSAccountCharge,
         getAllRepDailySBAccount,
         getAllRepDailySBAccountWithdrawal,

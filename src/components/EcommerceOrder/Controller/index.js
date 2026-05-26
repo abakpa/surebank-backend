@@ -2,7 +2,33 @@ const EcommerceOrderService = require('../Service/index');
 const PaystackService = require('../../Paystack/Service/index');
 const Cart = require('../../Cart/Model/index');
 const Product = require('../../Product/Model/index');
+const Customer = require('../../Customer/Model/index');
 const CartService = require('../../Cart/Service/index');
+
+const isValidEmail = (email) => {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || '').trim());
+};
+
+const buildFallbackEmail = (customer) => {
+  const identifier = String(customer?.phone || customer?._id || 'customer')
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .toLowerCase();
+  return `${identifier || 'customer'}@surebank.shop`;
+};
+
+const resolvePaymentEmail = async ({ customerId, customerEmail, orderEmail }) => {
+  const providedEmail = String(customerEmail || '').trim();
+  if (isValidEmail(providedEmail)) return providedEmail;
+
+  const storedOrderEmail = String(orderEmail || '').trim();
+  if (isValidEmail(storedOrderEmail)) return storedOrderEmail;
+
+  const customer = await Customer.findById(customerId).select('email phone').lean();
+  const profileEmail = String(customer?.email || '').trim();
+  if (isValidEmail(profileEmail)) return profileEmail;
+
+  return buildFallbackEmail(customer || { _id: customerId });
+};
 
 const createOrder = async (req, res) => {
   try {
@@ -66,6 +92,9 @@ const getOrderByNumber = async (req, res) => {
   try {
     const orderNumber = req.params.orderNumber;
     const order = await EcommerceOrderService.getOrderByNumber(orderNumber);
+    if (order.customerId?.toString() !== req.customer.customerId.toString()) {
+      return res.status(403).json({ message: 'You are not allowed to view this order' });
+    }
     res.status(200).json(order);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -79,6 +108,33 @@ const getMyOrders = async (req, res) => {
     res.status(200).json(orders);
   } catch (error) {
     res.status(500).json({ message: error.message });
+  }
+};
+
+const replaceInstallmentOrderItem = async (req, res) => {
+  try {
+    const customerId = req.customer.customerId;
+    const { orderNumber, itemId } = req.params;
+    const { productId, variationId } = req.body;
+
+    if (!productId) {
+      return res.status(400).json({ message: 'Product is required' });
+    }
+
+    const order = await EcommerceOrderService.replaceInstallmentOrderItem({
+      orderNumber,
+      customerId,
+      itemId,
+      productId,
+      variationId: variationId || ''
+    });
+
+    res.status(200).json({
+      message: 'Order item replaced successfully',
+      order
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
   }
 };
 
@@ -124,7 +180,11 @@ const initializeOrderDepositPayment = async (req, res) => {
       return res.status(400).json({ message: `Payment amount cannot exceed remaining balance of ₦${remainingBalance.toLocaleString()}` });
     }
 
-    const email = customerEmail || order.customerEmail || `${customerId}@surebank.local`;
+    const email = await resolvePaymentEmail({
+      customerId,
+      customerEmail,
+      orderEmail: order.customerEmail
+    });
     const paymentResult = await PaystackService.initializeOrderDepositPayment({
       orderNumber,
       customerId,
@@ -345,10 +405,7 @@ const initializePayment = async (req, res) => {
       paymentSource = 'bank'
     } = req.body;
 
-    const paymentEmail = customerEmail || `${customerId}@surebank.local`;
-    if (!paymentEmail || !paymentEmail.includes('@')) {
-      return res.status(400).json({ message: 'Please provide a valid email address' });
-    }
+    const paymentEmail = await resolvePaymentEmail({ customerId, customerEmail });
 
     console.log('Initializing payment for:', { customerId, customerEmail: paymentEmail, paymentType, productId, variationId });
 
@@ -513,8 +570,9 @@ const verifyPayment = async (req, res) => {
         return res.status(403).json({ message: 'You are not allowed to verify this payment' });
       }
 
-      const result = await EcommerceOrderService.recordFlexibleInstallmentOrderPayment(
-        order._id,
+      const result = await EcommerceOrderService.recordCustomerOrderDepositPayment(
+        order.orderNumber,
+        req.customer.customerId,
         walletPaymentAmount,
         reference,
         'PAYSTACK_PAYMENT'
@@ -664,9 +722,9 @@ const handlePaystackWebhook = async (req, res) => {
 
       if (metadata && metadata.order_deposit_data) {
         const depositData = metadata.order_deposit_data;
-        const order = await EcommerceOrderService.getOrderByNumber(depositData.orderNumber);
-        await EcommerceOrderService.recordFlexibleInstallmentOrderPayment(
-          order._id,
+        await EcommerceOrderService.recordCustomerOrderDepositPayment(
+          depositData.orderNumber,
+          depositData.customerId,
           walletPaymentAmount,
           reference,
           'PAYSTACK_WEBHOOK'
@@ -742,6 +800,7 @@ module.exports = {
   getOrderById,
   getOrderByNumber,
   getMyOrders,
+  replaceInstallmentOrderItem,
   payoffRemainingBalance,
   initializeOrderDepositPayment,
   getAllOrders,

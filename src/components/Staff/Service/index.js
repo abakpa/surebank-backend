@@ -51,11 +51,18 @@ const getBranchStaff = async (staff) =>{
 }
 const updateStaff = async (details) => {
   try {
-    const { staff, status } = details;
+    const { staff, status, role } = details;
+    const updateFields = {};
+    if (status) updateFields.status = status;
+    if (role) updateFields.role = role;
+
+    if (Object.keys(updateFields).length === 0) {
+      throw new Error("No staff update supplied");
+    }
 
     const updatedStaff = await Staff.findOneAndUpdate(
       { _id: staff },
-      { $set: { status } },
+      { $set: updateFields },
       { new: true }
     );
 
@@ -66,7 +73,7 @@ const updateStaff = async (details) => {
     return { success: true, message: "Updated successfully", updatedStaff };
   } catch (error) {
     console.error("Error updating staff:", error);
-    throw new Error("An error occurred while updating the staff status.");
+    throw new Error(error.message || "An error occurred while updating the staff.");
   }
 };
 const updateStaffPassword = async (details) => {
