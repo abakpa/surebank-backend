@@ -12,6 +12,8 @@ router.post('/dailyrepfd', staffAuth,AcountTransactionController.getAllRepDailyF
 router.post('/dailyrepsb',staffAuth, AcountTransactionController.getAllRepDailySBAccount);
 router.post('/totaldailyrepcontribution',staffAuth, AcountTransactionController.getAllRepDailyContribution);
 router.post('/dailyrepdswithdrawal',staffAuth, AcountTransactionController.getAllRepDailyDSAccountWithdrawal);
+router.post('/repfwwithdrawal',staffAuth, AcountTransactionController.getAllRepFreeToWithdrawWithdrawal);
+router.post('/repfwwithdrawalreport',staffAuth, AcountTransactionController.getRepFreeToWithdrawWithdrawalReport);
 router.post('/repdspackage',staffAuth, AcountTransactionController.getAllRepDSAccountPackage);
 router.post('/repsbpackage',staffAuth, AcountTransactionController.getAllRepSBAccountPackage);
 router.post('/reppackages',staffAuth, AcountTransactionController.getAllRepAccountPackage);

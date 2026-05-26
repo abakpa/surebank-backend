@@ -29,6 +29,24 @@ const bcrypt = require('bcrypt')
             res.status(500).json({ message: error.message });
         }
       }
+      const getAllFreeToWithdrawWithdrawal = async (req, res) => {
+        try {
+            const {date,branchId} = req.body
+            const withdrawal = await accountTransactionService.getAllFreeToWithdrawWithdrawal(date,branchId);
+            res.status(200).json(withdrawal);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
+      const getFreeToWithdrawWithdrawalReport = async (req, res) => {
+        try {
+            const {date,branchId} = req.body
+            const report = await accountTransactionService.getFreeToWithdrawWithdrawalReport(date,branchId);
+            res.status(200).json(report);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
       const getAllDSAccountCharge = async (req, res) => {
         try {
             const DSAccount = await accountTransactionService.getAllDSAccountCharge();
@@ -364,6 +382,8 @@ const bcrypt = require('bcrypt')
     getAllAvailableBalance,
     getAllDSAccount,
     getAllDSAccountWithdrawal,
+    getAllFreeToWithdrawWithdrawal,
+    getFreeToWithdrawWithdrawalReport,
     getAllDSAccountCharge,
     getAllSBAccount,
     getAllFDAccount,

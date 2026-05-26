@@ -201,6 +201,77 @@ async function getAllDSAccountWithdrawal(date = null, branchId = null) {
     return totalBalance;
 }
 
+async function getAllFreeToWithdrawWithdrawal(date = null, branchId = null) {
+    const query = {
+      package: 'Account',
+      direction: 'Debit',
+      narration: 'Withdrawal',
+      excludeFromStaffStats: STAFF_STATS_QUERY_FILTER,
+      createdAt: buildDailyCreatedAtQuery(date)
+    };
+
+    if (branchId) {
+      query.branchId = branchId;
+    }
+
+    const transactions = await AccountTransaction.find(query);
+    return transactions.reduce((sum, tx) => sum + tx.amount, 0) || 0;
+}
+
+async function getFreeToWithdrawWithdrawalReport(date = null, branchId = null) {
+  const query = {
+    package: 'Account',
+    direction: 'Debit',
+    narration: 'Withdrawal',
+    excludeFromStaffStats: STAFF_STATS_QUERY_FILTER,
+    createdAt: buildDailyCreatedAtQuery(date)
+  };
+
+  if (branchId) {
+    query.branchId = branchId;
+  }
+
+  const transactions = await AccountTransaction.find(query)
+    .sort({ createdAt: -1 })
+    .lean();
+
+  const customerIds = [...new Set(
+    transactions
+      .map((transaction) => transaction.customerId?.toString())
+      .filter(isValidObjectId)
+  )];
+  const branchIds = [...new Set(
+    transactions
+      .map((transaction) => transaction.branchId?.toString())
+      .filter(isValidObjectId)
+  )];
+  const staffIds = [...new Set(
+    transactions
+      .map((transaction) => transaction.createdBy?.toString())
+      .filter(isValidObjectId)
+  )];
+
+  const [customers, branches, staffList] = await Promise.all([
+    Customer.find({ _id: { $in: customerIds } }).select('_id firstName lastName phone').lean(),
+    Branch.find({ _id: { $in: branchIds } }).select('_id name').lean(),
+    Staff.find({ _id: { $in: staffIds } }).select('_id firstName lastName').lean(),
+  ]);
+
+  const customerMap = new Map(customers.map((customer) => [customer._id.toString(), customer]));
+  const branchMap = new Map(branches.map((branch) => [branch._id.toString(), branch]));
+  const staffMap = new Map(staffList.map((staff) => [staff._id.toString(), staff]));
+
+  return transactions.map((transaction) => ({
+    _id: transaction._id,
+    customerName: formatCustomerName(customerMap.get(transaction.customerId?.toString()) || null),
+    narration: transaction.narration,
+    amount: Number(transaction.amount || 0),
+    date: transaction.createdAt,
+    branchName: branchMap.get(transaction.branchId?.toString())?.name || 'N/A',
+    staffName: formatStaffName(staffMap.get(transaction.createdBy?.toString()) || null),
+  }));
+}
+
 
 async function getAllDSAccountCharge(date = null, branchId = null) {
     let query = { package: 'DS', direction: 'Charge', excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
@@ -1484,6 +1555,8 @@ async function getEcommerceDepositReport(date = null, branchId = null) {
     getAllAvailableBalance,
     getAllDSAccount,
     getAllDSAccountWithdrawal,
+    getAllFreeToWithdrawWithdrawal,
+    getFreeToWithdrawWithdrawalReport,
     getAllDSAccountCharge,
     getAllSBAccount,
     getAllFDAccount,

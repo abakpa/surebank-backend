@@ -45,7 +45,15 @@ const staffAuth = async(req, res, next) => {
         // res.send("invalid authentication");
     }
 };
+const adminOnly = (req, res, next) => {
+    if (!['Admin', 'SubAdmin'].includes(req.staff?.role)) {
+        return res.status(403).json({ message: 'Admin access required' });
+    }
+
+    next();
+};
 module.exports = {
     customerAuth,
-    staffAuth
+    staffAuth,
+    adminOnly
 }

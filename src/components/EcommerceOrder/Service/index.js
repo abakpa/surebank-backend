@@ -5,6 +5,7 @@ const ProductService = require('../../Product/Service/index');
 const SBAccount = require('../../SBAccount/Model/index');
 const Account = require('../../Account/Model/index');
 const AccountTransaction = require('../../AccountTransaction/Service/index');
+const AccountTransactionModel = require('../../AccountTransaction/Model/index');
 const Staff = require('../../Staff/Model/index');
 const Customer = require('../../Customer/Model/index');
 const generateUniqueAccountNumber = require('../../generateAccountNumber');
@@ -41,6 +42,109 @@ const updateSBAccountToSold = async (SBAccountNumber) => {
   } catch (error) {
     console.error('Error updating SBAccount status:', error);
   }
+};
+
+const buildOrderProductSummary = (items = [], orderNumber = '') => {
+  const productNames = items
+    .map((item) => item.variationName ? `${item.productName} - ${item.variationName}` : item.productName)
+    .filter(Boolean)
+    .join(', ');
+
+  return productNames ? `${productNames} (${orderNumber})` : `E-Commerce Order: ${orderNumber}`;
+};
+
+const getPaymentStatusFromSBAccount = (sbAccount) => {
+  if (sbAccount.status === 'sold') {
+    return 'paid';
+  }
+
+  const sellingPrice = Number(sbAccount.sellingPrice || 0);
+  const balance = Number(sbAccount.balance || 0);
+
+  if (sellingPrice > 0 && balance >= sellingPrice) {
+    return 'paid';
+  }
+
+  return balance > 0 ? 'partial' : 'unpaid';
+};
+
+const getOrderStatusFromSBAccount = (sbAccount) => {
+  if (sbAccount.status === 'sold') {
+    return 'paid';
+  }
+
+  const paymentStatus = getPaymentStatusFromSBAccount(sbAccount);
+  if (paymentStatus === 'paid') return 'paid';
+  if (paymentStatus === 'partial') return 'partially_paid';
+  return 'pending';
+};
+
+const getSBAccountPaymentRecords = async (sbAccountId) => {
+  const transactions = await AccountTransactionModel.find({
+    accountTypeId: sbAccountId.toString(),
+    package: 'SB',
+    direction: 'Credit'
+  }).sort({ createdAt: 1 }).lean();
+
+  return transactions.map((transaction) => ({
+    _id: transaction._id,
+    date: transaction.createdAt || new Date(),
+    amount: Number(transaction.amount || 0),
+    status: 'paid',
+    paidAt: transaction.createdAt || new Date(),
+    transactionRef: transaction.narration || transaction._id?.toString()
+  }));
+};
+
+const buildOrderFromSBAccount = async (sbAccount) => {
+  const sellingPrice = Number(sbAccount.sellingPrice || 0);
+  const totalPaid = Number(sbAccount.balance || 0);
+  const remainingBalance = Math.max(0, sellingPrice - totalPaid);
+  const payments = await getSBAccountPaymentRecords(sbAccount._id);
+
+  return {
+    _id: sbAccount._id,
+    orderNumber: sbAccount.SBAccountNumber,
+    customerId: sbAccount.customerId,
+    accountNumber: sbAccount.accountNumber,
+    SBAccountNumber: sbAccount.SBAccountNumber,
+    items: [{
+      _id: `${sbAccount._id}-item`,
+      productId: '',
+      variationId: '',
+      variationName: '',
+      selectedOptions: {},
+      productName: sbAccount.productName,
+      quantity: 1,
+      price: sellingPrice,
+      subtotal: sellingPrice
+    }],
+    totalAmount: sellingPrice,
+    paymentType: 'installment',
+    installmentPlan: {
+      frequency: 'flexible',
+      duration: 0,
+      amountPerPeriod: 0,
+      totalPaid,
+      remainingBalance,
+      nextPaymentDate: null,
+      payments
+    },
+    status: getOrderStatusFromSBAccount(sbAccount),
+    paymentStatus: getPaymentStatusFromSBAccount(sbAccount),
+    shippingAddress: 'Created in backoffice',
+    shippingCity: '',
+    shippingState: '',
+    customerPhone: '',
+    customerEmail: '',
+    notes: sbAccount.productDescription,
+    accountManagerId: sbAccount.accountManagerId,
+    branchId: sbAccount.branchId,
+    createdAt: sbAccount.createdAt,
+    updatedAt: sbAccount.updatedAt,
+    isBackofficeSBAccount: true,
+    source: 'backoffice_sb_account'
+  };
 };
 
 const calculateInstallmentPlan = (totalAmount, frequency, duration) => {
@@ -85,6 +189,49 @@ const calculateFlexibleInstallmentPlan = (totalAmount) => ({
   nextPaymentDate: null,
   payments: []
 });
+
+const getSelectedOptions = (variation) => {
+  if (!variation?.optionValues) {
+    return {};
+  }
+
+  return variation.optionValues instanceof Map
+    ? Object.fromEntries(variation.optionValues)
+    : variation.optionValues;
+};
+
+const buildOrderItemFromProduct = async ({ productId, variationId = '', quantity = 1 }) => {
+  const product = await Product.findById(productId);
+  if (!product || product.isActive === false) {
+    throw new Error('Product not found');
+  }
+
+  let variation = null;
+  if (product.hasVariations) {
+    if (!variationId) {
+      throw new Error('Please select a product variation');
+    }
+
+    variation = product.variations.id(variationId);
+    if (!variation || variation.isActive === false) {
+      throw new Error('Product variation is not available');
+    }
+  }
+
+  const selectedPrice = variation ? Number(variation.price || 0) : Number(product.price || 0);
+  const normalizedQuantity = Number(quantity || 1);
+
+  return {
+    productId: product._id.toString(),
+    variationId: variation ? variation._id.toString() : '',
+    variationName: variation?.name || '',
+    selectedOptions: variation ? getSelectedOptions(variation) : {},
+    productName: product.name,
+    quantity: normalizedQuantity,
+    price: selectedPrice,
+    subtotal: selectedPrice * normalizedQuantity
+  };
+};
 
 const normalizePaymentAmount = (amount) => {
   const numericAmount = Number(amount);
@@ -390,21 +537,119 @@ const getOrderById = async (orderId) => {
 const getOrderByNumber = async (orderNumber) => {
   console.log('getOrderByNumber called with:', orderNumber);
   const order = await EcommerceOrder.findOne({ orderNumber });
-  if (!order) {
+  if (order) {
+    console.log('Found order - status:', order.status, 'paymentStatus:', order.paymentStatus);
+    return order;
+  }
+
+  const sbAccount = await SBAccount.findOne({ SBAccountNumber: orderNumber });
+  if (!sbAccount) {
     throw new Error('Order not found');
   }
-  console.log('Found order - status:', order.status, 'paymentStatus:', order.paymentStatus);
-  return order;
+
+  return await buildOrderFromSBAccount(sbAccount);
 };
 
 const getCustomerOrders = async (customerId) => {
   console.log('getCustomerOrders called with customerId:', customerId, 'type:', typeof customerId);
-  const orders = await EcommerceOrder.find({ customerId }).sort({ createdAt: -1 });
+  const [orders, sbAccounts] = await Promise.all([
+    EcommerceOrder.find({ customerId }).sort({ createdAt: -1 }),
+    SBAccount.find({ customerId }).sort({ createdAt: -1 })
+  ]);
+  const orderSBAccountNumbers = new Set(
+    orders
+      .map((order) => order.SBAccountNumber)
+      .filter(Boolean)
+  );
+  const standaloneSBOrders = await Promise.all(
+    sbAccounts
+      .filter((sbAccount) => !orderSBAccountNumbers.has(sbAccount.SBAccountNumber))
+      .map((sbAccount) => buildOrderFromSBAccount(sbAccount))
+  );
+  const combinedOrders = [...orders, ...standaloneSBOrders].sort(
+    (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+  );
+
   console.log('Found', orders.length, 'orders for customer');
-  if (orders.length > 0) {
-    console.log('First order status:', orders[0].status, 'paymentStatus:', orders[0].paymentStatus);
+  if (combinedOrders.length > 0) {
+    console.log('First order status:', combinedOrders[0].status, 'paymentStatus:', combinedOrders[0].paymentStatus);
   }
-  return orders;
+  return combinedOrders;
+};
+
+const replaceInstallmentOrderItem = async ({
+  orderNumber,
+  customerId,
+  itemId,
+  productId,
+  variationId = ''
+}) => {
+  const order = await EcommerceOrder.findOne({ orderNumber, customerId });
+  if (!order) {
+    throw new Error('Order not found');
+  }
+
+  if (order.paymentType !== 'installment' || !order.installmentPlan) {
+    throw new Error('Only pay-small-small orders can be edited');
+  }
+
+  if (order.paymentStatus === 'paid' || Number(order.installmentPlan.remainingBalance || 0) <= 0) {
+    throw new Error('This order has already been fully paid');
+  }
+
+  if (['delivered', 'shipped', 'cancelled'].includes(order.status)) {
+    throw new Error('This order can no longer be edited');
+  }
+
+  const itemIndex = order.items.findIndex((item) => item._id.toString() === itemId);
+  if (itemIndex === -1) {
+    throw new Error('Order item not found');
+  }
+
+  const existingItem = order.items[itemIndex];
+  const replacementItem = await buildOrderItemFromProduct({
+    productId,
+    variationId,
+    quantity: existingItem.quantity
+  });
+
+  order.items.set(itemIndex, replacementItem);
+  const nextTotalAmount = order.items.reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
+  const totalPaid = Number(order.installmentPlan.totalPaid || 0);
+
+  if (nextTotalAmount < totalPaid) {
+    throw new Error(`Replacement total cannot be less than the amount already paid of ₦${totalPaid.toLocaleString()}`);
+  }
+
+  const nextRemainingBalance = Math.max(0, nextTotalAmount - totalPaid);
+
+  order.totalAmount = nextTotalAmount;
+  order.installmentPlan.remainingBalance = nextRemainingBalance;
+  order.installmentPlan.amountPerPeriod = 0;
+  order.installmentPlan.duration = 0;
+  order.installmentPlan.frequency = 'flexible';
+  order.installmentPlan.nextPaymentDate = null;
+
+  if (nextRemainingBalance === 0) {
+    order.paymentStatus = 'paid';
+    order.status = 'paid';
+  } else {
+    order.paymentStatus = totalPaid > 0 ? 'partial' : 'unpaid';
+    order.status = totalPaid > 0 ? 'partially_paid' : order.status;
+  }
+
+  if (order.SBAccountNumber) {
+    await SBAccount.findOneAndUpdate(
+      { SBAccountNumber: order.SBAccountNumber },
+      {
+        productName: buildOrderProductSummary(order.items, order.orderNumber),
+        sellingPrice: nextTotalAmount,
+        status: nextRemainingBalance === 0 ? 'sold' : 'booked'
+      }
+    );
+  }
+
+  return await order.save();
 };
 
 const getAllOrders = async (filters = {}) => {
@@ -889,6 +1134,77 @@ const recordFlexibleInstallmentOrderPayment = async (orderId, amount, transactio
   return { order: await EcommerceOrder.findById(order._id), sbAccount };
 };
 
+const recordBackofficeSBAccountPayment = async (SBAccountNumber, customerId, amount, transactionRef, source, options = {}) => {
+  const sbAccount = await SBAccount.findOne({
+    SBAccountNumber,
+    customerId: customerId.toString()
+  });
+
+  if (!sbAccount) {
+    throw new Error('Order not found');
+  }
+
+  const paymentAmount = normalizePaymentAmount(amount);
+  const remainingBalance = Math.max(0, Number(sbAccount.sellingPrice || 0) - Number(sbAccount.balance || 0));
+  if (remainingBalance <= 0) {
+    throw new Error('This order has already been fully paid');
+  }
+  if (paymentAmount > remainingBalance) {
+    throw new Error(`Payment amount cannot exceed remaining balance of ₦${remainingBalance.toLocaleString()}`);
+  }
+
+  const existingTransaction = await AccountTransactionModel.findOne({
+    accountTypeId: sbAccount._id.toString(),
+    narration: { $regex: transactionRef.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }
+  });
+  if (existingTransaction) {
+    const refreshedSBAccount = await SBAccount.findById(sbAccount._id);
+    return {
+      order: await buildOrderFromSBAccount(refreshedSBAccount),
+      sbAccount: refreshedSBAccount
+    };
+  }
+
+  const orderLike = await buildOrderFromSBAccount(sbAccount);
+
+  if (options.creditWallet !== false) {
+    await creditWalletForOrderPayment(orderLike, paymentAmount, transactionRef);
+  }
+
+  await debitWalletForOrderPayment(orderLike, paymentAmount, transactionRef);
+  const updatedSBAccount = await creditSBAccountWithoutLedgerImpact(orderLike, paymentAmount, transactionRef, source);
+
+  if (Number(updatedSBAccount.balance || 0) >= Number(updatedSBAccount.sellingPrice || 0)) {
+    await updateSBAccountToSold(updatedSBAccount.SBAccountNumber);
+  }
+
+  const refreshedSBAccount = await SBAccount.findById(sbAccount._id);
+  return {
+    order: await buildOrderFromSBAccount(refreshedSBAccount),
+    sbAccount: refreshedSBAccount
+  };
+};
+
+const recordCustomerOrderDepositPayment = async (orderNumber, customerId, amount, transactionRef, source) => {
+  const order = await EcommerceOrder.findOne({ orderNumber, customerId: customerId.toString() });
+  if (order) {
+    return await recordFlexibleInstallmentOrderPayment(
+      order._id,
+      amount,
+      transactionRef,
+      source
+    );
+  }
+
+  return await recordBackofficeSBAccountPayment(
+    orderNumber,
+    customerId,
+    amount,
+    transactionRef,
+    source
+  );
+};
+
 const transferWalletToSBForPayment = async (order, amount, transactionRef, source = 'SYSTEM_AUTO') => {
   await debitWalletForScheduledPayment(order, amount, transactionRef, source);
   return await creditSBAccountWithoutLedgerImpact(order, amount, transactionRef, source);
@@ -939,7 +1255,30 @@ const debitWalletForInstallmentPayoff = async (order, amount, transactionRef) =>
 const payoffRemainingBalanceFromWallet = async (orderNumber, customerId) => {
   const order = await EcommerceOrder.findOne({ orderNumber, customerId: customerId.toString() });
   if (!order) {
-    throw new Error('Order not found');
+    const sbAccount = await SBAccount.findOne({
+      SBAccountNumber: orderNumber,
+      customerId: customerId.toString()
+    });
+    if (!sbAccount) {
+      throw new Error('Order not found');
+    }
+
+    const remainingBalance = Math.max(0, Number(sbAccount.sellingPrice || 0) - Number(sbAccount.balance || 0));
+    if (remainingBalance <= 0) {
+      throw new Error('This order has already been fully paid');
+    }
+
+    const transactionRef = `WALLET_PAYOFF_${Date.now()}`;
+    const result = await recordBackofficeSBAccountPayment(
+      orderNumber,
+      customerId,
+      remainingBalance,
+      transactionRef,
+      customerId.toString(),
+      { creditWallet: false }
+    );
+
+    return result.order;
   }
 
   if (order.paymentType !== 'installment' || !order.installmentPlan) {
@@ -1356,8 +1695,10 @@ module.exports = {
   getOrderByReference,
   creditSBAccountForOrderDirect,
   recordFlexibleInstallmentOrderPayment,
+  recordCustomerOrderDepositPayment,
   updateSBAccountToSold,
   recordWalletMovementForOrderPayment,
   payoffRemainingBalanceFromWallet,
-  createOrderAndPayFromWallet
+  createOrderAndPayFromWallet,
+  replaceInstallmentOrderItem
 };

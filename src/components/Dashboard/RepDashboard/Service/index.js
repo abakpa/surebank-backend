@@ -73,6 +73,11 @@ const STAFF_TRANSACTION_EXCLUDED_NARRATION_QUERY = {
   $not: /^(Wallet Transfer to SB Account|To (SB|DS) account .* from wallet)/i
 };
 
+const formatStaffName = (staff) => {
+  if (!staff) return 'N/A';
+  return `${staff.firstName || ''} ${staff.lastName || ''}`.trim() || 'N/A';
+};
+
 const formatCustomerName = (customer) => {
   if (!customer) return 'N/A';
   return `${customer.firstName || ''} ${customer.lastName || ''}`.trim() || customer.phone || 'N/A';
@@ -475,6 +480,52 @@ async function getAllRepDailyDSAccountWithdrawal(date = null, staff) {
     const totalBalance = transactions.reduce((sum, tx) => sum + tx.amount, 0);
   
     return totalBalance;
+}
+async function getAllRepFreeToWithdrawWithdrawal(date = null, staff) {
+    const query = {
+      package: 'Account',
+      direction: 'Debit',
+      narration: 'Withdrawal',
+      createdBy: staff,
+      excludeFromStaffStats: STAFF_STATS_QUERY_FILTER,
+      createdAt: buildDailyCreatedAtQuery(date)
+    };
+
+    const transactions = await AccountTransaction.find(query);
+    return transactions.reduce((sum, tx) => sum + tx.amount, 0) || 0;
+}
+async function getRepFreeToWithdrawWithdrawalReport(date = null, staff) {
+    const query = {
+      package: 'Account',
+      direction: 'Debit',
+      narration: 'Withdrawal',
+      createdBy: staff,
+      excludeFromStaffStats: STAFF_STATS_QUERY_FILTER,
+      createdAt: buildDailyCreatedAtQuery(date)
+    };
+
+    const transactions = await AccountTransaction.find(query)
+      .populate({
+        path: 'customerId',
+        model: 'Customer',
+        select: 'firstName lastName phone'
+      })
+      .populate({
+        path: 'createdBy',
+        model: 'Staff',
+        select: 'firstName lastName'
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return transactions.map((transaction) => ({
+      _id: transaction._id,
+      customerName: formatCustomerName(transaction.customerId),
+      narration: transaction.narration,
+      amount: Number(transaction.amount || 0),
+      date: transaction.createdAt,
+      staffName: formatStaffName(transaction.createdBy),
+    }));
 }
 async function getAllRepDailySBandDSAccount(date = null, staff) {
 
@@ -917,6 +968,8 @@ module.exports = {
     getAllRepDailyFDAccount,
     // getAllDailyDSAccountCharge,
     getAllRepDailyDSAccountWithdrawal,
+    getAllRepFreeToWithdrawWithdrawal,
+    getRepFreeToWithdrawWithdrawalReport,
     getAllRepDailySBAccount,
     getAllRepDailySBAccountWithdrawal,
     getAllRepDailySBandDSAccount,

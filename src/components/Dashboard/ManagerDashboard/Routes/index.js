@@ -12,6 +12,8 @@ router.post('/dailybranchfd', staffAuth,AcountTransactionController.getAllBranch
 router.post('/dailybranchsb',staffAuth, AcountTransactionController.getAllBranchDailySBAccount);
 router.post('/totaldailybranchcontribution',staffAuth, AcountTransactionController.getAllBranchDailyContribution);
 router.post('/dailybranchdswithdrawal',staffAuth, AcountTransactionController.getAllBranchDailyDSAccountWithdrawal);
+router.post('/branchfwwithdrawal',staffAuth, AcountTransactionController.getAllBranchFreeToWithdrawWithdrawal);
+router.post('/branchfwwithdrawalreport',staffAuth, AcountTransactionController.getBranchFreeToWithdrawWithdrawalReport);
 router.post('/branchdspackage',staffAuth, AcountTransactionController.getAllBranchDSAccountPackage);
 router.post('/branchsbpackage',staffAuth, AcountTransactionController.getAllBranchSBAccountPackage);
 router.post('/branchpackages',staffAuth, AcountTransactionController.getAllBranchAccountPackage);
