@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const EcommerceOrderController = require('../Controller/index');
-const { staffAuth, customerAuth, adminOnly } = require('../../Middleware/index');
+const { staffAuth, customerAuth, adminOnly, staffExceptProductManager } = require('../../Middleware/index');
 
 // Customer routes (orders created only via payment verification)
 router.get('/my-orders', customerAuth, EcommerceOrderController.getMyOrders);
@@ -16,16 +16,16 @@ router.get('/payment/verify/:reference', customerAuth, EcommerceOrderController.
 router.post('/webhook/paystack', EcommerceOrderController.handlePaystackWebhook);
 
 // Admin/Staff routes
-router.get('/', staffAuth, EcommerceOrderController.getAllOrders);
-router.get('/overdue', staffAuth, EcommerceOrderController.getOverdueInstallments);
-router.get('/branch/:branchId', staffAuth, EcommerceOrderController.getOrdersByBranch);
+router.get('/', staffAuth, staffExceptProductManager, EcommerceOrderController.getAllOrders);
+router.get('/overdue', staffAuth, staffExceptProductManager, EcommerceOrderController.getOverdueInstallments);
+router.get('/branch/:branchId', staffAuth, staffExceptProductManager, EcommerceOrderController.getOrdersByBranch);
 
 // Process automatic payments (can be called by cron job or manually)
 router.post('/process-automatic-payments', staffAuth, adminOnly, EcommerceOrderController.processAutomaticPayments);
 
-router.get('/:id', staffAuth, EcommerceOrderController.getOrderById);
-router.get('/:id/sb-account', staffAuth, EcommerceOrderController.getOrderSBAccount);
-router.get('/:id/wallet-account', staffAuth, EcommerceOrderController.getOrderWalletAccount);
+router.get('/:id', staffAuth, staffExceptProductManager, EcommerceOrderController.getOrderById);
+router.get('/:id/sb-account', staffAuth, staffExceptProductManager, EcommerceOrderController.getOrderSBAccount);
+router.get('/:id/wallet-account', staffAuth, staffExceptProductManager, EcommerceOrderController.getOrderWalletAccount);
 router.put('/:id/status', staffAuth, adminOnly, EcommerceOrderController.updateOrderStatus);
 router.post('/:id/installment-payment', staffAuth, adminOnly, EcommerceOrderController.recordInstallmentPayment);
 router.post('/:id/payment', staffAuth, adminOnly, EcommerceOrderController.recordOutrightPayment);

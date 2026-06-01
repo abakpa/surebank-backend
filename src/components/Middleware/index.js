@@ -46,8 +46,22 @@ const staffAuth = async(req, res, next) => {
     }
 };
 const adminOnly = (req, res, next) => {
-    if (!['Admin', 'SubAdmin'].includes(req.staff?.role)) {
+    if (req.staff?.role !== 'Admin') {
         return res.status(403).json({ message: 'Admin access required' });
+    }
+
+    next();
+};
+const productManagerOnly = (req, res, next) => {
+    if (!['Admin', 'ProductManager', 'Product Manager', 'SubAdmin'].includes(req.staff?.role)) {
+        return res.status(403).json({ message: 'Product manager access required' });
+    }
+
+    next();
+};
+const staffExceptProductManager = (req, res, next) => {
+    if (['ProductManager', 'Product Manager', 'SubAdmin'].includes(req.staff?.role)) {
+        return res.status(403).json({ message: 'Product manager access is limited to products and categories' });
     }
 
     next();
@@ -55,5 +69,7 @@ const adminOnly = (req, res, next) => {
 module.exports = {
     customerAuth,
     staffAuth,
-    adminOnly
+    adminOnly,
+    productManagerOnly,
+    staffExceptProductManager
 }
