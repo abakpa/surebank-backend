@@ -78,7 +78,7 @@ const getBranchStaff = async (req, res) => {
             if (role && req.staff?.role !== 'Admin') {
               return res.status(403).json({ message: 'Only admin can change staff role' });
             }
-            if (role && !['Manager', 'SubAdmin', 'Agent', 'OnlineRep'].includes(role)) {
+            if (role && !['Manager', 'ProductManager', 'Agent', 'OnlineRep'].includes(role)) {
               return res.status(400).json({ message: 'Invalid staff role' });
             }
         const newData = await staffService.updateStaff({staff,status,role})
