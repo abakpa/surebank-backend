@@ -6,7 +6,9 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node app.js",
     "dev": "nodemon app.js",
-    "migrate:cloudinary-images": "node scripts/migrateImagesToCloudinary.js"
+    "migrate:cloudinary-images": "node scripts/migrateImagesToCloudinary.js",
+    "merge:head-office:dry-run": "node migrations/merge-head-office-into-hq.js",
+    "merge:head-office": "RUN_MERGE=true node migrations/merge-head-office-into-hq.js"
   },
   "keywords": [],
   "author": "",

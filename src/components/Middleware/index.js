@@ -35,7 +35,7 @@ const staffAuth = async(req, res, next) => {
             // return res.status(401).json({ error: "Session expired" });
           }
 
-        req.staff = { staffId: payload.id, email: payload.email, role: staff.role };
+        req.staff = { staffId: payload.id, email: payload.email, role: staff.role, branchId: staff.branchId };
 
         next();
     } catch (error) {
@@ -59,6 +59,13 @@ const productManagerOnly = (req, res, next) => {
 
     next();
 };
+const managerOnly = (req, res, next) => {
+    if (req.staff?.role !== 'Manager') {
+        return res.status(403).json({ message: 'Manager access required' });
+    }
+
+    next();
+};
 const staffExceptProductManager = (req, res, next) => {
     if (['ProductManager', 'Product Manager', 'SubAdmin'].includes(req.staff?.role)) {
         return res.status(403).json({ message: 'Product manager access is limited to products and categories' });
@@ -70,6 +77,7 @@ module.exports = {
     customerAuth,
     staffAuth,
     adminOnly,
+    managerOnly,
     productManagerOnly,
     staffExceptProductManager
 }

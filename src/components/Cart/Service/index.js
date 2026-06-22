@@ -79,6 +79,10 @@ const addToCart = async (identifier, productId, quantity = 1, skipStockCheck = f
   );
 
   if (existingItemIndex > -1) {
+    const nextQuantity = Number(cart.items[existingItemIndex].quantity || 0) + Number(quantity || 0);
+    if (!skipStockCheck && selectedStock < nextQuantity) {
+      throw new Error('Insufficient stock');
+    }
     cart.items[existingItemIndex].quantity += quantity;
     cart.items[existingItemIndex].subtotal =
       cart.items[existingItemIndex].price * cart.items[existingItemIndex].quantity;
@@ -208,6 +212,9 @@ const getProductForPayment = async (productId, quantity = 1, variationId = '') =
   const product = await Product.findById(productId);
   if (!product) {
     throw new Error('Product not found');
+  }
+  if (product.isActive === false) {
+    throw new Error('Product is not available');
   }
 
   const variation = getVariationSelection(product, variationId);

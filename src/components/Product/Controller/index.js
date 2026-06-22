@@ -41,7 +41,6 @@ const createProduct = async (req, res) => {
       hasVariations,
       variationOptions,
       variations,
-      stock,
       sku,
       isActive,
       allowInstallment,
@@ -63,7 +62,6 @@ const createProduct = async (req, res) => {
       hasVariations,
       variationOptions,
       variations: nextVariations,
-      stock,
       sku,
       isActive,
       allowInstallment,
@@ -160,11 +158,19 @@ const updateStock = async (req, res) => {
   try {
     const productId = req.params.id;
     const { quantity, operation, variationId } = req.body;
+    const branchId = req.staff.branchId;
 
-    const product = await ProductService.updateProductStock(productId, quantity, operation, variationId || '');
+    const product = await ProductService.updateProductStock(
+      productId,
+      quantity,
+      operation || 'set',
+      variationId || '',
+      branchId,
+      req.staff.staffId
+    );
 
     res.status(200).json({
-      message: 'Stock updated successfully',
+      message: 'Branch stock updated successfully',
       product
     });
   } catch (error) {

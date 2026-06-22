@@ -79,6 +79,42 @@ const getOrderStatusFromSBAccount = (sbAccount) => {
   return 'pending';
 };
 
+const allocateOrderItemPayments = (order) => {
+  if (!order || !Array.isArray(order.items)) return order;
+
+  order.items.forEach((item) => {
+    const subtotal = Number(item.subtotal || 0);
+    const paidAmount = Math.min(subtotal, Math.max(0, Number(item.paidAmount || 0)));
+    item.paidAmount = paidAmount;
+    item.paymentStatus = paidAmount >= subtotal
+      ? 'paid'
+      : paidAmount > 0
+        ? 'partial'
+        : 'unpaid';
+
+    if (!item.fulfillmentStatus) {
+      item.fulfillmentStatus = 'pending';
+    }
+  });
+
+  return order;
+};
+
+const markAllOrderItemsPaid = (order) => {
+  if (!order || !Array.isArray(order.items)) return order;
+
+  order.items.forEach((item) => {
+    const subtotal = Number(item.subtotal || 0);
+    item.paidAmount = subtotal;
+    item.paymentStatus = 'paid';
+    if (!item.fulfillmentStatus) {
+      item.fulfillmentStatus = 'pending';
+    }
+  });
+
+  return order;
+};
+
 const getSBAccountPaymentRecords = async (sbAccountId) => {
   const transactions = await AccountTransactionModel.find({
     accountTypeId: sbAccountId.toString(),
@@ -117,7 +153,10 @@ const buildOrderFromSBAccount = async (sbAccount) => {
       productName: sbAccount.productName,
       quantity: 1,
       price: sellingPrice,
-      subtotal: sellingPrice
+      subtotal: sellingPrice,
+      paidAmount: Math.min(sellingPrice, totalPaid),
+      paymentStatus: totalPaid >= sellingPrice ? 'paid' : totalPaid > 0 ? 'partial' : 'unpaid',
+      fulfillmentStatus: sbAccount.status === 'sold' ? 'completed' : 'pending'
     }],
     totalAmount: sellingPrice,
     paymentType: 'installment',
@@ -198,6 +237,56 @@ const getSelectedOptions = (variation) => {
   return variation.optionValues instanceof Map
     ? Object.fromEntries(variation.optionValues)
     : variation.optionValues;
+};
+
+const getOutOfMarketProductIds = async (items = []) => {
+  const productIds = [...new Set(
+    items
+      .map((item) => item.productId?.toString())
+      .filter(Boolean)
+  )];
+
+  if (productIds.length === 0) {
+    return new Set();
+  }
+
+  const products = await Product.find({ _id: { $in: productIds } })
+    .select('_id isActive')
+    .lean();
+  const activeProductIds = new Set(
+    products
+      .filter((product) => product.isActive !== false)
+      .map((product) => product._id.toString())
+  );
+
+  return new Set(productIds.filter((productId) => !activeProductIds.has(productId)));
+};
+
+const decorateOrderProductAvailability = async (order) => {
+  if (!order || order.isBackofficeSBAccount || order.source === 'backoffice_sb_account') {
+    return order;
+  }
+
+  const plainOrder = typeof order.toObject === 'function' ? order.toObject() : { ...order };
+  const outOfMarketProductIds = await getOutOfMarketProductIds(plainOrder.items || []);
+  const orderIsCompleted = plainOrder.paymentStatus === 'paid' && plainOrder.status === 'completed';
+
+  plainOrder.items = (plainOrder.items || []).map((item) => ({
+    ...item,
+    isOutOfMarket: outOfMarketProductIds.has(item.productId?.toString()),
+    requiresReplacement: outOfMarketProductIds.has(item.productId?.toString()) && !orderIsCompleted
+  }));
+
+  return plainOrder;
+};
+
+const canStaffUpdateOrderStatus = (order, staff) => {
+  if (!staff) return false;
+  if (staff.role === 'Admin') return true;
+  if (staff.role === 'Manager') {
+    return String(order.branchId || '') === String(staff.branchId || '');
+  }
+  return false;
 };
 
 const buildOrderItemFromProduct = async ({ productId, variationId = '', quantity = 1 }) => {
@@ -367,6 +456,10 @@ const createOrder = async (orderData) => {
   if (!cart || cart.items.length === 0) {
     throw new Error('Cart is empty');
   }
+  const outOfMarketProductIds = await getOutOfMarketProductIds(cart.items);
+  if (outOfMarketProductIds.size > 0) {
+    throw new Error('One or more products in your cart are out of market. Remove them and select another product from SureBank stores.');
+  }
 
   // Note: Stock check removed - orders can be placed regardless of stock
   // Stock will be managed separately by admin
@@ -377,7 +470,12 @@ const createOrder = async (orderData) => {
     orderNumber,
     customerId,
     accountNumber,
-    items: cart.items,
+    items: cart.items.map((item) => ({
+      ...(typeof item.toObject === 'function' ? item.toObject() : item),
+      paidAmount: 0,
+      paymentStatus: 'unpaid',
+      fulfillmentStatus: 'pending'
+    })),
     totalAmount: cart.totalAmount,
     paymentType,
     shippingAddress,
@@ -531,7 +629,7 @@ const getOrderById = async (orderId) => {
   if (!order) {
     throw new Error('Order not found');
   }
-  return order;
+  return await decorateOrderProductAvailability(order);
 };
 
 const getOrderByNumber = async (orderNumber) => {
@@ -539,7 +637,7 @@ const getOrderByNumber = async (orderNumber) => {
   const order = await EcommerceOrder.findOne({ orderNumber });
   if (order) {
     console.log('Found order - status:', order.status, 'paymentStatus:', order.paymentStatus);
-    return order;
+    return await decorateOrderProductAvailability(order);
   }
 
   const sbAccount = await SBAccount.findOne({ SBAccountNumber: orderNumber });
@@ -569,12 +667,15 @@ const getCustomerOrders = async (customerId) => {
   const combinedOrders = [...orders, ...standaloneSBOrders].sort(
     (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
   );
+  const decoratedOrders = await Promise.all(
+    combinedOrders.map((order) => decorateOrderProductAvailability(order))
+  );
 
   console.log('Found', orders.length, 'orders for customer');
-  if (combinedOrders.length > 0) {
-    console.log('First order status:', combinedOrders[0].status, 'paymentStatus:', combinedOrders[0].paymentStatus);
+  if (decoratedOrders.length > 0) {
+    console.log('First order status:', decoratedOrders[0].status, 'paymentStatus:', decoratedOrders[0].paymentStatus);
   }
-  return combinedOrders;
+  return decoratedOrders;
 };
 
 const replaceInstallmentOrderItem = async ({
@@ -593,11 +694,7 @@ const replaceInstallmentOrderItem = async ({
     throw new Error('Only pay-small-small orders can be edited');
   }
 
-  if (order.paymentStatus === 'paid' || Number(order.installmentPlan.remainingBalance || 0) <= 0) {
-    throw new Error('This order has already been fully paid');
-  }
-
-  if (['delivered', 'shipped', 'cancelled'].includes(order.status)) {
+  if (['delivered', 'completed', 'shipped', 'cancelled'].includes(order.status)) {
     throw new Error('This order can no longer be edited');
   }
 
@@ -607,6 +704,16 @@ const replaceInstallmentOrderItem = async ({
   }
 
   const existingItem = order.items[itemIndex];
+  const outOfMarketProductIds = await getOutOfMarketProductIds(order.items);
+  const isReplacingOutOfMarketItem = outOfMarketProductIds.has(existingItem.productId?.toString());
+
+  if (
+    !isReplacingOutOfMarketItem &&
+    (order.paymentStatus === 'paid' || Number(order.installmentPlan.remainingBalance || 0) <= 0)
+  ) {
+    throw new Error('This order has already been fully paid');
+  }
+
   const replacementItem = await buildOrderItemFromProduct({
     productId,
     variationId,
@@ -649,6 +756,7 @@ const replaceInstallmentOrderItem = async ({
     );
   }
 
+  allocateOrderItemPayments(order);
   return await order.save();
 };
 
@@ -667,13 +775,133 @@ const getAllOrders = async (filters = {}) => {
     query.branchId = filters.branchId;
   }
 
-  return await EcommerceOrder.find(query).sort({ createdAt: -1 });
+  const orders = await EcommerceOrder.find(query).sort({ createdAt: -1 });
+  return await Promise.all(orders.map((order) => decorateOrderProductAvailability(order)));
 };
 
-const updateOrderStatus = async (orderId, status, processedBy) => {
+const isActiveUncompletedOrder = (order) =>
+  order.status !== 'completed' && order.status !== 'cancelled';
+
+const getProductDemandSummary = async () => {
+  const orders = await EcommerceOrder.find({
+    status: { $nin: ['completed', 'cancelled'] }
+  }).select('customerId items paymentStatus status').lean();
+
+  const demandByProduct = new Map();
+
+  orders.forEach((order) => {
+    (order.items || []).forEach((item) => {
+      const productId = item.productId?.toString();
+      if (!productId) return;
+
+      const current = demandByProduct.get(productId) || {
+        productId,
+        activeOrderCount: 0,
+        activeCustomerCount: 0,
+        totalQuantity: 0,
+        unpaidCount: 0,
+        partialCount: 0,
+        paidCount: 0,
+        customerIds: new Set(),
+        orderIds: new Set()
+      };
+
+      current.orderIds.add(order._id.toString());
+      if (order.customerId) current.customerIds.add(order.customerId.toString());
+      current.totalQuantity += Number(item.quantity || 0);
+      if (order.paymentStatus === 'paid') current.paidCount += 1;
+      else if (order.paymentStatus === 'partial') current.partialCount += 1;
+      else current.unpaidCount += 1;
+
+      demandByProduct.set(productId, current);
+    });
+  });
+
+  return Array.from(demandByProduct.values()).map((item) => ({
+    productId: item.productId,
+    activeOrderCount: item.orderIds.size,
+    activeCustomerCount: item.customerIds.size,
+    totalQuantity: item.totalQuantity,
+    unpaidCount: item.unpaidCount,
+    partialCount: item.partialCount,
+    paidCount: item.paidCount
+  }));
+};
+
+const getProductDemandDetail = async (productId) => {
+  const orders = await EcommerceOrder.find({
+    status: { $nin: ['completed', 'cancelled'] },
+    'items.productId': productId
+  })
+    .populate('customerId', 'firstName lastName phone')
+    .sort({ createdAt: -1 });
+
+  const entries = [];
+  const customerIds = new Set();
+  let totalQuantity = 0;
+
+  orders.forEach((order) => {
+    if (!isActiveUncompletedOrder(order)) return;
+
+    (order.items || [])
+      .filter((item) => item.productId === productId)
+      .forEach((item) => {
+        const customer = order.customerId;
+        const customerName = customer?.firstName || customer?.lastName
+          ? `${customer?.firstName || ''} ${customer?.lastName || ''}`.trim()
+          : 'N/A';
+        const customerPhone = customer?.phone || order.customerPhone || '';
+
+        totalQuantity += Number(item.quantity || 0);
+        if (customer?._id) customerIds.add(customer._id.toString());
+
+        entries.push({
+          orderId: order._id,
+          orderNumber: order.orderNumber,
+          SBAccountNumber: order.SBAccountNumber || '',
+          customerId: customer?._id || order.customerId,
+          customerName,
+          customerPhone,
+          quantity: Number(item.quantity || 0),
+          unitPrice: Number(item.price || 0),
+          subtotal: Number(item.subtotal || 0),
+          variationId: item.variationId || '',
+          variationName: item.variationName || '',
+          selectedOptions: item.selectedOptions instanceof Map
+            ? Object.fromEntries(item.selectedOptions)
+            : item.selectedOptions || {},
+          paymentStatus: order.paymentStatus,
+          orderStatus: order.status,
+          totalAmount: Number(order.totalAmount || 0),
+          totalPaid: Number(order.installmentPlan?.totalPaid || 0),
+          remainingBalance: Number(order.installmentPlan?.remainingBalance || 0),
+          createdAt: order.createdAt
+        });
+      });
+  });
+
+  return {
+    productId,
+    activeOrderCount: orders.length,
+    activeCustomerCount: customerIds.size,
+    totalQuantity,
+    entries
+  };
+};
+
+const updateOrderStatus = async (orderId, status, staff) => {
   const order = await EcommerceOrder.findById(orderId);
   if (!order) {
     throw new Error('Order not found');
+  }
+  if (!canStaffUpdateOrderStatus(order, staff)) {
+    throw new Error('You are not allowed to update this order status');
+  }
+  if (staff?.role === 'Manager' && status !== 'delivered') {
+    throw new Error('Managers can only mark ecommerce orders as delivered');
+  }
+  if (status === 'completed' && order.paymentStatus !== 'paid') {
+    throw new Error('Only fully paid orders can be marked completed');
   }
 
   const previousStatus = order.status;
@@ -681,21 +909,102 @@ const updateOrderStatus = async (orderId, status, processedBy) => {
   // If changing to 'delivered' or 'completed', reduce stock
   if ((status === 'delivered' || status === 'completed') &&
       previousStatus !== 'delivered' && previousStatus !== 'completed') {
+    allocateOrderItemPayments(order);
     for (const item of order.items) {
+      if (['delivered', 'completed'].includes(item.fulfillmentStatus)) {
+        continue;
+      }
+      if (item.paymentStatus !== 'paid') {
+        await settleOrderItemPaymentFromWallet(order, item, staff);
+      }
       try {
-        await ProductService.updateProductStock(item.productId, item.quantity, 'decrease', item.variationId || '');
+        await ProductService.updateProductStock(
+          item.productId,
+          item.quantity,
+          'decrease',
+          item.variationId || '',
+          order.branchId,
+          staff?.staffId || ''
+        );
       } catch (err) {
         console.error(`Failed to reduce stock for product ${item.productId}:`, err.message);
         // Continue with order status update even if stock update fails
       }
+      item.fulfillmentStatus = status === 'completed' ? 'completed' : 'delivered';
+      item.fulfilledAt = new Date();
+      item.fulfilledBy = staff?.staffId || '';
     }
   }
 
   order.status = status;
-  order.processedBy = processedBy;
+  order.processedBy = staff?.staffId;
   await order.save();
 
-  return order;
+  return await decorateOrderProductAvailability(order);
+};
+
+const canStaffFulfillOrderItem = (order, staff) => {
+  if (!staff) return false;
+  if (staff.role === 'Admin') return true;
+  if (staff.role === 'Manager') {
+    return String(order.branchId || '') === String(staff.branchId || '');
+  }
+  return false;
+};
+
+const updateOrderItemFulfillment = async (orderId, itemId, status, staff) => {
+  const order = await EcommerceOrder.findById(orderId);
+  if (!order) {
+    throw new Error('Order not found');
+  }
+  if (!canStaffFulfillOrderItem(order, staff)) {
+    throw new Error('You are not allowed to fulfill this order item');
+  }
+  if (!['delivered', 'completed'].includes(status)) {
+    throw new Error('Invalid item fulfillment status');
+  }
+  if (staff?.role === 'Manager' && status !== 'delivered') {
+    throw new Error('Managers can only mark items as delivered');
+  }
+
+  const item = order.items.id(itemId);
+  if (!item) {
+    throw new Error('Order item not found');
+  }
+  if (item.fulfillmentStatus === 'completed') {
+    throw new Error('This item has already been completed');
+  }
+
+  const previousStatus = item.fulfillmentStatus || 'pending';
+  if (status === 'delivered' && !['delivered', 'completed'].includes(previousStatus)) {
+    if (item.paymentStatus !== 'paid') {
+      await settleOrderItemPaymentFromWallet(order, item, staff);
+    }
+
+    await ProductService.updateProductStock(
+      item.productId,
+      item.quantity,
+      'decrease',
+      item.variationId || '',
+      order.branchId,
+      staff?.staffId || ''
+    );
+  }
+
+  item.fulfillmentStatus = status;
+  item.fulfilledAt = new Date();
+  item.fulfilledBy = staff?.staffId || '';
+
+  if (order.items.every((orderItem) => orderItem.fulfillmentStatus === 'completed')) {
+    order.status = 'completed';
+  } else if (order.items.every((orderItem) => ['delivered', 'completed'].includes(orderItem.fulfillmentStatus))) {
+    order.status = 'delivered';
+  }
+
+  order.processedBy = staff?.staffId;
+  await order.save();
+
+  return await decorateOrderProductAvailability(order);
 };
 
 // Get SB Account details for an order
@@ -1068,6 +1377,37 @@ const creditSBAccountWithoutLedgerImpact = async (order, amount, transactionRef,
   );
 };
 
+const settleOrderItemPaymentFromWallet = async (order, item, staff) => {
+  const subtotal = Number(item.subtotal || 0);
+  const paidAmount = Math.min(subtotal, Math.max(0, Number(item.paidAmount || 0)));
+  const amountDue = Math.max(0, subtotal - paidAmount);
+
+  if (amountDue <= 0) {
+    item.paidAmount = subtotal;
+    item.paymentStatus = 'paid';
+    return null;
+  }
+
+  if (!order.SBAccountNumber) {
+    throw new Error('This order does not have an SB Account');
+  }
+
+  const transactionRef = `ITEM_DELIVERY_${order.orderNumber}_${item._id}_${Date.now()}`;
+  const source = staff?.staffId || staff?._id?.toString() || 'ECOMMERCE_SYSTEM';
+
+  await debitWalletForOrderPayment(order, amountDue, transactionRef);
+  const sbAccount = await creditSBAccountWithoutLedgerImpact(order, amountDue, transactionRef, source);
+
+  item.paidAmount = subtotal;
+  item.paymentStatus = 'paid';
+
+  if (Number(sbAccount.balance || 0) >= Number(sbAccount.sellingPrice || 0)) {
+    await updateSBAccountToSold(order.SBAccountNumber);
+  }
+
+  return sbAccount;
+};
+
 const recordFlexibleInstallmentOrderPayment = async (orderId, amount, transactionRef, source, options = {}) => {
   const order = await EcommerceOrder.findById(orderId);
   if (!order) {
@@ -1105,9 +1445,6 @@ const recordFlexibleInstallmentOrderPayment = async (orderId, amount, transactio
     await creditWalletForOrderPayment(order, paymentAmount, transactionRef);
   }
 
-  await debitWalletForOrderPayment(order, paymentAmount, transactionRef);
-  const sbAccount = await creditSBAccountWithoutLedgerImpact(order, paymentAmount, transactionRef, source);
-
   order.installmentPlan.payments.push({
     date: new Date(),
     amount: paymentAmount,
@@ -1123,15 +1460,18 @@ const recordFlexibleInstallmentOrderPayment = async (orderId, amount, transactio
   if (order.installmentPlan.remainingBalance <= 0) {
     order.paymentStatus = 'paid';
     order.status = 'paid';
-    await updateSBAccountToSold(order.SBAccountNumber);
   } else {
     order.paymentStatus = 'partial';
     order.status = 'partially_paid';
   }
 
+  allocateOrderItemPayments(order);
   await order.save();
 
-  return { order: await EcommerceOrder.findById(order._id), sbAccount };
+  return {
+    order: await EcommerceOrder.findById(order._id),
+    sbAccount: await SBAccount.findOne({ SBAccountNumber: order.SBAccountNumber })
+  };
 };
 
 const recordBackofficeSBAccountPayment = async (SBAccountNumber, customerId, amount, transactionRef, source, options = {}) => {
@@ -1290,9 +1630,12 @@ const payoffRemainingBalanceFromWallet = async (orderNumber, customerId) => {
     throw new Error('This order has already been fully paid');
   }
 
+  const walletAccount = await getCustomerWalletAccount(order);
+  if (Number(walletAccount.availableBalance || 0) < remainingBalance) {
+    throw new Error(`Insufficient wallet balance. Available: ₦${Number(walletAccount.availableBalance || 0).toLocaleString()}, Required: ₦${remainingBalance.toLocaleString()}`);
+  }
+
   const transactionRef = `WALLET_PAYOFF_${Date.now()}`;
-  await debitWalletForInstallmentPayoff(order, remainingBalance, transactionRef);
-  const fundedSBAccount = await creditSBAccountWithoutLedgerImpact(order, remainingBalance, transactionRef, customerId.toString());
 
   const pendingPayments = order.installmentPlan.payments.filter((payment) => payment.status === 'pending');
   if (pendingPayments.length === 0) {
@@ -1308,22 +1651,12 @@ const payoffRemainingBalanceFromWallet = async (orderNumber, customerId) => {
     order.installmentPlan.nextPaymentDate = null;
     order.paymentStatus = 'paid';
     order.status = 'paid';
-    await updateSBAccountToSold(order.SBAccountNumber);
+    allocateOrderItemPayments(order);
     await order.save();
     return await EcommerceOrder.findById(order._id);
   }
 
-  let workingSBAccount = fundedSBAccount;
-
   for (const payment of pendingPayments) {
-    await debitSBAccountForPayment(
-      workingSBAccount,
-      payment.amount,
-      order,
-      customerId.toString(),
-      { skipAccountLedgerUpdate: true }
-    );
-
     const paymentIndex = order.installmentPlan.payments.findIndex(
       (item) => item._id?.toString() === payment._id?.toString()
     );
@@ -1336,14 +1669,13 @@ const payoffRemainingBalanceFromWallet = async (orderNumber, customerId) => {
 
     order.installmentPlan.totalPaid += payment.amount;
     order.installmentPlan.remainingBalance -= payment.amount;
-    workingSBAccount.balance -= payment.amount;
   }
 
   order.installmentPlan.nextPaymentDate = null;
   order.paymentStatus = 'paid';
   order.status = 'paid';
-  await updateSBAccountToSold(order.SBAccountNumber);
 
+  allocateOrderItemPayments(order);
   await order.save();
 
   return await EcommerceOrder.findById(order._id);
@@ -1406,6 +1738,7 @@ const recordInstallmentPayment = async (orderId, amount, transactionRef, staffId
     order.status = 'partially_paid';
   }
 
+  allocateOrderItemPayments(order);
   return await order.save();
 };
 
@@ -1509,6 +1842,7 @@ const processAutomaticPayments = async () => {
         order.status = 'partially_paid';
       }
 
+      allocateOrderItemPayments(order);
       await order.save();
     } catch (err) {
       results.errors.push({
@@ -1590,6 +1924,7 @@ const checkAndProcessPendingPayments = async (SBAccountNumber) => {
     order.status = 'partially_paid';
   }
 
+  allocateOrderItemPayments(order);
   await order.save();
 
   return results;
@@ -1612,6 +1947,7 @@ const recordOutrightPayment = async (orderId, transactionRef) => {
 
   existingOrder.paymentStatus = 'paid';
   existingOrder.status = 'paid';
+  markAllOrderItemsPaid(existingOrder);
   await existingOrder.save();
 
   // Update SBAccount status to sold
@@ -1632,13 +1968,20 @@ const cancelOrder = async (orderId, reason) => {
     throw new Error('Order not found');
   }
 
-  if (order.status === 'delivered') {
-    throw new Error('Cannot cancel a delivered order');
+  if (['delivered', 'completed'].includes(order.status)) {
+    throw new Error('Cannot cancel a delivered or completed order');
   }
 
   // Restore stock
   for (const item of order.items) {
-    await ProductService.updateProductStock(item.productId, item.quantity, 'increase', item.variationId || '');
+    await ProductService.updateProductStock(
+      item.productId,
+      item.quantity,
+      'increase',
+      item.variationId || '',
+      order.branchId,
+      ''
+    );
   }
 
   order.status = 'cancelled';
@@ -1682,6 +2025,7 @@ module.exports = {
   getCustomerOrders,
   getAllOrders,
   updateOrderStatus,
+  updateOrderItemFulfillment,
   recordInstallmentPayment,
   recordOutrightPayment,
   cancelOrder,
@@ -1689,6 +2033,8 @@ module.exports = {
   getOverdueInstallments,
   getOrderSBAccount,
   getOrderWalletAccount,
+  getProductDemandSummary,
+  getProductDemandDetail,
   creditSBAccountForOrder,
   processAutomaticPayments,
   checkAndProcessPendingPayments,

@@ -1,5 +1,9 @@
 const Product = require('../Model/index');
 const ProductCategory = require('../../ProductCategory/Model/index');
+const EcommerceOrder = require('../../EcommerceOrder/Model/index');
+const SBAccount = require('../../SBAccount/Model/index');
+const Branch = require('../../Branch/Model/index');
+const ProductBranchStock = require('../../ProductBranchStock/Model/index');
 
 const parseBoolean = (value) => value === true || value === 'true';
 
@@ -78,6 +82,7 @@ const normalizeProductData = (productData) => {
       const costPrice = normalizeNumber(variation.costPrice);
 
       return {
+        _id: variation._id || variation.id,
         name: String(variation.name || '').trim(),
         optionValues,
         price,
@@ -114,6 +119,221 @@ const normalizeProductData = (productData) => {
   return normalized;
 };
 
+const mapToPlainObject = (value) => {
+  if (!value) return {};
+  if (value instanceof Map) return Object.fromEntries(value);
+  if (typeof value.toObject === 'function') return value.toObject();
+  return value;
+};
+
+const getVariationNameById = (product, variationId = '') => {
+  if (!variationId || !product.hasVariations || !Array.isArray(product.variations)) {
+    return '';
+  }
+  const variation = product.variations.id
+    ? product.variations.id(variationId)
+    : product.variations.find((item) => String(item._id || '') === String(variationId));
+  return variation?.name || '';
+};
+
+const applyBranchStockToProduct = async (product) => {
+  if (!product) return product;
+
+  const productObject = typeof product.toObject === 'function' ? product.toObject() : { ...product };
+  const [stockRows, branches] = await Promise.all([
+    ProductBranchStock.find({ productId: productObject._id.toString() }).lean(),
+    Branch.find({ isActive: { $ne: false } }).select('_id name').lean()
+  ]);
+  const branchNameById = new Map(branches.map((branch) => [branch._id.toString(), branch.name]));
+  const hasBranchStockRows = stockRows.length > 0;
+  const totalStock = stockRows.reduce((total, row) => total + Number(row.quantity || 0), 0);
+
+  productObject.branchStocks = stockRows
+    .map((row) => ({
+      _id: row._id,
+      productId: row.productId,
+      branchId: row.branchId,
+      branchName: branchNameById.get(String(row.branchId || '')) || 'Unknown Branch',
+      variationId: row.variationId || '',
+      variationName: getVariationNameById(product, row.variationId || ''),
+      quantity: Number(row.quantity || 0),
+      updatedAt: row.updatedAt
+    }))
+    .sort((a, b) => a.branchName.localeCompare(b.branchName));
+
+  productObject.totalStock = hasBranchStockRows ? totalStock : Number(productObject.stock || 0);
+  productObject.stock = productObject.totalStock;
+
+  if (productObject.hasVariations && Array.isArray(productObject.variations)) {
+    productObject.variations = productObject.variations.map((variation) => {
+      const variationId = String(variation._id || '');
+      const variationStockRows = stockRows.filter((row) => String(row.variationId || '') === variationId);
+      return {
+        ...variation,
+        stock: variationStockRows.length > 0
+          ? variationStockRows.reduce((total, row) => total + Number(row.quantity || 0), 0)
+          : Number(variation.stock || 0)
+      };
+    });
+  }
+
+  return productObject;
+};
+
+const applyBranchStockToProducts = async (products) => {
+  return await Promise.all(products.map((product) => applyBranchStockToProduct(product)));
+};
+
+const recalculateProductStock = async (productId) => {
+  const product = await Product.findById(productId);
+  if (!product) {
+    throw new Error('Product not found');
+  }
+
+  const stockRows = await ProductBranchStock.find({ productId: productId.toString() }).lean();
+  product.stock = stockRows.reduce((total, row) => total + Number(row.quantity || 0), 0);
+
+  if (product.hasVariations && Array.isArray(product.variations)) {
+    product.variations.forEach((variation) => {
+      const variationId = variation._id.toString();
+      variation.stock = stockRows
+        .filter((row) => String(row.variationId || '') === variationId)
+        .reduce((total, row) => total + Number(row.quantity || 0), 0);
+    });
+  }
+
+  await product.save();
+  return product;
+};
+
+const removeStockFields = (productData) => {
+  const nextData = { ...productData };
+  delete nextData.stock;
+
+  if (Array.isArray(nextData.variations)) {
+    nextData.variations = nextData.variations.map((variation) => ({
+      ...variation,
+      stock: 0
+    }));
+  }
+
+  return nextData;
+};
+
+const hasSameSelectedOptions = (variation, orderItem) => {
+  const variationOptions = mapToPlainObject(variation.optionValues);
+  const orderOptions = mapToPlainObject(orderItem.selectedOptions);
+  const variationKeys = Object.keys(variationOptions || {});
+  const orderKeys = Object.keys(orderOptions || {});
+
+  if (variationKeys.length === 0 || variationKeys.length !== orderKeys.length) {
+    return false;
+  }
+
+  return variationKeys.every((key) => String(variationOptions[key] || '') === String(orderOptions[key] || ''));
+};
+
+const findMatchingVariation = (product, orderItem) => {
+  if (!product.hasVariations || !Array.isArray(product.variations)) {
+    return null;
+  }
+
+  if (orderItem.variationId) {
+    const variationById = product.variations.id(orderItem.variationId);
+    if (variationById) return variationById;
+  }
+
+  return product.variations.find((variation) =>
+    hasSameSelectedOptions(variation, orderItem) ||
+    (orderItem.variationName && variation.name === orderItem.variationName)
+  ) || null;
+};
+
+const getCurrentPriceForOrderItem = (product, orderItem) => {
+  if (!product.hasVariations) {
+    return Number(product.price || 0);
+  }
+
+  const variation = findMatchingVariation(product, orderItem);
+  return variation ? Number(variation.price || 0) : null;
+};
+
+const syncUnpaidOrderPricesForProduct = async (product) => {
+  const orders = await EcommerceOrder.find({
+    paymentStatus: { $ne: 'paid' },
+    'items.productId': product._id.toString()
+  });
+
+  let updatedOrdersCount = 0;
+
+  for (const order of orders) {
+    let orderChanged = false;
+
+    order.items.forEach((item) => {
+      if (item.productId !== product._id.toString()) {
+        return;
+      }
+
+      const currentPrice = getCurrentPriceForOrderItem(product, item);
+      if (currentPrice === null || Number(item.price || 0) === currentPrice) {
+        return;
+      }
+
+      item.price = currentPrice;
+      item.subtotal = currentPrice * Number(item.quantity || 1);
+      orderChanged = true;
+    });
+
+    if (!orderChanged) {
+      continue;
+    }
+
+    const nextTotalAmount = order.items.reduce(
+      (sum, item) => sum + Number(item.subtotal || 0),
+      0
+    );
+    const totalPaid = Number(order.installmentPlan?.totalPaid || 0);
+    const nextRemainingBalance = Math.max(0, nextTotalAmount - totalPaid);
+
+    order.totalAmount = nextTotalAmount;
+
+    if (order.installmentPlan) {
+      order.installmentPlan.remainingBalance = nextRemainingBalance;
+      order.installmentPlan.amountPerPeriod = 0;
+      order.installmentPlan.duration = 0;
+      order.installmentPlan.frequency = 'flexible';
+      order.installmentPlan.nextPaymentDate = null;
+    }
+
+    if (nextRemainingBalance === 0) {
+      order.paymentStatus = 'paid';
+      order.status = 'paid';
+    } else {
+      order.paymentStatus = totalPaid > 0 ? 'partial' : 'unpaid';
+      if (order.status === 'paid' || order.status === 'partially_paid') {
+        order.status = totalPaid > 0 ? 'partially_paid' : 'pending';
+      }
+    }
+
+    if (order.SBAccountNumber) {
+      await SBAccount.findOneAndUpdate(
+        { SBAccountNumber: order.SBAccountNumber },
+        {
+          $set: {
+            sellingPrice: nextTotalAmount,
+            status: nextRemainingBalance === 0 ? 'sold' : 'booked'
+          }
+        }
+      );
+    }
+
+    await order.save();
+    updatedOrdersCount += 1;
+  }
+
+  return updatedOrdersCount;
+};
+
 const validateCategoryAndSubcategory = async (productData, existingProduct = null) => {
   const categoryId = productData.categoryId || existingProduct?.categoryId;
   const subCategoryId =
@@ -143,6 +363,8 @@ const validateCategoryAndSubcategory = async (productData, existingProduct = nul
 
 const createProduct = async (productData) => {
   productData = normalizeProductData(productData);
+  productData = removeStockFields(productData);
+  productData.stock = 0;
   await validateCategoryAndSubcategory(productData);
 
   // Generate SKU if not provided
@@ -181,11 +403,12 @@ const getAllProducts = async (filters = {}) => {
   }
 
   const products = await Product.find(query).sort({ createdAt: -1 });
-  return products;
+  return await applyBranchStockToProducts(products);
 };
 
 const getAllProductsAdmin = async () => {
-  return await Product.find({}).sort({ createdAt: -1 });
+  const products = await Product.find({}).sort({ createdAt: -1 });
+  return await applyBranchStockToProducts(products);
 };
 
 const getProductById = async (productId) => {
@@ -193,15 +416,17 @@ const getProductById = async (productId) => {
   if (!product) {
     throw new Error('Product not found');
   }
-  return product;
+  return await applyBranchStockToProduct(product);
 };
 
 const getProductsByCategory = async (categoryId) => {
-  return await Product.find({ categoryId, isActive: true }).sort({ createdAt: -1 });
+  const products = await Product.find({ categoryId, isActive: true }).sort({ createdAt: -1 });
+  return await applyBranchStockToProducts(products);
 };
 
 const updateProduct = async (productId, updateData) => {
   updateData = normalizeProductData(updateData);
+  updateData = removeStockFields(updateData);
   if (updateData.categoryId || Object.prototype.hasOwnProperty.call(updateData, 'subCategoryId')) {
     const existingProduct = await Product.findById(productId);
     if (!existingProduct) {
@@ -219,7 +444,10 @@ const updateProduct = async (productId, updateData) => {
   if (!product) {
     throw new Error('Product not found');
   }
-  return product;
+  await recalculateProductStock(productId);
+  const syncedProduct = await Product.findById(productId);
+  await syncUnpaidOrderPricesForProduct(syncedProduct);
+  return await applyBranchStockToProduct(syncedProduct);
 };
 
 const deleteProduct = async (productId) => {
@@ -234,10 +462,13 @@ const deleteProduct = async (productId) => {
   return { message: 'Product deleted successfully' };
 };
 
-const updateProductStock = async (productId, quantity, operation = 'decrease', variationId = '') => {
+const updateProductStock = async (productId, quantity, operation = 'decrease', variationId = '', branchId = '', staffId = '') => {
   const product = await Product.findById(productId);
   if (!product) {
     throw new Error('Product not found');
+  }
+  if (!branchId) {
+    throw new Error('Branch is required for product stock update');
   }
 
   if (variationId) {
@@ -245,38 +476,50 @@ const updateProductStock = async (productId, quantity, operation = 'decrease', v
     if (!variation) {
       throw new Error('Product variation not found');
     }
-
-    const newVariationStock = operation === 'decrease'
-      ? variation.stock - quantity
-      : variation.stock + quantity;
-
-    if (newVariationStock < 0) {
-      throw new Error('Insufficient stock');
-    }
-
-    variation.stock = newVariationStock;
-    product.stock = product.variations.reduce((sum, item) => sum + Number(item.stock || 0), 0);
-    return await product.save();
   }
 
-  let newStock;
-  if (operation === 'decrease') {
-    newStock = product.stock - quantity;
-    if (newStock < 0) {
-      throw new Error('Insufficient stock');
-    }
-  } else {
-    newStock = product.stock + quantity;
+  const normalizedQuantity = normalizeNumber(quantity);
+  const normalizedVariationId = variationId || '';
+  const existingStock = await ProductBranchStock.findOne({
+    productId: productId.toString(),
+    branchId: branchId.toString(),
+    variationId: normalizedVariationId
+  });
+  const currentQuantity = Number(existingStock?.quantity || 0);
+  const nextQuantity = operation === 'decrease'
+    ? currentQuantity - normalizedQuantity
+    : operation === 'set'
+      ? normalizedQuantity
+      : currentQuantity + normalizedQuantity;
+
+  if (nextQuantity < 0) {
+    throw new Error('Insufficient branch stock');
   }
 
-  product.stock = newStock;
-  return await product.save();
+  await ProductBranchStock.findOneAndUpdate(
+    {
+      productId: productId.toString(),
+      branchId: branchId.toString(),
+      variationId: normalizedVariationId
+    },
+    {
+      $set: {
+        quantity: nextQuantity,
+        updatedBy: staffId || ''
+      }
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+
+  const updatedProduct = await recalculateProductStock(productId);
+  return await applyBranchStockToProduct(updatedProduct);
 };
 
 const getFeaturedProducts = async (limit = 8) => {
-  return await Product.find({ isActive: true })
+  const products = await Product.find({ isActive: true })
     .sort({ createdAt: -1 })
     .limit(limit);
+  return await applyBranchStockToProducts(products);
 };
 
 module.exports = {

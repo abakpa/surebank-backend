@@ -233,16 +233,54 @@ const getOrdersByBranch = async (req, res) => {
   }
 };
 
+const getProductDemandSummary = async (req, res) => {
+  try {
+    const demand = await EcommerceOrderService.getProductDemandSummary();
+    res.status(200).json(demand);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getProductDemandDetail = async (req, res) => {
+  try {
+    const demand = await EcommerceOrderService.getProductDemandDetail(req.params.productId);
+    res.status(200).json(demand);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const updateOrderStatus = async (req, res) => {
   try {
     const orderId = req.params.id;
     const { status } = req.body;
-    const processedBy = req.staff.staffId;
 
-    const order = await EcommerceOrderService.updateOrderStatus(orderId, status, processedBy);
+    const order = await EcommerceOrderService.updateOrderStatus(orderId, status, req.staff);
 
     res.status(200).json({
       message: 'Order status updated',
+      order
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const updateOrderItemFulfillment = async (req, res) => {
+  try {
+    const { id: orderId, itemId } = req.params;
+    const { status } = req.body;
+
+    const order = await EcommerceOrderService.updateOrderItemFulfillment(
+      orderId,
+      itemId,
+      status,
+      req.staff
+    );
+
+    res.status(200).json({
+      message: 'Order item fulfillment updated',
       order
     });
   } catch (error) {
@@ -805,7 +843,10 @@ module.exports = {
   initializeOrderDepositPayment,
   getAllOrders,
   getOrdersByBranch,
+  getProductDemandSummary,
+  getProductDemandDetail,
   updateOrderStatus,
+  updateOrderItemFulfillment,
   recordInstallmentPayment,
   recordOutrightPayment,
   cancelOrder,
