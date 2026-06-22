@@ -9,9 +9,19 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 
 const getDefaultBranch = async () => {
-  // Get the first branch as default for e-commerce customers
-  // You can configure a specific "E-Commerce" branch if needed
-  const branch = await Branch.findOne({});
+  const branch = await Branch.findOne({
+    branchKey: 'hq',
+    isActive: { $ne: false }
+  }) || await Branch.findOne({
+    name: { $regex: /^hq$/i },
+    isActive: { $ne: false }
+  }) || await Branch.findOne({
+    name: { $regex: /^head\s*office$/i },
+    isActive: { $ne: false }
+  }) || await Branch.findOne({
+    isActive: { $ne: false }
+  });
+
   if (!branch) {
     throw new Error('No branch configured. Please create a branch first.');
   }

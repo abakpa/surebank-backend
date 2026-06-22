@@ -19,6 +19,8 @@ router.post('/webhook/paystack', EcommerceOrderController.handlePaystackWebhook)
 router.get('/', staffAuth, staffExceptProductManager, EcommerceOrderController.getAllOrders);
 router.get('/overdue', staffAuth, staffExceptProductManager, EcommerceOrderController.getOverdueInstallments);
 router.get('/branch/:branchId', staffAuth, staffExceptProductManager, EcommerceOrderController.getOrdersByBranch);
+router.get('/product-demand', staffAuth, adminOnly, EcommerceOrderController.getProductDemandSummary);
+router.get('/product-demand/:productId', staffAuth, adminOnly, EcommerceOrderController.getProductDemandDetail);
 
 // Process automatic payments (can be called by cron job or manually)
 router.post('/process-automatic-payments', staffAuth, adminOnly, EcommerceOrderController.processAutomaticPayments);
@@ -26,7 +28,8 @@ router.post('/process-automatic-payments', staffAuth, adminOnly, EcommerceOrderC
 router.get('/:id', staffAuth, staffExceptProductManager, EcommerceOrderController.getOrderById);
 router.get('/:id/sb-account', staffAuth, staffExceptProductManager, EcommerceOrderController.getOrderSBAccount);
 router.get('/:id/wallet-account', staffAuth, staffExceptProductManager, EcommerceOrderController.getOrderWalletAccount);
-router.put('/:id/status', staffAuth, adminOnly, EcommerceOrderController.updateOrderStatus);
+router.put('/:id/status', staffAuth, staffExceptProductManager, EcommerceOrderController.updateOrderStatus);
+router.put('/:id/items/:itemId/fulfillment', staffAuth, staffExceptProductManager, EcommerceOrderController.updateOrderItemFulfillment);
 router.post('/:id/installment-payment', staffAuth, adminOnly, EcommerceOrderController.recordInstallmentPayment);
 router.post('/:id/payment', staffAuth, adminOnly, EcommerceOrderController.recordOutrightPayment);
 router.post('/:id/credit-sb-account', staffAuth, adminOnly, EcommerceOrderController.creditSBAccount);

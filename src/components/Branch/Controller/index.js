@@ -20,7 +20,7 @@ const getBranch = async (req, res) => {
       const getBranchById = async (req, res) => {
         try {
           const branchId = req.params.id
-            const branch = await branchService.getCustomerById(branchId);
+            const branch = await branchService.getBranchById(branchId);
             res.status(200).json(branch);
         } catch (error) {
             res.status(500).json({ message: error.message });

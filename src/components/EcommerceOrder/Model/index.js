@@ -57,6 +57,27 @@ const orderItemSchema = new mongoose.Schema({
   subtotal: {
     type: Number,
     required: true
+  },
+  paidAmount: {
+    type: Number,
+    default: 0
+  },
+  paymentStatus: {
+    type: String,
+    enum: ['unpaid', 'partial', 'paid'],
+    default: 'unpaid'
+  },
+  fulfillmentStatus: {
+    type: String,
+    enum: ['pending', 'delivered', 'completed'],
+    default: 'pending'
+  },
+  fulfilledAt: {
+    type: Date
+  },
+  fulfilledBy: {
+    type: String,
+    ref: 'Staff'
   }
 }, { _id: true });
 
@@ -113,7 +134,7 @@ const ecommerceOrderSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'confirmed', 'paid', 'partially_paid', 'processing', 'shipped', 'delivered', 'cancelled'],
+    enum: ['pending', 'confirmed', 'paid', 'partially_paid', 'processing', 'shipped', 'delivered', 'completed', 'cancelled'],
     default: 'pending'
   },
   paymentStatus: {
