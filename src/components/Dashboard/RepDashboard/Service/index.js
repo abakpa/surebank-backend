@@ -777,7 +777,7 @@ const getRepExpenditureReport = async (staff) => {
             model: 'Customer',
           }),
         SBAccount.find({ accountManagerId: staff })
-          .select('_id customerId branchId accountManagerId productName productDescription sellingPrice status createdAt SBAccountNumber createdBy')
+          .select('_id customerId branchId accountManagerId productName productDescription sellingPrice status createdAt SBAccountNumber createdBy items')
           .populate({
             path: 'accountManagerId',
             model: 'Staff',
@@ -817,21 +817,32 @@ const getRepExpenditureReport = async (staff) => {
           .map((account) => [account.SBAccountNumber, account])
       );
 
-      const normalizedEcommerceOrders = ecommerceOrders.map((order) => {
+      const normalizedEcommerceOrders = ecommerceOrders.flatMap((order) => {
         const fallbackAccount = order.SBAccountNumber
           ? sbAccountMap.get(order.SBAccountNumber)
           : null;
+        const orderItems = Array.isArray(order.items) && order.items.length > 0
+          ? order.items
+          : [{
+              _id: '',
+              productName: getEcommerceProductName(order, fallbackAccount),
+              subtotal: getEcommerceSellingPrice(order, fallbackAccount),
+              fulfillmentStatus: order.status
+            }];
 
-        return {
-          _id: order._id,
+        return orderItems.map((item, index) => ({
+          _id: `${order._id}-${item._id || index}`,
+          orderId: order._id,
+          itemId: item._id || '',
           customerId: order.customerId,
           branchId: order.branchId,
           accountManagerId: order.accountManagerId,
-          productName: getEcommerceProductName(order, fallbackAccount),
-          sellingPrice: getEcommerceSellingPrice(order, fallbackAccount),
+          productName: item.productName || item.name || getEcommerceProductName(order, fallbackAccount),
+          sellingPrice: Number(item.subtotal || 0) || getEcommerceSellingPrice(order, fallbackAccount),
           status: normalizeOrderStatus(order),
+          itemFulfillmentStatus: item.fulfillmentStatus || 'pending',
           createdAt: order.createdAt,
-        };
+        }));
       });
 
       const filteredSbAccounts = sbAccounts.filter((account) => {
@@ -842,7 +853,30 @@ const getRepExpenditureReport = async (staff) => {
         return !ecommerceSbAccountNumbers.has(account.SBAccountNumber) && !isEcommerceDefaultAccount;
       });
 
-      const items = [...orders, ...filteredSbAccounts, ...normalizedEcommerceOrders]
+      const expandAccountItems = (accounts) => accounts.flatMap((account) => {
+        const accountItems = Array.isArray(account.items) && account.items.length > 0
+          ? account.items
+          : [{
+              _id: '',
+              productName: account.productName,
+              subtotal: account.sellingPrice,
+              fulfillmentStatus: account.status
+            }];
+
+        return accountItems.map((item, index) => ({
+          _id: `${account._id}-${item._id || item.productId || index}`,
+          customerId: account.customerId,
+          branchId: account.branchId,
+          accountManagerId: account.accountManagerId,
+          productName: item.productName || account.productName,
+          sellingPrice: Number(item.subtotal || 0) || Number(account.sellingPrice || 0),
+          status: normalizeOrderStatus(account),
+          itemFulfillmentStatus: item.fulfillmentStatus || '',
+          createdAt: account.createdAt,
+        }));
+      });
+
+      const items = [...expandAccountItems(orders), ...expandAccountItems(filteredSbAccounts), ...normalizedEcommerceOrders]
         .map((item) => ({
           _id: item._id,
           customerId: item.customerId,
@@ -851,6 +885,7 @@ const getRepExpenditureReport = async (staff) => {
           productName: item.productName,
           sellingPrice: item.sellingPrice,
           status: normalizeOrderStatus(item),
+          itemFulfillmentStatus: item.itemFulfillmentStatus || '',
           createdAt: item.createdAt,
         }))
         .sort((a, b) => {

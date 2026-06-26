@@ -1,15 +1,17 @@
 const express = require('express');
 const router = express.Router();
 const SBAccountController = require('../Controller/index');
-const {staffAuth} = require('../../Middleware/index')
+const {staffAuth, adminOnly} = require('../../Middleware/index')
 const {customerAuth} = require('../../Middleware/index')
 
 
 router.post('/', staffAuth, SBAccountController.createSBAccount);
 router.put('/', staffAuth, SBAccountController.updateSBAccountAmount);
-router.put('/costprice', staffAuth, SBAccountController.updateCostPrice);
+router.put('/costprice', staffAuth, adminOnly, SBAccountController.updateCostPrice);
 router.get('/',staffAuth, SBAccountController.getDSAccount);
 router.get('/',staffAuth, SBAccountController.getDSAccount);
+router.put('/:SBAccountNumber/items/:itemId/costprice', staffAuth, adminOnly, SBAccountController.updateItemCostPrice);
+router.post('/:SBAccountNumber/items/:itemId/mark-delivered', staffAuth, SBAccountController.markItemDelivered);
 router.get('/:id',staffAuth, SBAccountController.getCustomerSBAccountById);
 router.get('/customer/:id',customerAuth, SBAccountController.getCustomerSBAccountById);
 router.post('/deposit', staffAuth, SBAccountController.saveSBContribution);

@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const customerController = require('../Controller/index');
-const {staffAuth} = require('../../Middleware/index')
+const {staffAuth, adminOnly} = require('../../Middleware/index')
 const {customerAuth} = require('../../Middleware/index')
 
 
@@ -15,7 +15,7 @@ router.get('/customer/:id',customerAuth, customerController.getCustomerById);
 router.put('/forgotpassword',customerController.resetCustomerPassword);
 router.put('/:id', staffAuth,customerController.transferAllCustomer);
 router.put('/updatephone/:id', staffAuth,customerController.updateCustomerPhoneNumber);
-router.put('/password/:id',staffAuth,customerController.updateCustomerPassword);
+router.put('/password/:id',staffAuth,adminOnly,customerController.updateCustomerPassword);
 router.put('/newstaff/:id',staffAuth, customerController.transferCustomer);
 
 

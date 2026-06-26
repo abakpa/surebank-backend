@@ -857,13 +857,10 @@ async function getAllDailySBAccountWithdrawalByDate(date = null, branchId = null
     return totalBalance;
 }
 async function getSBAccountIncome(date = null, branchId = null) {
-    const endDate = date ? new Date(date) : new Date();
-    endDate.setHours(23, 59, 59, 999);
-  
     const query = {
       package: 'SB',
       direction: 'Credit',
-      createdAt: { $lte: endDate },
+      createdAt: buildCumulativeCreatedAtQuery(date),
     };
   
     if (branchId) {
@@ -879,13 +876,10 @@ async function getSBAccountIncome(date = null, branchId = null) {
   
 
 async function getDSAccountIncome(date = null, branchId = null) {
-    const endDate = date ? new Date(date) : new Date();
-    endDate.setHours(23, 59, 59, 999);
-  
     const query = {
       package: 'DS',
       direction: 'Credit',
-      createdAt: { $lte: endDate },
+      createdAt: buildCumulativeCreatedAtQuery(date),
     };
   
     if (branchId) {
@@ -903,14 +897,11 @@ async function getDSAccountIncome(date = null, branchId = null) {
     return totalBalance;
   }
 async function getDSAccountIncomeReversal(date = null, branchId = null) {
-    const endDate = date ? new Date(date) : new Date();
-    endDate.setHours(23, 59, 59, 999);
-  
     const query = {
       package: 'DS',
       direction: 'Debit',
       narration: 'DS Charge Reversal',
-      createdAt: { $lte: endDate },
+      createdAt: buildCumulativeCreatedAtQuery(date),
     };
   
     if (branchId) {
@@ -924,13 +915,10 @@ async function getDSAccountIncomeReversal(date = null, branchId = null) {
     return totalBalance;
   }
 async function getFDAccountIncome(date = null, branchId = null) {
-    const endDate = date ? new Date(date) : new Date();
-    endDate.setHours(23, 59, 59, 999);
-  
     const query = {
       package: 'FD',
       direction: 'Credit',
-      createdAt: { $lte: endDate },
+      createdAt: buildCumulativeCreatedAtQuery(date),
     };
   
     if (branchId) {
@@ -1064,7 +1052,7 @@ async function getProfit(date = null, branchId = null) {
 }
 const getSBIncomeReport = async () => {
     try {
-      const report = await SureBankAccount.find({ package: 'SB' })
+      const report = await SureBankAccount.find({ package: 'SB', direction: 'Credit' })
         .populate({
           path: 'customerId',
           populate: {
@@ -1198,8 +1186,8 @@ const getExpenditureReport = async () => {
     const trimmedSearch = search.trim().toLowerCase();
 
     try {
-      const orderProjection = '_id customerId branchId accountManagerId productName sellingPrice status createdAt';
-      const sbAccountProjection = '_id customerId branchId accountManagerId productName productDescription sellingPrice status createdAt SBAccountNumber createdBy';
+      const orderProjection = '_id customerId branchId accountManagerId productName sellingPrice status createdAt items';
+      const sbAccountProjection = '_id customerId branchId accountManagerId productName productDescription sellingPrice status createdAt SBAccountNumber createdBy items';
       const ecommerceOrderProjection = '_id customerId branchId accountManagerId items totalAmount status paymentStatus createdAt SBAccountNumber';
       const [orders, sbAccounts, ecommerceOrders] = await Promise.all([
         Order.find({}).select(orderProjection).lean(),
@@ -1218,21 +1206,32 @@ const getExpenditureReport = async () => {
           .map((account) => [account.SBAccountNumber, account])
       );
 
-      const normalizedEcommerceOrders = ecommerceOrders.map((order) => {
+      const normalizedEcommerceOrders = ecommerceOrders.flatMap((order) => {
         const fallbackAccount = order.SBAccountNumber
           ? sbAccountMap.get(order.SBAccountNumber)
           : null;
+        const orderItems = Array.isArray(order.items) && order.items.length > 0
+          ? order.items
+          : [{
+              _id: '',
+              productName: getEcommerceProductName(order, fallbackAccount),
+              subtotal: getEcommerceSellingPrice(order, fallbackAccount),
+              fulfillmentStatus: order.status
+            }];
 
-        return {
-          _id: order._id,
+        return orderItems.map((item, index) => ({
+          _id: `${order._id}-${item._id || index}`,
+          orderId: order._id,
+          itemId: item._id || '',
           customerId: order.customerId,
           branchId: order.branchId,
           accountManagerId: order.accountManagerId || 'ECOMMERCE_SYSTEM',
-          productName: getEcommerceProductName(order, fallbackAccount),
-          sellingPrice: getEcommerceSellingPrice(order, fallbackAccount),
+          productName: item.productName || item.name || getEcommerceProductName(order, fallbackAccount),
+          sellingPrice: Number(item.subtotal || 0) || getEcommerceSellingPrice(order, fallbackAccount),
           status: normalizeOrderStatus(order),
+          itemFulfillmentStatus: item.fulfillmentStatus || 'pending',
           createdAt: order.createdAt,
-        };
+        }));
       });
 
       const filteredSbAccounts = sbAccounts.filter((account) => {
@@ -1243,7 +1242,30 @@ const getExpenditureReport = async () => {
         return !ecommerceSbAccountNumbers.has(account.SBAccountNumber) && !isEcommerceDefaultAccount;
       });
 
-      const combined = [...orders, ...filteredSbAccounts, ...normalizedEcommerceOrders];
+      const expandAccountItems = (accounts) => accounts.flatMap((account) => {
+        const accountItems = Array.isArray(account.items) && account.items.length > 0
+          ? account.items
+          : [{
+              _id: '',
+              productName: account.productName,
+              subtotal: account.sellingPrice,
+              fulfillmentStatus: account.status
+            }];
+
+        return accountItems.map((item, index) => ({
+          _id: `${account._id}-${item._id || item.productId || index}`,
+          customerId: account.customerId,
+          branchId: account.branchId,
+          accountManagerId: account.accountManagerId,
+          productName: item.productName || account.productName,
+          sellingPrice: Number(item.subtotal || 0) || Number(account.sellingPrice || 0),
+          status: normalizeOrderStatus(account),
+          itemFulfillmentStatus: item.fulfillmentStatus || '',
+          createdAt: account.createdAt,
+        }));
+      });
+
+      const combined = [...expandAccountItems(orders), ...expandAccountItems(filteredSbAccounts), ...normalizedEcommerceOrders];
       const branchIds = [...new Set(
         combined
           .map((item) => item.branchId)
@@ -1287,6 +1309,7 @@ const getExpenditureReport = async () => {
           productName: item.productName,
           sellingPrice: item.sellingPrice,
           status: normalizeOrderStatus(item),
+          itemFulfillmentStatus: item.itemFulfillmentStatus || '',
           createdAt: item.createdAt,
         };
       });
