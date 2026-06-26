@@ -102,7 +102,7 @@ const getRepCustomers = async (repId) =>{
     try {
       // Update all non-admin users in a single atomic operation
       const result = await Staff.updateMany(
-        { role: { $ne: "Admin" } }, // Filter: role not equal to Admin
+        { role: { $ne: "Admin" }, loginDisabled: { $ne: true } },
         { 
           $inc: { tokenVersion: 1 }, // Invalidate all tokens
           $set: { loginDisabled: true } // Block new logins
@@ -126,7 +126,13 @@ const getRepCustomers = async (repId) =>{
 const unblockAllUsersService = async () => {
     try {
       const result = await Staff.updateMany(
-        {}, // All users
+        {
+          role: { $ne: "Admin" },
+          $or: [
+            { loginDisabled: true },
+            { tokenVersion: { $gt: 0 } }
+          ]
+        },
         { 
           $set: { 
             tokenVersion: 0,       // Reset token version

@@ -7,6 +7,8 @@ const AccountTransactionService = require('../../AccountTransaction/Service/inde
 const PaystackService = require('../../Paystack/Service/index');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
+const nodemailer = require('nodemailer');
 
 const getDefaultBranch = async () => {
   const branch = await Branch.findOne({
@@ -90,11 +92,18 @@ const getWalletTransactions = async (accountId) => {
 
 const registerEcommerceCustomer = async (customerData) => {
   const { firstName, lastName, phone, address, password, email } = customerData;
+  const normalizedEmail = String(email || '').trim().toLowerCase();
 
   // Check if customer already exists
   const existingCustomer = await checkExistingCustomer(phone);
   if (existingCustomer) {
     throw new Error('Phone number already registered. Please login instead.');
+  }
+  if (normalizedEmail) {
+    const existingEmailCustomer = await Customer.findOne({ email: normalizedEmail });
+    if (existingEmailCustomer) {
+      throw new Error('Email address is already used by another customer');
+    }
   }
 
   // Get default branch for e-commerce customers
@@ -109,7 +118,7 @@ const registerEcommerceCustomer = async (customerData) => {
     firstName,
     lastName,
     phone,
-    email,
+    email: normalizedEmail,
     address,
     password: hashedPassword,
     createdBy: 'ECOMMERCE_SYSTEM',
@@ -180,11 +189,13 @@ const loginEcommerceCustomer = async (phone, password) => {
       lastName: customer.lastName,
       phone: customer.phone,
       email: customer.email,
-      address: customer.address
+      address: customer.address,
+      requiresPasswordUpdate: customer.updatePassword !== 'false'
     },
     accountNumber: customer.phone,
     SBAccountNumber: null,
-    token
+    token,
+    requiresPasswordUpdate: customer.updatePassword !== 'false'
   };
 };
 
@@ -206,10 +217,24 @@ const getCustomerProfile = async (customerId) => {
 
 const updateCustomerProfile = async (customerId, updateData) => {
   const { firstName, lastName, address, email } = updateData;
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (normalizedEmail && !normalizedEmail.includes('@')) {
+    throw new Error('Enter a valid email address');
+  }
+
+  if (normalizedEmail) {
+    const existingEmailCustomer = await Customer.findOne({
+      email: normalizedEmail,
+      _id: { $ne: customerId }
+    });
+    if (existingEmailCustomer) {
+      throw new Error('Email address is already used by another customer');
+    }
+  }
 
   const customer = await Customer.findByIdAndUpdate(
     customerId,
-    { $set: { firstName, lastName, address, email } },
+    { $set: { firstName, lastName, address, email: normalizedEmail } },
     { new: true }
   ).select('-password');
 
@@ -413,9 +438,101 @@ const changePassword = async (customerId, currentPassword, newPassword) => {
   const hashedPassword = await bcrypt.hash(newPassword, salt);
 
   customer.password = hashedPassword;
+  customer.updatePassword = 'false';
   await customer.save();
 
   return { message: 'Password changed successfully' };
+};
+
+const createMailTransporter = () => {
+  const host = process.env.SMTP_HOST;
+  const port = Number(process.env.SMTP_PORT || 587);
+  const user = process.env.SMTP_USER || process.env.EMAIL_USER;
+  const pass = process.env.SMTP_PASS || process.env.EMAIL_PASS;
+
+  if (!user || !pass) {
+    throw new Error('Email is not configured. Set SMTP_USER/SMTP_PASS or EMAIL_USER/EMAIL_PASS.');
+  }
+
+  if (host) {
+    return nodemailer.createTransport({
+      host,
+      port,
+      secure: port === 465,
+      auth: { user, pass }
+    });
+  }
+
+  return nodemailer.createTransport({
+    service: process.env.EMAIL_SERVICE || 'gmail',
+    auth: { user, pass }
+  });
+};
+
+const sendPasswordResetOtp = async (email) => {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (!normalizedEmail || !normalizedEmail.includes('@')) {
+    throw new Error('Enter a valid email address');
+  }
+
+  const customer = await Customer.findOne({ email: normalizedEmail });
+  if (!customer) {
+    throw new Error('No ecommerce account found with this email');
+  }
+
+  const otp = crypto.randomInt(100000, 1000000).toString();
+  customer.passwordResetOtp = await bcrypt.hash(otp, await bcrypt.genSalt());
+  customer.passwordResetOtpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  customer.passwordResetOtpAttempts = 0;
+  await customer.save();
+
+  const transporter = createMailTransporter();
+  await transporter.sendMail({
+    from: process.env.EMAIL_FROM || process.env.SMTP_FROM || process.env.EMAIL_USER || process.env.SMTP_USER,
+    to: normalizedEmail,
+    subject: 'Sure-Bank Stores password reset OTP',
+    text: `Your Sure-Bank Stores password reset OTP is ${otp}. It expires in 10 minutes.`,
+    html: `<p>Your Sure-Bank Stores password reset OTP is <strong>${otp}</strong>.</p><p>It expires in 10 minutes.</p>`
+  });
+
+  return { message: 'Password reset OTP sent to your email' };
+};
+
+const resetPasswordWithOtp = async ({ email, otp, newPassword }) => {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (!normalizedEmail || !otp || !newPassword) {
+    throw new Error('Email, OTP, and new password are required');
+  }
+  if (String(newPassword).length < 6) {
+    throw new Error('Password must be at least 6 characters');
+  }
+
+  const customer = await Customer.findOne({ email: normalizedEmail }).select('+passwordResetOtp +passwordResetOtpExpiresAt +passwordResetOtpAttempts');
+  if (!customer || !customer.passwordResetOtp || !customer.passwordResetOtpExpiresAt) {
+    throw new Error('Invalid or expired OTP');
+  }
+  if (customer.passwordResetOtpExpiresAt < new Date()) {
+    throw new Error('OTP has expired');
+  }
+  if (Number(customer.passwordResetOtpAttempts || 0) >= 5) {
+    throw new Error('Too many OTP attempts. Request a new OTP.');
+  }
+
+  const isValidOtp = await bcrypt.compare(String(otp), customer.passwordResetOtp);
+  if (!isValidOtp) {
+    customer.passwordResetOtpAttempts = Number(customer.passwordResetOtpAttempts || 0) + 1;
+    await customer.save();
+    throw new Error('Invalid OTP');
+  }
+
+  customer.password = await bcrypt.hash(newPassword, await bcrypt.genSalt());
+  customer.updatePassword = 'false';
+  customer.passwordResetOtp = undefined;
+  customer.passwordResetOtpExpiresAt = undefined;
+  customer.passwordResetOtpAttempts = 0;
+  await customer.save();
+
+  return { message: 'Password reset successfully. You can now login.' };
 };
 
 module.exports = {
@@ -425,6 +542,8 @@ module.exports = {
   getCustomerProfile,
   updateCustomerProfile,
   changePassword,
+  sendPasswordResetOtp,
+  resetPasswordWithOtp,
   getCustomerWallet,
   initializeWalletFunding,
   verifyWalletFunding

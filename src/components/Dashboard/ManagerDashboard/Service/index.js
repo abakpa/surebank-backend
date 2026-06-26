@@ -6,6 +6,7 @@ const mongoose = require('mongoose');
 const SureBankAccount = require('../../../SureBankAccount/Model');
 const Expenditure = require('../../../Expenditure/Model');
 const Staff = require('../../../Staff/Model');
+const Branch = require('../../../Branch/Model');
 
 const normalizeDateInput = (dateInput) => {
   if (dateInput && typeof dateInput === 'object' && !Array.isArray(dateInput)) {
@@ -124,6 +125,64 @@ const getEcommerceSellingPrice = (order, fallbackAccount) => {
   }
 
   return Number(fallbackAccount?.sellingPrice || 0);
+};
+
+const attachAccountManagers = async (items) => {
+  const managerIds = [...new Set(
+    items
+      .map((item) => item?.accountManagerId)
+      .filter((accountManagerId) => isValidObjectId(String(accountManagerId || '')))
+      .map((accountManagerId) => String(accountManagerId))
+  )];
+
+  if (managerIds.length === 0) {
+    return items;
+  }
+
+  const managers = await Staff.find({ _id: { $in: managerIds } })
+    .select('firstName lastName email role')
+    .lean();
+  const managerById = new Map(managers.map((manager) => [manager._id.toString(), manager]));
+
+  return items.map((item) => {
+    const accountManagerId = String(item?.accountManagerId || '');
+    return {
+      ...item,
+      accountManagerId: managerById.get(accountManagerId) || item.accountManagerId
+    };
+  });
+};
+
+const attachBranchAndCustomerRefs = async (items) => {
+  const branchIds = [...new Set(
+    items
+      .map((item) => item?.branchId)
+      .filter((branchId) => isValidObjectId(String(branchId || '')))
+      .map((branchId) => String(branchId))
+  )];
+  const customerIds = [...new Set(
+    items
+      .map((item) => item?.customerId)
+      .filter((customerId) => isValidObjectId(String(customerId || '')))
+      .map((customerId) => String(customerId))
+  )];
+
+  const [branches, customers] = await Promise.all([
+    branchIds.length > 0 ? Branch.find({ _id: { $in: branchIds } }).select('name address branchKey').lean() : [],
+    customerIds.length > 0 ? Customer.find({ _id: { $in: customerIds } }).select('firstName lastName phone').lean() : []
+  ]);
+  const branchById = new Map(branches.map((branch) => [branch._id.toString(), branch]));
+  const customerById = new Map(customers.map((customer) => [customer._id.toString(), customer]));
+
+  return items.map((item) => {
+    const branchId = String(item?.branchId || '');
+    const customerId = String(item?.customerId || '');
+    return {
+      ...item,
+      branchId: branchById.get(branchId) || item.branchId,
+      customerId: customerById.get(customerId) || item.customerId
+    };
+  });
 };
 
 
@@ -992,51 +1051,22 @@ const getBranchExpenditureReport = async (staff) => {
     }
   };
   const getBranchOrder = async (staff) => {
-    const branch = await Staff.findOne({_id:staff})
-    const branchId = branch.branchId
     try {
+      const branch = await Staff.findOne({ _id: staff }).select('branchId').lean();
+      const branchId = branch?.branchId;
+      if (!branchId) {
+        throw new Error('Staff branch not found');
+      }
+
       const [orders, sbAccounts, ecommerceOrders] = await Promise.all([
         Order.find({ branchId })
-          .populate({
-            path: 'accountManagerId',
-            model: 'Staff',
-          })
-          .populate({
-            path: 'branchId',
-            model: 'Branch',
-          })
-          .populate({
-            path: 'customerId',
-            model: 'Customer',
-          }),
+          .lean(),
         SBAccount.find({ branchId })
-          .select('_id customerId branchId accountManagerId productName productDescription sellingPrice status createdAt SBAccountNumber createdBy')
-          .populate({
-            path: 'accountManagerId',
-            model: 'Staff',
-          })
-          .populate({
-            path: 'branchId',
-            model: 'Branch',
-          })
-          .populate({
-            path: 'customerId',
-            model: 'Customer',
-          }),
+          .select('_id customerId branchId accountManagerId productName productDescription sellingPrice status createdAt SBAccountNumber createdBy items')
+          .lean(),
         EcommerceOrder.find({ branchId })
           .select('_id customerId branchId accountManagerId items totalAmount status paymentStatus createdAt SBAccountNumber')
-          .populate({
-            path: 'accountManagerId',
-            model: 'Staff',
-          })
-          .populate({
-            path: 'branchId',
-            model: 'Branch',
-          })
-          .populate({
-            path: 'customerId',
-            model: 'Customer',
-          }),
+          .lean(),
       ]);
 
       const ecommerceSbAccountNumbers = new Set(
@@ -1050,21 +1080,32 @@ const getBranchExpenditureReport = async (staff) => {
           .map((account) => [account.SBAccountNumber, account])
       );
 
-      const normalizedEcommerceOrders = ecommerceOrders.map((order) => {
+      const normalizedEcommerceOrders = ecommerceOrders.flatMap((order) => {
         const fallbackAccount = order.SBAccountNumber
           ? sbAccountMap.get(order.SBAccountNumber)
           : null;
+        const orderItems = Array.isArray(order.items) && order.items.length > 0
+          ? order.items
+          : [{
+              _id: '',
+              productName: getEcommerceProductName(order, fallbackAccount),
+              subtotal: getEcommerceSellingPrice(order, fallbackAccount),
+              fulfillmentStatus: order.status
+            }];
 
-        return {
-          _id: order._id,
+        return orderItems.map((item, index) => ({
+          _id: `${order._id}-${item._id || index}`,
+          orderId: order._id,
+          itemId: item._id || '',
           customerId: order.customerId,
           branchId: order.branchId,
           accountManagerId: order.accountManagerId || 'ECOMMERCE_SYSTEM',
-          productName: getEcommerceProductName(order, fallbackAccount),
-          sellingPrice: getEcommerceSellingPrice(order, fallbackAccount),
+          productName: item.productName || item.name || getEcommerceProductName(order, fallbackAccount),
+          sellingPrice: Number(item.subtotal || 0) || getEcommerceSellingPrice(order, fallbackAccount),
           status: normalizeOrderStatus(order),
+          itemFulfillmentStatus: item.fulfillmentStatus || 'pending',
           createdAt: order.createdAt,
-        };
+        }));
       });
 
       const filteredSbAccounts = sbAccounts.filter((account) => {
@@ -1075,7 +1116,30 @@ const getBranchExpenditureReport = async (staff) => {
         return !ecommerceSbAccountNumbers.has(account.SBAccountNumber) && !isEcommerceDefaultAccount;
       });
 
-      const items = [...orders, ...filteredSbAccounts, ...normalizedEcommerceOrders]
+      const expandAccountItems = (accounts) => accounts.flatMap((account) => {
+        const accountItems = Array.isArray(account.items) && account.items.length > 0
+          ? account.items
+          : [{
+              _id: '',
+              productName: account.productName,
+              subtotal: account.sellingPrice,
+              fulfillmentStatus: account.status
+            }];
+
+        return accountItems.map((item, index) => ({
+          _id: `${account._id}-${item._id || item.productId || index}`,
+          customerId: account.customerId,
+          branchId: account.branchId,
+          accountManagerId: account.accountManagerId,
+          productName: item.productName || account.productName,
+          sellingPrice: Number(item.subtotal || 0) || Number(account.sellingPrice || 0),
+          status: normalizeOrderStatus(account),
+          itemFulfillmentStatus: item.fulfillmentStatus || '',
+          createdAt: account.createdAt,
+        }));
+      });
+
+      const sortedItems = [...expandAccountItems(orders), ...expandAccountItems(filteredSbAccounts), ...normalizedEcommerceOrders]
         .map((item) => ({
           _id: item._id,
           customerId: item.customerId,
@@ -1084,6 +1148,7 @@ const getBranchExpenditureReport = async (staff) => {
           productName: item.productName,
           sellingPrice: item.sellingPrice,
           status: normalizeOrderStatus(item),
+          itemFulfillmentStatus: item.itemFulfillmentStatus || '',
           createdAt: item.createdAt,
         }))
         .sort((a, b) => {
@@ -1097,6 +1162,8 @@ const getBranchExpenditureReport = async (staff) => {
 
           return new Date(b.createdAt) - new Date(a.createdAt);
         });
+      const itemsWithRefs = await attachBranchAndCustomerRefs(sortedItems);
+      const items = await attachAccountManagers(itemsWithRefs);
 
       return { items };
     } catch (error) {

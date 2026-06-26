@@ -34,7 +34,7 @@ const getStaffByPhone = async (phone) => {
 
 const getStaff = async () =>{
   try {
-      return await Staff.find({});
+      return await Staff.find({ role: { $ne: 'Admin' } });
   } catch (error) {
       throw error;
   }
@@ -44,7 +44,7 @@ const getBranchStaff = async (staff) =>{
   const branch = await Staff.findOne({_id:staff})
   const branchId = branch.branchId
   try {
-      return await Staff.find({branchId:branchId});
+      return await Staff.find({branchId:branchId, role: { $ne: 'Admin' }});
   } catch (error) {
       throw error;
   }

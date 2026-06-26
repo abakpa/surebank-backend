@@ -123,12 +123,11 @@ const bcrypt = require('bcrypt')
               };
                  const updateCustomerPassword = async (req,res) => {
                     const customer = req.params.id
-                    const updatePassword = "true"
                         try {
-                      const newData = await customerService.updateCustomerPassword({customer,updatePassword})
+                      const newData = await customerService.updateCustomerPassword({customer})
                           res.status(201).json({ data: newData });
                         } catch (error) {
-                          return { success: false, message: 'An error occurred while updating', error };
+                          return res.status(500).json({ message: error.message || 'An error occurred while updating' });
                         }
                       };
 

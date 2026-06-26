@@ -28,6 +28,52 @@ const normalizeNumber = (value, fallback = 0) => {
   return Number.isFinite(number) ? number : fallback;
 };
 
+const assertCostNotAbovePrice = (costPrice, price, label = 'Product') => {
+  const nextCostPrice = normalizeNumber(costPrice);
+  const nextPrice = normalizeNumber(price);
+
+  if (nextCostPrice < 0) {
+    throw new Error(`${label} cost price cannot be negative`);
+  }
+
+  if (nextPrice < 0) {
+    throw new Error(`${label} selling price cannot be negative`);
+  }
+
+  if (nextCostPrice > nextPrice) {
+    throw new Error(`${label} cost price cannot be greater than selling price`);
+  }
+};
+
+const validateProductPricing = (productData, existingProduct = null) => {
+  if (productData.hasVariations && Array.isArray(productData.variations) && productData.variations.length > 0) {
+    productData.variations.forEach((variation) => {
+      assertCostNotAbovePrice(
+        variation.costPrice,
+        variation.price,
+        `Variation "${variation.name || 'Unnamed'}"`
+      );
+      variation.profit = normalizeNumber(variation.price) - normalizeNumber(variation.costPrice);
+    });
+    return productData;
+  }
+
+  const hasPrice = Object.prototype.hasOwnProperty.call(productData, 'price');
+  const hasCostPrice = Object.prototype.hasOwnProperty.call(productData, 'costPrice');
+  const effectivePrice = hasPrice ? productData.price : existingProduct?.price;
+  const effectiveCostPrice = hasCostPrice ? productData.costPrice : existingProduct?.costPrice;
+
+  if (effectivePrice !== undefined || effectiveCostPrice !== undefined) {
+    assertCostNotAbovePrice(effectiveCostPrice || 0, effectivePrice || 0);
+  }
+
+  if (hasPrice || hasCostPrice || Object.prototype.hasOwnProperty.call(productData, 'profit')) {
+    productData.profit = normalizeNumber(effectivePrice) - normalizeNumber(effectiveCostPrice);
+  }
+
+  return productData;
+};
+
 const normalizeProductData = (productData) => {
   const normalized = { ...productData };
   const hasVariationPayload =
@@ -87,7 +133,7 @@ const normalizeProductData = (productData) => {
         optionValues,
         price,
         costPrice,
-        profit: normalizeNumber(variation.profit, price - costPrice),
+        profit: price - costPrice,
         stock: normalizeNumber(variation.stock),
         sku: String(variation.sku || '').trim(),
         image: String(variation.image || '').trim(),
@@ -363,6 +409,7 @@ const validateCategoryAndSubcategory = async (productData, existingProduct = nul
 
 const createProduct = async (productData) => {
   productData = normalizeProductData(productData);
+  productData = validateProductPricing(productData);
   productData = removeStockFields(productData);
   productData.stock = 0;
   await validateCategoryAndSubcategory(productData);
@@ -426,13 +473,14 @@ const getProductsByCategory = async (categoryId) => {
 
 const updateProduct = async (productId, updateData) => {
   updateData = normalizeProductData(updateData);
+  const existingProduct = await Product.findById(productId);
+  if (!existingProduct) {
+    throw new Error('Product not found');
+  }
+
+  updateData = validateProductPricing(updateData, existingProduct);
   updateData = removeStockFields(updateData);
   if (updateData.categoryId || Object.prototype.hasOwnProperty.call(updateData, 'subCategoryId')) {
-    const existingProduct = await Product.findById(productId);
-    if (!existingProduct) {
-      throw new Error('Product not found');
-    }
-
     await validateCategoryAndSubcategory(updateData, existingProduct);
   }
 
@@ -480,28 +528,45 @@ const updateProductStock = async (productId, quantity, operation = 'decrease', v
 
   const normalizedQuantity = normalizeNumber(quantity);
   const normalizedVariationId = variationId || '';
-  const existingStock = await ProductBranchStock.findOne({
+  const stockQuery = {
     productId: productId.toString(),
     branchId: branchId.toString(),
     variationId: normalizedVariationId
-  });
-  const currentQuantity = Number(existingStock?.quantity || 0);
-  const nextQuantity = operation === 'decrease'
-    ? currentQuantity - normalizedQuantity
-    : operation === 'set'
-      ? normalizedQuantity
-      : currentQuantity + normalizedQuantity;
+  };
 
-  if (nextQuantity < 0) {
-    throw new Error('Insufficient branch stock');
+  if (operation === 'decrease') {
+    const updatedStock = await ProductBranchStock.findOneAndUpdate(
+      {
+        ...stockQuery,
+        quantity: { $gte: normalizedQuantity }
+      },
+      {
+        $inc: { quantity: -normalizedQuantity },
+        $set: { updatedBy: staffId || '' }
+      },
+      { new: true }
+    );
+
+    if (!updatedStock) {
+      const currentStock = await ProductBranchStock.findOne(stockQuery).lean();
+      const availableQuantity = Number(currentStock?.quantity || 0);
+      const variationLabel = normalizedVariationId ? ' for the selected variation' : '';
+      throw new Error(
+        `Insufficient branch stock${variationLabel}. Available: ${availableQuantity}, Required: ${normalizedQuantity}`
+      );
+    }
+
+    return await recalculateProductStock(productId);
   }
 
+  const existingStock = await ProductBranchStock.findOne(stockQuery);
+  const currentQuantity = Number(existingStock?.quantity || 0);
+  const nextQuantity = operation === 'set'
+    ? normalizedQuantity
+    : currentQuantity + normalizedQuantity;
+
   await ProductBranchStock.findOneAndUpdate(
-    {
-      productId: productId.toString(),
-      branchId: branchId.toString(),
-      variationId: normalizedVariationId
-    },
+    stockQuery,
     {
       $set: {
         quantity: nextQuantity,

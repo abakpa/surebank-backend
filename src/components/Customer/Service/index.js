@@ -1,6 +1,7 @@
 const Account = require('../../Account/Model');
 const AccountTransaction = require('../../AccountTransaction/Model');
 const Branch = require('../../Branch/Model');
+const bcrypt = require('bcrypt');
 const DSAccount = require('../../DSAccount/Model');
 const FDAccount = require('../../FDAccount/Model');
 const SBAccount = require('../../SBAccount/Model');
@@ -70,7 +71,7 @@ const getCustomers = async ({ page = 1, limit = 25, search = '' } = {}) =>{
 
         const [items, total] = await Promise.all([
           Customer.find(query)
-            .select('_id firstName lastName address phone branchId updatePassword')
+            .select('_id firstName lastName address phone email branchId updatePassword')
             .sort({ firstName: 1, lastName: 1, createdAt: -1 })
             .skip((safePage - 1) * safeLimit)
             .limit(safeLimit)
@@ -284,22 +285,31 @@ const getCustomerById = async (customerId) =>{
   };
   const updateCustomerPassword = async (details) => {
     try {
-      const { customer, updatePassword } = details;
+      const { customer } = details;
+      const existingCustomer = await Customer.findById(customer);
+      if (!existingCustomer) {
+        throw new Error("Customer not found or update failed");
+      }
+      const password = await bcrypt.hash(existingCustomer.phone, await bcrypt.genSalt());
   
       const updatedCustomer = await Customer.findOneAndUpdate(
         { _id: customer },
-        { $set: { updatePassword } },
+        { $set: { password, updatePassword: 'true' } },
         { new: true }
-      );
+      ).select('-password');
   
       if (!updatedCustomer) {
-        throw new Error("Staff not found or update failed");
+        throw new Error("Customer not found or update failed");
       }
   
-      return { success: true, message: "Updated successfully", updatedCustomer };
+      return {
+        success: true,
+        message: "Customer password reset. Temporary password is the customer's phone number.",
+        updatedCustomer,
+      };
     } catch (error) {
-      console.error("Error updating staff:", error);
-      throw new Error("An error occurred while updating the staff status.");
+      console.error("Error resetting customer password:", error);
+      throw new Error(error.message || "An error occurred while resetting the customer password.");
     }
   };
   

@@ -171,10 +171,31 @@ const changePassword = async (req, res) => {
   }
 };
 
+const forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+    const result = await EcommerceAuthService.sendPasswordResetOtp(email);
+    res.status(200).json(result);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+const resetPassword = async (req, res) => {
+  try {
+    const result = await EcommerceAuthService.resetPasswordWithOtp(req.body);
+    res.status(200).json(result);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
 module.exports = {
   register,
   login,
   checkPhone,
+  forgotPassword,
+  resetPassword,
   getProfile,
   updateProfile,
   changePassword,

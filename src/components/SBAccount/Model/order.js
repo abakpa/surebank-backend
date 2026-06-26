@@ -1,5 +1,82 @@
 const mongoose = require('mongoose');
 
+const orderItemSchema = new mongoose.Schema({
+  productId: {
+    type: String,
+    ref: 'Product'
+  },
+  variationId: {
+    type: String,
+    default: ''
+  },
+  productName: {
+    type: String,
+    required: true
+  },
+  productDescription: {
+    type: String,
+    default: ''
+  },
+  quantity: {
+    type: Number,
+    default: 1
+  },
+  price: {
+    type: Number,
+    default: 0
+  },
+  costPrice: {
+    type: Number,
+    default: 0
+  },
+  subtotal: {
+    type: Number,
+    default: 0
+  },
+  costSubtotal: {
+    type: Number,
+    default: 0
+  },
+  paidAmount: {
+    type: Number,
+    default: 0
+  },
+  profitAmount: {
+    type: Number,
+    default: 0
+  },
+  profitReported: {
+    type: Boolean,
+    default: false
+  },
+  profitReportedAt: {
+    type: Date
+  },
+  requiresCostApproval: {
+    type: Boolean,
+    default: false
+  },
+  costApprovedBy: {
+    type: String,
+    ref: 'Staff'
+  },
+  costApprovedAt: {
+    type: Date
+  },
+  fulfillmentStatus: {
+    type: String,
+    enum: ['pending', 'delivered', 'completed'],
+    default: 'pending'
+  },
+  fulfilledAt: {
+    type: Date
+  },
+  fulfilledBy: {
+    type: String,
+    ref: 'Staff'
+  }
+});
+
 const orderSchema = new mongoose.Schema({
   customerId: {
     type: String,
@@ -26,6 +103,10 @@ SBAccountNumber: {
   productDescription: {
     type: String,
     required: true,
+  },
+  items: {
+    type: [orderItemSchema],
+    default: []
   },
   editedBy: {
     type: String,

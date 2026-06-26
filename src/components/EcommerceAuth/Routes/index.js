@@ -7,6 +7,8 @@ const { customerAuth } = require('../../Middleware/index');
 router.post('/register', EcommerceAuthController.register);
 router.post('/login', EcommerceAuthController.login);
 router.get('/check-phone', EcommerceAuthController.checkPhone);
+router.post('/forgot-password', EcommerceAuthController.forgotPassword);
+router.post('/reset-password', EcommerceAuthController.resetPassword);
 
 // Protected routes
 router.get('/profile', customerAuth, EcommerceAuthController.getProfile);

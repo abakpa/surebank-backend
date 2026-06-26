@@ -8,6 +8,7 @@ const AccountTransaction = require('../../AccountTransaction/Service/index');
 const AccountTransactionModel = require('../../AccountTransaction/Model/index');
 const Staff = require('../../Staff/Model/index');
 const Customer = require('../../Customer/Model/index');
+const ProductBranchStock = require('../../ProductBranchStock/Model/index');
 const generateUniqueAccountNumber = require('../../generateAccountNumber');
 
 const formatTransactionDate = (date = new Date()) => {
@@ -53,13 +54,15 @@ const buildOrderProductSummary = (items = [], orderNumber = '') => {
   return productNames ? `${productNames} (${orderNumber})` : `E-Commerce Order: ${orderNumber}`;
 };
 
-const getPaymentStatusFromSBAccount = (sbAccount) => {
+const getPaymentStatusFromSBAccount = (sbAccount, paidAmountOverride = null) => {
   if (sbAccount.status === 'sold') {
     return 'paid';
   }
 
   const sellingPrice = Number(sbAccount.sellingPrice || 0);
-  const balance = Number(sbAccount.balance || 0);
+  const balance = paidAmountOverride === null
+    ? Number(sbAccount.balance || 0)
+    : Number(paidAmountOverride || 0);
 
   if (sellingPrice > 0 && balance >= sellingPrice) {
     return 'paid';
@@ -68,12 +71,12 @@ const getPaymentStatusFromSBAccount = (sbAccount) => {
   return balance > 0 ? 'partial' : 'unpaid';
 };
 
-const getOrderStatusFromSBAccount = (sbAccount) => {
+const getOrderStatusFromSBAccount = (sbAccount, paidAmountOverride = null) => {
   if (sbAccount.status === 'sold') {
     return 'paid';
   }
 
-  const paymentStatus = getPaymentStatusFromSBAccount(sbAccount);
+  const paymentStatus = getPaymentStatusFromSBAccount(sbAccount, paidAmountOverride);
   if (paymentStatus === 'paid') return 'paid';
   if (paymentStatus === 'partial') return 'partially_paid';
   return 'pending';
@@ -119,7 +122,7 @@ const getSBAccountPaymentRecords = async (sbAccountId) => {
   const transactions = await AccountTransactionModel.find({
     accountTypeId: sbAccountId.toString(),
     package: 'SB',
-    direction: 'Credit'
+    direction: { $in: ['Credit', 'Debit', 'Purchased'] }
   }).sort({ createdAt: 1 }).lean();
 
   return transactions.map((transaction) => ({
@@ -127,16 +130,115 @@ const getSBAccountPaymentRecords = async (sbAccountId) => {
     date: transaction.createdAt || new Date(),
     amount: Number(transaction.amount || 0),
     status: 'paid',
+    direction: transaction.direction,
+    type: ['Debit', 'Purchased'].includes(transaction.direction) ? 'debit' : 'credit',
     paidAt: transaction.createdAt || new Date(),
     transactionRef: transaction.narration || transaction._id?.toString()
   }));
 };
 
+const getSBAccountPaidAmountFromRecords = (payments = []) => (
+  payments
+    .filter((payment) => payment.status === 'paid' && payment.type !== 'debit' && payment.direction === 'Credit')
+    .reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
+);
+
+const mergeOrderPaymentRecordsWithSBDeposits = async (plainOrder) => {
+  if (!plainOrder?.SBAccountNumber || plainOrder.paymentType !== 'installment' || !plainOrder.installmentPlan) {
+    return plainOrder;
+  }
+
+  const sbAccount = await SBAccount.findOne({ SBAccountNumber: plainOrder.SBAccountNumber }).lean();
+  if (!sbAccount) {
+    return plainOrder;
+  }
+
+  const existingPayments = Array.isArray(plainOrder.installmentPlan.payments)
+    ? plainOrder.installmentPlan.payments
+    : [];
+  const existingRefs = new Set(
+    existingPayments
+      .map((payment) => String(payment.transactionRef || payment._id || ''))
+      .filter(Boolean)
+  );
+  const sbPayments = await getSBAccountPaymentRecords(sbAccount._id);
+  const newSBPayments = sbPayments.filter((payment) => {
+    const ref = String(payment.transactionRef || payment._id || '');
+    return ref && !existingRefs.has(ref);
+  });
+
+  if (newSBPayments.length === 0) {
+    return plainOrder;
+  }
+
+  const mergedPayments = [...existingPayments, ...newSBPayments]
+    .sort((a, b) => new Date(a.paidAt || a.date || 0) - new Date(b.paidAt || b.date || 0));
+  const totalPaid = mergedPayments
+    .filter((payment) => payment.status === 'paid' && payment.type !== 'debit' && payment.direction !== 'Debit')
+    .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  const totalAmount = Number(plainOrder.totalAmount || 0);
+
+  plainOrder.installmentPlan = {
+    ...plainOrder.installmentPlan,
+    payments: mergedPayments,
+    totalPaid,
+    remainingBalance: Math.max(0, totalAmount - totalPaid),
+    creditBalance: Math.max(0, totalPaid - totalAmount)
+  };
+
+  if (plainOrder.installmentPlan.remainingBalance <= 0) {
+    plainOrder.paymentStatus = 'paid';
+    if (!['delivered', 'completed', 'cancelled'].includes(plainOrder.status)) {
+      plainOrder.status = 'paid';
+    }
+  } else if (totalPaid > 0) {
+    plainOrder.paymentStatus = 'partial';
+    if (!['delivered', 'completed', 'cancelled'].includes(plainOrder.status)) {
+      plainOrder.status = 'partially_paid';
+    }
+  }
+
+  return plainOrder;
+};
+
 const buildOrderFromSBAccount = async (sbAccount) => {
   const sellingPrice = Number(sbAccount.sellingPrice || 0);
-  const totalPaid = Number(sbAccount.balance || 0);
-  const remainingBalance = Math.max(0, sellingPrice - totalPaid);
   const payments = await getSBAccountPaymentRecords(sbAccount._id);
+  const totalPaid = getSBAccountPaidAmountFromRecords(payments);
+  const remainingBalance = Math.max(0, sellingPrice - totalPaid);
+  const creditBalance = Math.max(0, totalPaid - sellingPrice);
+  const sbItems = Array.isArray(sbAccount.items) && sbAccount.items.length > 0
+    ? sbAccount.items
+    : [{
+        productId: '',
+        productName: sbAccount.productName,
+        productDescription: sbAccount.productDescription,
+        quantity: 1,
+        price: sellingPrice,
+        subtotal: sellingPrice
+      }];
+  let remainingPaidForItems = totalPaid;
+  const items = sbItems.map((item, index) => {
+    const quantity = Math.max(1, Number(item.quantity || 1));
+    const subtotal = Number(item.subtotal || item.price || 0);
+    const paidAmount = Math.min(subtotal, Math.max(0, remainingPaidForItems));
+    remainingPaidForItems -= paidAmount;
+
+	    return {
+	      _id: `${sbAccount._id}-item-${item.productId || index}`,
+	      productId: item.productId || '',
+	      variationId: item.variationId || '',
+	      variationName: item.variationName || '',
+	      selectedOptions: {},
+	      productName: item.productName || sbAccount.productName,
+	      quantity,
+	      price: Number(item.price || subtotal / quantity || 0),
+	      subtotal,
+	      paidAmount,
+	      paymentStatus: paidAmount >= subtotal ? 'paid' : paidAmount > 0 ? 'partial' : 'unpaid',
+	      fulfillmentStatus: item.fulfillmentStatus || (sbAccount.status === 'sold' ? 'completed' : 'pending')
+	    };
+  });
 
   return {
     _id: sbAccount._id,
@@ -144,20 +246,7 @@ const buildOrderFromSBAccount = async (sbAccount) => {
     customerId: sbAccount.customerId,
     accountNumber: sbAccount.accountNumber,
     SBAccountNumber: sbAccount.SBAccountNumber,
-    items: [{
-      _id: `${sbAccount._id}-item`,
-      productId: '',
-      variationId: '',
-      variationName: '',
-      selectedOptions: {},
-      productName: sbAccount.productName,
-      quantity: 1,
-      price: sellingPrice,
-      subtotal: sellingPrice,
-      paidAmount: Math.min(sellingPrice, totalPaid),
-      paymentStatus: totalPaid >= sellingPrice ? 'paid' : totalPaid > 0 ? 'partial' : 'unpaid',
-      fulfillmentStatus: sbAccount.status === 'sold' ? 'completed' : 'pending'
-    }],
+    items,
     totalAmount: sellingPrice,
     paymentType: 'installment',
     installmentPlan: {
@@ -166,11 +255,12 @@ const buildOrderFromSBAccount = async (sbAccount) => {
       amountPerPeriod: 0,
       totalPaid,
       remainingBalance,
+      creditBalance,
       nextPaymentDate: null,
       payments
     },
-    status: getOrderStatusFromSBAccount(sbAccount),
-    paymentStatus: getPaymentStatusFromSBAccount(sbAccount),
+    status: getOrderStatusFromSBAccount(sbAccount, totalPaid),
+    paymentStatus: getPaymentStatusFromSBAccount(sbAccount, totalPaid),
     shippingAddress: 'Created in backoffice',
     shippingCity: '',
     shippingState: '',
@@ -268,6 +358,7 @@ const decorateOrderProductAvailability = async (order) => {
   }
 
   const plainOrder = typeof order.toObject === 'function' ? order.toObject() : { ...order };
+  await mergeOrderPaymentRecordsWithSBDeposits(plainOrder);
   const outOfMarketProductIds = await getOutOfMarketProductIds(plainOrder.items || []);
   const orderIsCompleted = plainOrder.paymentStatus === 'paid' && plainOrder.status === 'completed';
 
@@ -586,6 +677,14 @@ const createOrder = async (orderData) => {
           status: 'booked',
           startDate,
           sellingPrice: cart.totalAmount,
+          items: cart.items.map((item) => ({
+            productId: item.productId,
+            productName: item.productName,
+            productDescription: item.productDescription || '',
+            quantity: Number(item.quantity || 1),
+            price: Number(item.price || 0),
+            subtotal: Number(item.subtotal || 0)
+          })),
           costPrice: 0,
           balance: 0,
           profit: 0
@@ -911,25 +1010,15 @@ const updateOrderStatus = async (orderId, status, staff) => {
       previousStatus !== 'delivered' && previousStatus !== 'completed') {
     allocateOrderItemPayments(order);
     for (const item of order.items) {
+      if (!['delivered', 'completed'].includes(item.fulfillmentStatus)) {
+        await assertOrderItemBranchStockAvailable(order, item);
+      }
+    }
+    for (const item of order.items) {
       if (['delivered', 'completed'].includes(item.fulfillmentStatus)) {
         continue;
       }
-      if (item.paymentStatus !== 'paid') {
-        await settleOrderItemPaymentFromWallet(order, item, staff);
-      }
-      try {
-        await ProductService.updateProductStock(
-          item.productId,
-          item.quantity,
-          'decrease',
-          item.variationId || '',
-          order.branchId,
-          staff?.staffId || ''
-        );
-      } catch (err) {
-        console.error(`Failed to reduce stock for product ${item.productId}:`, err.message);
-        // Continue with order status update even if stock update fails
-      }
+      await decreaseStockThenSettleOrderItem(order, item, staff);
       item.fulfillmentStatus = status === 'completed' ? 'completed' : 'delivered';
       item.fulfilledAt = new Date();
       item.fulfilledBy = staff?.staffId || '';
@@ -977,18 +1066,7 @@ const updateOrderItemFulfillment = async (orderId, itemId, status, staff) => {
 
   const previousStatus = item.fulfillmentStatus || 'pending';
   if (status === 'delivered' && !['delivered', 'completed'].includes(previousStatus)) {
-    if (item.paymentStatus !== 'paid') {
-      await settleOrderItemPaymentFromWallet(order, item, staff);
-    }
-
-    await ProductService.updateProductStock(
-      item.productId,
-      item.quantity,
-      'decrease',
-      item.variationId || '',
-      order.branchId,
-      staff?.staffId || ''
-    );
+    await decreaseStockThenSettleOrderItem(order, item, staff);
   }
 
   item.fulfillmentStatus = status;
@@ -1116,6 +1194,9 @@ const debitSBAccountForPayment = async (sbAccount, amount, order, staffId, optio
   }
 
   const newBalance = sbAccount.balance - amount;
+  if (newBalance < 0) {
+    throw new Error(`Insufficient SB Account balance. Available: ₦${Number(sbAccount.balance || 0).toLocaleString()}, Required: ₦${amount.toLocaleString()}`);
+  }
 
   // Use 'ECOMMERCE_SYSTEM' as default accountManagerId for ecommerce customers who don't have one
   const effectiveAccountManagerId = sbAccount.accountManagerId || 'ECOMMERCE_SYSTEM';
@@ -1132,7 +1213,7 @@ const debitSBAccountForPayment = async (sbAccount, amount, order, staffId, optio
     accountNumber: sbAccount.accountNumber,
     accountTypeId: sbAccount._id,
     date: formattedDate,
-    narration: `E-Commerce Installment Payment - Order: ${order.orderNumber}`,
+    narration: options.narration || `E-Commerce Installment Payment - Order: ${order.orderNumber}`,
     package: "SB",
     direction: "Debit",
   });
@@ -1377,7 +1458,67 @@ const creditSBAccountWithoutLedgerImpact = async (order, amount, transactionRef,
   );
 };
 
-const settleOrderItemPaymentFromWallet = async (order, item, staff) => {
+const assertOrderItemBranchStockAvailable = async (order, item) => {
+  if (!order.branchId) {
+    throw new Error('Branch is required for product stock update');
+  }
+
+  const stockRow = await ProductBranchStock.findOne({
+    productId: item.productId?.toString(),
+    branchId: order.branchId?.toString(),
+    variationId: item.variationId || ''
+  }).lean();
+  const availableQuantity = Number(stockRow?.quantity || 0);
+  const requiredQuantity = Number(item.quantity || 0);
+
+  if (availableQuantity < requiredQuantity) {
+    throw new Error(
+      `Insufficient branch stock for ${item.productName || 'this product'}. Available: ${availableQuantity}, Required: ${requiredQuantity}`
+    );
+  }
+};
+
+const getOrderItemAmountDue = (item) => {
+  const subtotal = Number(item.subtotal || 0);
+  const paidAmount = Math.min(subtotal, Math.max(0, Number(item.paidAmount || 0)));
+  return Math.max(0, subtotal - paidAmount);
+};
+
+const assertOrderItemFundingAvailable = async (order, item) => {
+  const amountDue = getOrderItemAmountDue(item);
+  if (amountDue <= 0) return;
+
+  const existingSettlement = await findExistingItemDeliverySettlement(order, item);
+  if (existingSettlement) return;
+
+  const sbAccount = await SBAccount.findOne({ SBAccountNumber: order.SBAccountNumber });
+  if (!sbAccount) {
+    throw new Error('SB Account not found');
+  }
+
+  const sbBalance = Number(sbAccount.balance || 0);
+  if (sbBalance >= amountDue) return;
+
+  const shortfall = amountDue - sbBalance;
+  const account = await getCustomerWalletAccount(order);
+  const availableBalance = Number(account.availableBalance || 0);
+  if (availableBalance < shortfall) {
+    throw new Error(`Insufficient wallet balance. Available: ₦${availableBalance.toLocaleString()}, Required: ₦${shortfall.toLocaleString()}`);
+  }
+};
+
+const findExistingItemDeliverySettlement = async (order, item) => {
+  const transactionPrefix = `ITEM_DELIVERY_${order.orderNumber}_${item._id}_`;
+  const escapedPrefix = transactionPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  return await AccountTransactionModel.findOne({
+    package: 'SB',
+    direction: 'Debit',
+    narration: { $regex: escapedPrefix }
+  }).lean();
+};
+
+const settleOrderItemPaymentFromSBAccount = async (order, item, staff) => {
   const subtotal = Number(item.subtotal || 0);
   const paidAmount = Math.min(subtotal, Math.max(0, Number(item.paidAmount || 0)));
   const amountDue = Math.max(0, subtotal - paidAmount);
@@ -1392,20 +1533,72 @@ const settleOrderItemPaymentFromWallet = async (order, item, staff) => {
     throw new Error('This order does not have an SB Account');
   }
 
+  const existingSettlement = await findExistingItemDeliverySettlement(order, item);
+  if (existingSettlement) {
+    item.paidAmount = subtotal;
+    item.paymentStatus = 'paid';
+    return await SBAccount.findOne({ SBAccountNumber: order.SBAccountNumber });
+  }
+
   const transactionRef = `ITEM_DELIVERY_${order.orderNumber}_${item._id}_${Date.now()}`;
   const source = staff?.staffId || staff?._id?.toString() || 'ECOMMERCE_SYSTEM';
+  let sbAccount = await SBAccount.findOne({ SBAccountNumber: order.SBAccountNumber });
+  if (!sbAccount) {
+    throw new Error('SB Account not found');
+  }
 
-  await debitWalletForOrderPayment(order, amountDue, transactionRef);
-  const sbAccount = await creditSBAccountWithoutLedgerImpact(order, amountDue, transactionRef, source);
+  const sbBalance = Number(sbAccount.balance || 0);
+  if (sbBalance < amountDue) {
+    const shortfall = amountDue - sbBalance;
+    await debitWalletForOrderPayment(order, shortfall, transactionRef);
+    sbAccount = await creditSBAccountWithoutLedgerImpact(order, shortfall, transactionRef, source);
+  }
+
+  await debitSBAccountForPayment(sbAccount, amountDue, order, source, {
+    skipAccountLedgerUpdate: true,
+    narration: `Item Delivery Settlement - Order: ${order.orderNumber} - Item: ${item.productName || item._id} - Ref: ${transactionRef}`
+  });
 
   item.paidAmount = subtotal;
   item.paymentStatus = 'paid';
 
-  if (Number(sbAccount.balance || 0) >= Number(sbAccount.sellingPrice || 0)) {
-    await updateSBAccountToSold(order.SBAccountNumber);
+  return await SBAccount.findOne({ SBAccountNumber: order.SBAccountNumber });
+};
+
+const decreaseStockThenSettleOrderItem = async (order, item, staff) => {
+  await assertOrderItemBranchStockAvailable(order, item);
+  if (item.paymentStatus !== 'paid') {
+    await assertOrderItemFundingAvailable(order, item);
   }
 
-  return sbAccount;
+  await ProductService.updateProductStock(
+    item.productId,
+    item.quantity,
+    'decrease',
+    item.variationId || '',
+    order.branchId,
+    staff?.staffId || ''
+  );
+
+  try {
+    if (item.paymentStatus !== 'paid') {
+      await settleOrderItemPaymentFromSBAccount(order, item, staff);
+    }
+  } catch (err) {
+    try {
+      await ProductService.updateProductStock(
+        item.productId,
+        item.quantity,
+        'increase',
+        item.variationId || '',
+        order.branchId,
+        staff?.staffId || ''
+      );
+    } catch (restoreErr) {
+      console.error(`Failed to restore stock for product ${item.productId}:`, restoreErr.message);
+    }
+    throw err;
+  }
 };
 
 const recordFlexibleInstallmentOrderPayment = async (orderId, amount, transactionRef, source, options = {}) => {
@@ -1485,7 +1678,9 @@ const recordBackofficeSBAccountPayment = async (SBAccountNumber, customerId, amo
   }
 
   const paymentAmount = normalizePaymentAmount(amount);
-  const remainingBalance = Math.max(0, Number(sbAccount.sellingPrice || 0) - Number(sbAccount.balance || 0));
+  const payments = await getSBAccountPaymentRecords(sbAccount._id);
+  const totalPaid = getSBAccountPaidAmountFromRecords(payments);
+  const remainingBalance = Math.max(0, Number(sbAccount.sellingPrice || 0) - totalPaid);
   if (remainingBalance <= 0) {
     throw new Error('This order has already been fully paid');
   }
@@ -1603,7 +1798,9 @@ const payoffRemainingBalanceFromWallet = async (orderNumber, customerId) => {
       throw new Error('Order not found');
     }
 
-    const remainingBalance = Math.max(0, Number(sbAccount.sellingPrice || 0) - Number(sbAccount.balance || 0));
+    const payments = await getSBAccountPaymentRecords(sbAccount._id);
+    const totalPaid = getSBAccountPaidAmountFromRecords(payments);
+    const remainingBalance = Math.max(0, Number(sbAccount.sellingPrice || 0) - totalPaid);
     if (remainingBalance <= 0) {
       throw new Error('This order has already been fully paid');
     }
