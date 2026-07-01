@@ -22,6 +22,7 @@ const createAccount = async (customerData) => {
           accountManagerId,
           customerId,
           accountNumber,
+          walletType: 'free_to_withdraw',
           createdBy,
           status,
           availableBalance,
@@ -33,7 +34,13 @@ const createAccount = async (customerData) => {
 
   const checkAccount = async (customerId) => {
     try {
-      return await Account.findOne({ customerId });
+      return await Account.findOne({
+        $or: [
+          { customerId },
+          { accountNumber: customerId }
+        ],
+        walletType: { $ne: 'sb_order_wallet' }
+      });
     } catch (error) {
       throw new Error("Error checking account: " + error.message);
     }
@@ -42,12 +49,15 @@ const createAccount = async (customerData) => {
   const getCustomerAccount = async (customerId) => {
     try {
       const existingAccount = await checkAccount(customerId);
+      const sbWalletAccount = await Account.findOne({
+        customerId,
+        walletType: 'sb_order_wallet'
+      });
   
-      if (!existingAccount) {
-        return "Invalid account number";
-      }
-  
-      return existingAccount;
+      return {
+        account: existingAccount,
+        sbWalletAccount
+      };
     } catch (error) {
       throw new Error("Error retrieving customer account: " + error.message);
     }

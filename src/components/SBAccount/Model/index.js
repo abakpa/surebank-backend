@@ -33,6 +33,9 @@ const sbAccountItemSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  addedAt: {
+    type: Date
+  },
   costSubtotal: {
     type: Number,
     default: 0
@@ -107,6 +110,11 @@ SBAccountNumber: {
   items: {
     type: [sbAccountItemSchema],
     default: []
+  },
+  accountMode: {
+    type: String,
+    enum: ['legacy', 'multi_item'],
+    default: 'legacy'
   },
   editedBy: {
     type: String,

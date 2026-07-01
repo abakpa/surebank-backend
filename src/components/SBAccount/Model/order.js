@@ -108,6 +108,11 @@ SBAccountNumber: {
     type: [orderItemSchema],
     default: []
   },
+  accountMode: {
+    type: String,
+    enum: ['legacy', 'multi_item'],
+    default: 'legacy'
+  },
   editedBy: {
     type: String,
     default:"No edit",

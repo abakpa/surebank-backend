@@ -17,6 +17,24 @@ const paystackApi = axios.create({
   }
 });
 
+const isValidEmail = (email) => {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || '').trim());
+};
+
+const buildFallbackEmail = (identifier = 'customer') => {
+  const safeIdentifier = String(identifier || 'customer')
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .toLowerCase();
+  return `${safeIdentifier || 'customer'}@surebankstores.com`;
+};
+
+const resolvePaystackEmail = (email, fallbackIdentifier) => {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  return isValidEmail(normalizedEmail)
+    ? normalizedEmail
+    : buildFallbackEmail(fallbackIdentifier);
+};
+
 /**
  * Initialize a Paystack transaction
  * @param {Object} data - Transaction data
@@ -33,10 +51,18 @@ const initializeTransaction = async (data) => {
       throw new Error('Paystack is not configured. Please contact support.');
     }
 
-    console.log('Initializing Paystack transaction for:', data.email, 'Amount:', data.amount);
+    const paymentEmail = resolvePaystackEmail(
+      data.email,
+      data.metadata?.wallet_data?.customerId
+        || data.metadata?.order_deposit_data?.customerId
+        || data.metadata?.order_data?.customerId
+        || data.reference
+    );
+
+    console.log('Initializing Paystack transaction for:', paymentEmail, 'Amount:', data.amount);
 
     const response = await paystackApi.post('/transaction/initialize', {
-      email: data.email,
+      email: paymentEmail,
       amount: data.amount, // Amount in kobo
       reference: data.reference,
       callback_url: data.callback_url,

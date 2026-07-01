@@ -9,6 +9,7 @@ router.post('/login', EcommerceAuthController.login);
 router.get('/check-phone', EcommerceAuthController.checkPhone);
 router.post('/forgot-password', EcommerceAuthController.forgotPassword);
 router.post('/reset-password', EcommerceAuthController.resetPassword);
+router.post('/admin-forced-reset-password', EcommerceAuthController.resetAdminForcedPassword);
 
 // Protected routes
 router.get('/profile', customerAuth, EcommerceAuthController.getProfile);

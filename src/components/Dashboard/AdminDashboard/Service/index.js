@@ -1367,39 +1367,18 @@ const getExpenditureReport = async () => {
 
 async function getEcommerceIncome(date = null, branchId = null) {
   try {
-    // Build query for paid ecommerce orders
     const query = {
-      paymentStatus: 'paid'
+      package: 'ECOMMERCE',
+      direction: 'Credit',
+      createdAt: buildCumulativeCreatedAtQuery(date),
     };
 
-    // Filter by date if provided or default to today
-    const endDate = date ? new Date(date) : new Date();
-    endDate.setHours(23, 59, 59, 999);
-    query.createdAt = buildCumulativeCreatedAtQuery(date);
-
-    // Filter by branchId if provided
     if (branchId) {
       query.branchId = branchId;
     }
 
-    // Fetch all paid ecommerce orders
-    const orders = await EcommerceOrder.find(query);
-
-    // Calculate total profit from all order items
-    let totalProfit = 0;
-
-    for (const order of orders) {
-      for (const item of order.items) {
-        // Look up the product to get its profit
-        const product = await Product.findById(item.productId);
-        if (product && product.profit) {
-          // Multiply profit per unit by quantity ordered
-          totalProfit += product.profit * item.quantity;
-        }
-      }
-    }
-
-    return totalProfit;
+    const transactions = await SureBankAccount.find(query).select('amount').lean();
+    return transactions.reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
   } catch (error) {
     console.error("Error calculating ecommerce income:", error);
     return 0;
@@ -1408,46 +1387,18 @@ async function getEcommerceIncome(date = null, branchId = null) {
 
 async function getDailyEcommerceIncome(date = null, branchId = null) {
   try {
-    // Filter by specific day
-    const targetDate = date ? new Date(date) : new Date();
-
-    // Set start of day
-    const startDate = new Date(targetDate);
-    startDate.setHours(0, 0, 0, 0);
-
-    // Set end of day
-    const endDate = new Date(targetDate);
-    endDate.setHours(23, 59, 59, 999);
-
-    // Build query for paid ecommerce orders
     const query = {
-      paymentStatus: 'paid',
-      createdAt: { $gte: startDate, $lte: endDate }
+      package: 'ECOMMERCE',
+      direction: 'Credit',
+      createdAt: buildDailyCreatedAtQuery(date),
     };
 
-    // Filter by branchId if provided
     if (branchId) {
       query.branchId = branchId;
     }
 
-    // Fetch paid ecommerce orders for the day
-    const orders = await EcommerceOrder.find(query);
-
-    // Calculate total profit from all order items
-    let totalProfit = 0;
-
-    for (const order of orders) {
-      for (const item of order.items) {
-        // Look up the product to get its profit
-        const product = await Product.findById(item.productId);
-        if (product && product.profit) {
-          // Multiply profit per unit by quantity ordered
-          totalProfit += product.profit * item.quantity;
-        }
-      }
-    }
-
-    return totalProfit;
+    const transactions = await SureBankAccount.find(query).select('amount').lean();
+    return transactions.reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
   } catch (error) {
     console.error("Error calculating daily ecommerce income:", error);
     return 0;
@@ -1456,59 +1407,36 @@ async function getDailyEcommerceIncome(date = null, branchId = null) {
 
 async function getEcommerceIncomeReport(date = null, branchId = null) {
   try {
-    // Build query for paid ecommerce orders
     const query = {
-      paymentStatus: 'paid'
+      package: 'ECOMMERCE',
+      direction: 'Credit',
     };
 
-    // Filter by date if provided
-    if (date) {
-      const endDate = new Date(date);
-      endDate.setHours(23, 59, 59, 999);
-      query.createdAt = buildCumulativeCreatedAtQuery(date);
-    }
+    query.createdAt = buildCumulativeCreatedAtQuery(date);
 
-    // Filter by branchId if provided
     if (branchId) {
       query.branchId = branchId;
     }
 
-    // Fetch all paid ecommerce orders with customer details
-    const orders = await EcommerceOrder.find(query)
+    const transactions = await SureBankAccount.find(query)
       .populate({ path: 'customerId', model: 'Customer' })
       .sort({ createdAt: -1 });
 
-    // Build report data
-    const reportData = [];
+    return transactions.map((transaction) => {
+      const narration = transaction.narration || '';
+      const orderMatch = narration.match(/ECOMMERCE_ITEM_PROFIT_([^_]+)_/);
+      const productMatch = narration.match(/Profit on (.+)$/);
 
-    for (const order of orders) {
-      // Calculate profit for this order
-      let orderProfit = 0;
-      const productNames = [];
-
-      for (const item of order.items) {
-        // Look up the product to get its profit
-        const product = await Product.findById(item.productId);
-        if (product && product.profit) {
-          orderProfit += product.profit * item.quantity;
-        }
-        productNames.push(item.productName);
-      }
-
-      reportData.push({
-        _id: order._id,
-        orderNumber: order.orderNumber,
-        customerName: order.customerId
-          ? `${order.customerId.firstName || ''} ${order.customerId.lastName || ''}`.trim()
-          : 'N/A',
-        productNames: productNames.join(', '),
-        profit: orderProfit,
-        soldDate: order.updatedAt || order.createdAt,
-        branchId: order.branchId
-      });
-    }
-
-    return reportData;
+      return {
+        _id: transaction._id,
+        orderNumber: orderMatch?.[1] || 'N/A',
+        customerName: formatCustomerName(transaction.customerId),
+        productNames: productMatch?.[1] || narration,
+        profit: Number(transaction.amount || 0),
+        soldDate: transaction.createdAt,
+        branchId: transaction.branchId
+      };
+    });
   } catch (error) {
     console.error("Error fetching ecommerce income report:", error);
     return [];

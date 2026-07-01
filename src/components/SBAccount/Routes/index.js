@@ -12,6 +12,7 @@ router.get('/',staffAuth, SBAccountController.getDSAccount);
 router.get('/',staffAuth, SBAccountController.getDSAccount);
 router.put('/:SBAccountNumber/items/:itemId/costprice', staffAuth, adminOnly, SBAccountController.updateItemCostPrice);
 router.post('/:SBAccountNumber/items/:itemId/mark-delivered', staffAuth, SBAccountController.markItemDelivered);
+router.post('/:SBAccountNumber/items/:itemId/customer-request', staffAuth, SBAccountController.requestItemFromWallet);
 router.get('/:id',staffAuth, SBAccountController.getCustomerSBAccountById);
 router.get('/customer/:id',customerAuth, SBAccountController.getCustomerSBAccountById);
 router.post('/deposit', staffAuth, SBAccountController.saveSBContribution);

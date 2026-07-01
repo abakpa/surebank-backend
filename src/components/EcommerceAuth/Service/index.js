@@ -53,12 +53,27 @@ const getReportingStaffId = (accountManagerId, fallbackActor) => {
   return fallbackActor;
 };
 
+const buildFallbackEmail = (customer) => {
+  const identifier = String(customer?.phone || customer?._id || 'customer')
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .toLowerCase();
+  return `${identifier || 'customer'}@surebankstores.com`;
+};
+
+const buildSBOrderWalletAccountNumber = (customer) => `${customer.phone}-SBW`;
+
 const ensureCustomerAccount = async (customer) => {
   const customerId = customer._id.toString();
-  let account = await Account.findOne({ customerId });
+  let account = await Account.findOne({
+    customerId,
+    walletType: { $ne: 'sb_order_wallet' }
+  });
 
   if (!account) {
-    account = await Account.findOne({ accountNumber: customer.phone });
+    account = await Account.findOne({
+      accountNumber: customer.phone,
+      walletType: { $ne: 'sb_order_wallet' }
+    });
   }
 
   if (!account) {
@@ -83,11 +98,75 @@ const ensureCustomerAccount = async (customer) => {
   return account;
 };
 
-const getWalletTransactions = async (accountId) => {
-  return await AccountTransactionModel.find({
+const ensureCustomerSBOrderWallet = async (customer) => {
+  const customerId = customer._id.toString();
+  const accountNumber = buildSBOrderWalletAccountNumber(customer);
+  let account = await Account.findOne({
+    customerId,
+    walletType: 'sb_order_wallet'
+  });
+
+  if (!account) {
+    account = await Account.findOne({
+      accountNumber,
+      walletType: 'sb_order_wallet'
+    });
+  }
+
+  if (!account) {
+    const branchId = customer.branchId || (await getDefaultBranch())._id.toString();
+    account = await Account.create({
+      customerId,
+      accountNumber,
+      walletType: 'sb_order_wallet',
+      createdBy: 'ECOMMERCE_SYSTEM',
+      branchId,
+      accountManagerId: customer.accountManagerId || '',
+      status: 'active',
+      availableBalance: 0,
+      ledgerBalance: 0
+    });
+  }
+
+  const updates = {};
+  if (account.accountNumber !== accountNumber) {
+    updates.accountNumber = accountNumber;
+  }
+  if (account.walletType !== 'sb_order_wallet') {
+    updates.walletType = 'sb_order_wallet';
+  }
+  if (Object.keys(updates).length > 0) {
+    account = await Account.findByIdAndUpdate(account._id, { $set: updates }, { new: true });
+  }
+
+  return account;
+};
+
+const getWalletTransactions = async (accountId, customerId = '') => {
+  const transactionQueries = [{
     accountTypeId: accountId.toString(),
     package: 'Wallet'
-  }).sort({ createdAt: -1 }).limit(20);
+  }];
+
+  if (customerId) {
+    const ecommerceSBAccounts = await SBAccount.find({
+      customerId: customerId.toString(),
+      createdBy: 'ECOMMERCE_SYSTEM'
+    }).select('_id').lean();
+    const ecommerceSBAccountIds = ecommerceSBAccounts.map((account) => account._id.toString());
+
+    if (ecommerceSBAccountIds.length > 0) {
+      transactionQueries.push({
+        accountTypeId: { $in: ecommerceSBAccountIds },
+        package: 'SB',
+        direction: { $in: ['Debit', 'Purchased'] }
+      });
+    }
+  }
+
+  return await AccountTransactionModel.find({
+    $or: transactionQueries
+  }).sort({ createdAt: -1 }).limit(50);
 };
 
 const registerEcommerceCustomer = async (customerData) => {
@@ -170,6 +249,23 @@ const loginEcommerceCustomer = async (phone, password) => {
     throw new Error('Invalid phone number or password');
   }
 
+  if (customer.updatePassword !== 'false') {
+    return {
+      customer: {
+        id: customer._id,
+        firstName: customer.firstName,
+        lastName: customer.lastName,
+        phone: customer.phone,
+        email: customer.email,
+        address: customer.address,
+        requiresPasswordUpdate: true
+      },
+      accountNumber: customer.phone,
+      SBAccountNumber: null,
+      requiresPasswordUpdate: true
+    };
+  }
+
   const isMatch = await bcrypt.compare(password, customer.password);
   if (!isMatch) {
     throw new Error('Invalid phone number or password');
@@ -205,7 +301,7 @@ const getCustomerProfile = async (customerId) => {
     throw new Error('Customer not found');
   }
 
-  const account = await ensureCustomerAccount(customer);
+  const account = await ensureCustomerSBOrderWallet(customer);
   const sbAccounts = await SBAccount.find({ customerId: customerId.toString() });
 
   return {
@@ -251,8 +347,8 @@ const getCustomerWallet = async (customerId) => {
     throw new Error('Customer not found');
   }
 
-  const account = await ensureCustomerAccount(customer);
-  const transactions = await getWalletTransactions(account._id);
+  const account = await ensureCustomerSBOrderWallet(customer);
+  const transactions = await getWalletTransactions(account._id, customer._id);
 
   return {
     customer: {
@@ -274,17 +370,17 @@ const initializeWalletFunding = async (customerId, fundingData) => {
     throw new Error('Customer not found');
   }
 
-  const account = await ensureCustomerAccount(customer);
+  const account = await ensureCustomerSBOrderWallet(customer);
   const amount = Number(fundingData.amount);
 
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new Error('Please provide a valid amount');
   }
 
-  const customerEmail = (fundingData.customerEmail || customer.email || '').trim();
-  if (!customerEmail || !customerEmail.includes('@')) {
-    throw new Error('A valid email address is required');
-  }
+  const providedEmail = (fundingData.customerEmail || customer.email || '').trim();
+  const customerEmail = providedEmail && providedEmail.includes('@')
+    ? providedEmail
+    : buildFallbackEmail(customer);
 
   const callbackUrl = fundingData.callbackUrl;
   if (!callbackUrl) {
@@ -303,8 +399,10 @@ const initializeWalletFunding = async (customerId, fundingData) => {
         fundingType: 'wallet',
         customerId: customer._id.toString(),
         accountId: account._id.toString(),
-        accountNumber: customer.phone,
-        amount
+        accountNumber: account.accountNumber,
+        amount,
+        autoPayOrderNumber: fundingData.autoPayOrderNumber || '',
+        autoPayItemId: fundingData.autoPayItemId || ''
       }
     }
   });
@@ -342,20 +440,38 @@ const verifyWalletFunding = async (customerId, reference) => {
     throw new Error('Customer not found');
   }
 
-  const account = await ensureCustomerAccount(customer);
-  const narration = `Wallet Funding - Ref: ${reference}`;
+  const account = await ensureCustomerSBOrderWallet(customer);
+  const narration = `SB Order Wallet Funding - Ref: ${reference}`;
+  const legacyNarration = `Wallet Funding - Ref: ${reference}`;
   const existingTransaction = await AccountTransactionModel.findOne({
     accountTypeId: account._id.toString(),
-    narration
+    narration: { $in: [narration, legacyNarration] }
   });
 
   if (existingTransaction) {
+    let autoPaidOrder = null;
+    let autoPayError = null;
+    if (walletData.autoPayOrderNumber && walletData.autoPayItemId) {
+      try {
+        const EcommerceOrderService = require('../../EcommerceOrder/Service/index');
+        autoPaidOrder = await EcommerceOrderService.payOrderItemFromWallet({
+          orderNumber: walletData.autoPayOrderNumber,
+          itemId: walletData.autoPayItemId,
+          customerId
+        });
+      } catch (error) {
+        autoPayError = error.message;
+      }
+    }
+
     const refreshedAccount = await Account.findById(account._id);
-    const transactions = await getWalletTransactions(account._id);
+    const transactions = await getWalletTransactions(account._id, customer._id);
     return {
       account: refreshedAccount,
       transaction: existingTransaction,
       transactions,
+      autoPaidOrder,
+      autoPayError,
       alreadyProcessed: true,
       paymentDetails: {
         amount: existingTransaction.amount,
@@ -381,7 +497,7 @@ const verifyWalletFunding = async (customerId, reference) => {
     balance: newAvailableBalance,
     branchId: account.branchId || customer.branchId,
     accountManagerId: account.accountManagerId || 'ECOMMERCE_SYSTEM',
-    accountNumber: customer.phone,
+    accountNumber: account.accountNumber,
     accountTypeId: account._id.toString(),
     date: formatTransactionDate(),
     narration,
@@ -389,13 +505,14 @@ const verifyWalletFunding = async (customerId, reference) => {
     direction: 'Credit',
   });
 
-  const updatedAccount = await Account.findByIdAndUpdate(
+  let updatedAccount = await Account.findByIdAndUpdate(
     account._id,
     {
       $set: {
-        accountNumber: customer.phone,
+        accountNumber: account.accountNumber,
         availableBalance: newAvailableBalance,
         ledgerBalance: newLedgerBalance,
+        walletType: 'sb_order_wallet',
         status: 'active'
       }
     },
@@ -407,13 +524,31 @@ const verifyWalletFunding = async (customerId, reference) => {
     await customer.save();
   }
 
-  const transactions = await getWalletTransactions(account._id);
+  let autoPaidOrder = null;
+  let autoPayError = null;
+  if (walletData.autoPayOrderNumber && walletData.autoPayItemId) {
+    try {
+      const EcommerceOrderService = require('../../EcommerceOrder/Service/index');
+      autoPaidOrder = await EcommerceOrderService.payOrderItemFromWallet({
+        orderNumber: walletData.autoPayOrderNumber,
+        itemId: walletData.autoPayItemId,
+        customerId
+      });
+      updatedAccount = await Account.findById(account._id);
+    } catch (error) {
+      autoPayError = error.message;
+    }
+  }
+
+  const transactions = await getWalletTransactions(account._id, customer._id);
   const transaction = transactions[0] || null;
 
   return {
     account: updatedAccount,
     transaction,
     transactions,
+    autoPaidOrder,
+    autoPayError,
     alreadyProcessed: false,
     paymentDetails: {
       amount,
@@ -535,6 +670,33 @@ const resetPasswordWithOtp = async ({ email, otp, newPassword }) => {
   return { message: 'Password reset successfully. You can now login.' };
 };
 
+const resetAdminForcedPassword = async ({ phone, newPassword }) => {
+  const normalizedPhone = String(phone || '').trim();
+  if (!normalizedPhone || !newPassword) {
+    throw new Error('Phone number and new password are required');
+  }
+  if (String(newPassword).length < 6) {
+    throw new Error('Password must be at least 6 characters');
+  }
+
+  const customer = await Customer.findOne({ phone: normalizedPhone });
+  if (!customer) {
+    throw new Error('Customer not found');
+  }
+  if (customer.updatePassword === 'false') {
+    throw new Error('Password reset is not required for this account');
+  }
+
+  customer.password = await bcrypt.hash(newPassword, await bcrypt.genSalt());
+  customer.updatePassword = 'false';
+  customer.passwordResetOtp = undefined;
+  customer.passwordResetOtpExpiresAt = undefined;
+  customer.passwordResetOtpAttempts = 0;
+  await customer.save();
+
+  return { message: 'Password reset successfully. You can now login.' };
+};
+
 module.exports = {
   checkExistingCustomer,
   registerEcommerceCustomer,
@@ -544,6 +706,7 @@ module.exports = {
   changePassword,
   sendPasswordResetOtp,
   resetPasswordWithOtp,
+  resetAdminForcedPassword,
   getCustomerWallet,
   initializeWalletFunding,
   verifyWalletFunding
