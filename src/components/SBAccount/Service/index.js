@@ -8,6 +8,7 @@ const SureBankAccount = require('../../SureBankAccount/Service/index');
 const ProductService = require('../../Product/Service/index');
 const Product = require('../../Product/Model/index');
 const ProductBranchStock = require('../../ProductBranchStock/Model/index');
+const Customer = require('../../Customer/Model/index');
 const sendSMS = require('../../sendSMS');
 
 const getProductVariation = (product, variationId = '') => {
@@ -36,6 +37,38 @@ const getProductSellingPrice = (product, variationId = '') => {
   }
 
   return Number(product?.price || 0);
+};
+
+const buildSBOrderWalletAccountNumber = (customer) => `${customer.phone}-SBW`;
+
+const ensureSBOrderWalletForSBAccount = async (sbaccount) => {
+  let walletAccount = await Account.findOne({
+    customerId: sbaccount.customerId,
+    walletType: 'sb_order_wallet'
+  });
+
+  if (walletAccount) {
+    return walletAccount;
+  }
+
+  const customer = await Customer.findById(sbaccount.customerId);
+  if (!customer) {
+    throw new Error('Customer not found for SB order wallet');
+  }
+
+  walletAccount = await Account.create({
+    customerId: customer._id.toString(),
+    accountNumber: buildSBOrderWalletAccountNumber(customer),
+    walletType: 'sb_order_wallet',
+    createdBy: 'ECOMMERCE_SYSTEM',
+    branchId: sbaccount.branchId || customer.branchId || '',
+    accountManagerId: sbaccount.accountManagerId || customer.accountManagerId || '',
+    status: 'active',
+    availableBalance: 0,
+    ledgerBalance: 0
+  });
+
+  return walletAccount;
 };
 
 const getActiveProductVariations = (product) => {
@@ -226,6 +259,32 @@ const refreshSBAccountCostFromItems = (sbaccount) => {
   return sbaccount;
 };
 
+const buildSBAccountItemSummary = (items = []) => {
+  return items.map((item) => item.productName).filter(Boolean).join(', ');
+};
+
+const appendItemsToActiveMultiItemSBAccount = async (activeSBAccount, items) => {
+  if (!activeSBAccount || !Array.isArray(items) || items.length === 0) {
+    return null;
+  }
+
+  items.forEach((item) => activeSBAccount.items.push(item));
+  activeSBAccount.accountMode = 'multi_item';
+  activeSBAccount.productName = buildSBAccountItemSummary(activeSBAccount.items);
+  activeSBAccount.productDescription = activeSBAccount.items
+    .map((item) => item.productDescription)
+    .filter(Boolean)
+    .join(' | ') || activeSBAccount.productName;
+  activeSBAccount.sellingPrice = activeSBAccount.items.reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
+  activeSBAccount.costPrice = activeSBAccount.items.reduce((sum, item) => sum + Number(item.costSubtotal || 0), 0);
+  activeSBAccount.profit = activeSBAccount.items.reduce((sum, item) => sum + Number(item.profitAmount || 0), 0);
+  if (activeSBAccount.status === 'sold') {
+    activeSBAccount.status = 'booked';
+  }
+
+  return await activeSBAccount.save();
+};
+
 const transferSBExcessBalanceToWallet = async ({ sbaccount, walletAccount, amount, date, formattedDate, createdBy }) => {
   const transferAmount = Number(amount || 0);
   if (transferAmount <= 0) {
@@ -280,7 +339,7 @@ const transferSBExcessBalanceToWallet = async ({ sbaccount, walletAccount, amoun
   await Account.findByIdAndUpdate(walletAccount._id, {
     $set: {
       availableBalance: Number(walletAccount.availableBalance || 0) + transferAmount,
-      ledgerBalance: Number(walletAccount.ledgerBalance || 0),
+      ledgerBalance: Number(walletAccount.ledgerBalance || 0) + transferAmount,
     }
   });
 
@@ -311,6 +370,17 @@ const createSBAccount = async (SBAccountData) => {
             existingSBAccountNumber.branchId
           );
           if (items.length > 0) {
+            const activeMultiItemSBAccount = await SBAccount.findOne({
+              customerId: existingSBAccountNumber.customerId,
+              accountMode: 'multi_item',
+              status: { $ne: 'sold' }
+            }).sort({ createdAt: 1 });
+
+            if (activeMultiItemSBAccount) {
+              const updatedSBAccount = await appendItemsToActiveMultiItemSBAccount(activeMultiItemSBAccount, items);
+              return ({message:"Product added to existing SB account successfully", newSBAccount: updatedSBAccount})
+            }
+
             SBAccountData.items = items;
             SBAccountData.productName = items.map((item) => item.productName).join(', ');
             SBAccountData.productDescription = items
@@ -320,6 +390,7 @@ const createSBAccount = async (SBAccountData) => {
             SBAccountData.sellingPrice = items.reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
             SBAccountData.costPrice = items.reduce((sum, item) => sum + Number(item.costSubtotal || 0), 0);
             SBAccountData.profit = items.reduce((sum, item) => sum + Number(item.profitAmount || 0), 0);
+            SBAccountData.accountMode = 'multi_item';
           }
           const existingSBAccount = await SBAccount.findOne({
             accountNumber: SBAccountData.accountNumber,
@@ -489,10 +560,16 @@ const getAccountByAccountNumber = async (accountNumber) => {
     }
   
     // Check for an active package with the given account type
-    const sbaccount = await SBAccount.findOne({
+    let sbaccount = await SBAccount.findOne({
       SBAccountNumber: contributionInput.SBAccountNumber,
-      productName: contributionInput.productName,
     });
+
+    if (sbaccount?.accountMode !== 'multi_item' && contributionInput.productName) {
+      sbaccount = await SBAccount.findOne({
+        SBAccountNumber: contributionInput.SBAccountNumber,
+        productName: contributionInput.productName,
+      });
+    }
   
     if (!sbaccount) {
       throw new error('Customer does not have an active package');
@@ -508,6 +585,40 @@ const getAccountByAccountNumber = async (accountNumber) => {
       minute: "2-digit",
       hour12: true, // Ensures AM/PM format
     });
+
+    if (sbaccount.accountMode === 'multi_item') {
+      const walletAccount = await ensureSBOrderWalletForSBAccount(sbaccount);
+      const depositAmount = Number(contributionInput.amount || 0);
+      if (!Number.isFinite(depositAmount) || depositAmount <= 0) {
+        throw new Error('Invalid deposit amount');
+      }
+      const newWalletAvailableBalance = Number(walletAccount.availableBalance || 0) + depositAmount;
+      const newWalletLedgerBalance = Number(walletAccount.ledgerBalance || 0) + depositAmount;
+      const newContribution = await AccountTransaction.DepositTransactionAccount({
+        createdBy: contributionInput.createdBy,
+        transactionOwnerId: contributionInput.createdBy,
+        customerId: sbaccount.customerId,
+        amount: depositAmount,
+        balance: newWalletAvailableBalance,
+        branchId: walletAccount.branchId || sbaccount.branchId,
+        accountManagerId: walletAccount.accountManagerId || sbaccount.accountManagerId || '',
+        accountNumber: walletAccount.accountNumber,
+        accountTypeId: walletAccount._id,
+        date: formattedDate,
+        narration: `SB Order Wallet Deposit - ${sbaccount.SBAccountNumber}`,
+        package: "Wallet",
+        direction: "Credit",
+      });
+
+      await Account.findByIdAndUpdate(walletAccount._id, {
+        $set: {
+          availableBalance: newWalletAvailableBalance,
+          ledgerBalance: newWalletLedgerBalance,
+        }
+      });
+
+      return { data: newContribution, message: "deposit successful" };
+    }
   
         // Retrieve and update ledger balance
         const updateLedgerBalance = await Account.findOne({ accountNumber: sbaccount.accountNumber });
@@ -775,8 +886,13 @@ const getAccountByAccountNumber = async (accountNumber) => {
       if (itemAmount <= 0) {
         throw new Error('Invalid item amount');
       }
-      if (Number(sbaccount.balance || 0) < itemAmount) {
+      const isMultiItemAccount = sbaccount.accountMode === 'multi_item';
+      const itemIsPaidFromSBWallet = Number(item.paidAmount || 0) >= itemAmount;
+      if (!isMultiItemAccount && Number(sbaccount.balance || 0) < itemAmount) {
         throw new Error('Insufficient amount for item price');
+      }
+      if (isMultiItemAccount && !itemIsPaidFromSBWallet) {
+        throw new Error('This item has not been requested or paid from the SB Order Wallet');
       }
       await hydrateSBItemCostFromProduct(sbaccount, itemIndex, createdBy);
       const deliveryItem = sbaccount.items[itemIndex];
@@ -785,10 +901,10 @@ const getAccountByAccountNumber = async (accountNumber) => {
       }
       await updateSBItemStock(sbaccount, deliveryItem, 'decrease', createdBy);
 
-      const account = await Account.findOne({ accountNumber: sbaccount.accountNumber });
+      const account = await ensureSBOrderWalletForSBAccount(sbaccount);
       if (!account) {
         await updateSBItemStock(sbaccount, deliveryItem, 'increase', createdBy);
-        throw new Error('Account not found for ledger update');
+        throw new Error('SB order wallet not found for ledger update');
       }
 
       const currentDate = new Date();
@@ -800,7 +916,9 @@ const getAccountByAccountNumber = async (accountNumber) => {
         minute: "2-digit",
         hour12: true,
       });
-      const newBalance = Number(sbaccount.balance || 0) - itemAmount;
+      const newBalance = isMultiItemAccount
+        ? Number(sbaccount.balance || 0)
+        : Number(sbaccount.balance || 0) - itemAmount;
       const itemProfit = calculateExactSBItemProfit(deliveryItem) || calculateSBItemProfit(sbaccount, itemAmount);
 
       let transaction;
@@ -817,7 +935,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
           accountTypeId: sbaccount._id,
           date: formattedDate,
           package: "SB",
-          narration: `${deliveryItem.productName} delivered from ${sbaccount.productName}`,
+          narration: `Product delivered: ${deliveryItem.productName} - SB Account ${sbaccount.SBAccountNumber}`,
           direction: "Purchased",
         });
 
@@ -845,20 +963,24 @@ const getAccountByAccountNumber = async (accountNumber) => {
         sbaccount.balance = newBalance;
         if (sbaccount.items.every((orderItem) => ['delivered', 'completed'].includes(orderItem.fulfillmentStatus))) {
           sbaccount.status = 'sold';
-          await transferSBExcessBalanceToWallet({
-            sbaccount,
-            walletAccount: account,
-            amount: sbaccount.balance,
-            date: currentDate,
-            formattedDate,
-            createdBy,
-          });
+          if (!isMultiItemAccount) {
+            await transferSBExcessBalanceToWallet({
+              sbaccount,
+              walletAccount: account,
+              amount: sbaccount.balance,
+              date: currentDate,
+              formattedDate,
+              createdBy,
+            });
+          }
         }
 
-        await Account.findOneAndUpdate(
-          { accountNumber: sbaccount.accountNumber },
-          { $set: { ledgerBalance: Number(account.ledgerBalance || 0) - itemAmount } }
-        );
+        if (!isMultiItemAccount) {
+          await Account.findOneAndUpdate(
+            { _id: account._id },
+            { $set: { ledgerBalance: Number(account.ledgerBalance || 0) - itemAmount } }
+          );
+        }
         await sbaccount.save();
       } catch (error) {
         await updateSBItemStock(sbaccount, deliveryItem, 'increase', createdBy);
@@ -866,6 +988,114 @@ const getAccountByAccountNumber = async (accountNumber) => {
       }
 
       return { data: transaction, sbAccount: sbaccount, message: 'Item delivered successfully' };
+    };
+
+    const requestSBAccountItemFromWallet = async ({ SBAccountNumber, itemId, createdBy, requesterRole }) => {
+      if (!['Agent', 'OnlineRep'].includes(requesterRole)) {
+        throw new Error('Only reps can submit customer requests');
+      }
+
+      const sbaccount = await SBAccount.findOne({ SBAccountNumber });
+      if (!sbaccount) {
+        throw new Error('Customer does not have an active package');
+      }
+      if (!Array.isArray(sbaccount.items) || sbaccount.items.length === 0) {
+        throw new Error('This SB account does not have item details');
+      }
+
+      const decodedItemId = decodeURIComponent(String(itemId));
+      const numericItemIndex = Number(decodedItemId);
+      const itemIndex = Number.isInteger(numericItemIndex) && numericItemIndex >= 0
+        ? numericItemIndex
+        : sbaccount.items.findIndex((item) =>
+            String(item._id || '') === decodedItemId ||
+            String(item.productId || '') === decodedItemId
+          );
+      if (itemIndex === -1 || itemIndex >= sbaccount.items.length) {
+        throw new Error('SB account item not found');
+      }
+
+      const item = sbaccount.items[itemIndex];
+      if (['delivered', 'completed'].includes(item.fulfillmentStatus)) {
+        throw new Error('This item has already been delivered');
+      }
+
+      const itemAmount = Number(item.subtotal || item.price || 0);
+      if (itemAmount <= 0) {
+        throw new Error('Invalid item amount');
+      }
+      if (Number(item.paidAmount || 0) >= itemAmount) {
+        throw new Error('This item has already been requested');
+      }
+
+      const walletAccount = await ensureSBOrderWalletForSBAccount(sbaccount);
+      if (!walletAccount) {
+        throw new Error('Customer SB order wallet not found');
+      }
+      if (Number(walletAccount.availableBalance || 0) < itemAmount) {
+        throw new Error(`Insufficient wallet balance. Available: ₦${Number(walletAccount.availableBalance || 0).toLocaleString()}, Required: ₦${itemAmount.toLocaleString()}`);
+      }
+
+      const currentDate = new Date();
+      const formattedDate = currentDate.toLocaleString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        year: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+      });
+      const requestRef = `SB_ITEM_REQUEST_${sbaccount.SBAccountNumber}_${item._id || itemIndex}_${Date.now()}`;
+      const nextWalletAvailableBalance = Number(walletAccount.availableBalance || 0) - itemAmount;
+      const nextWalletLedgerBalance = Number(walletAccount.ledgerBalance || 0) - itemAmount;
+      const currentSBBalance = Number(sbaccount.balance || 0);
+
+      await AccountTransaction.DepositTransactionAccount({
+        createdBy,
+        transactionOwnerId: createdBy,
+        customerId: sbaccount.customerId,
+        amount: itemAmount,
+        balance: nextWalletAvailableBalance,
+        branchId: walletAccount.branchId || sbaccount.branchId,
+        accountManagerId: walletAccount.accountManagerId || sbaccount.accountManagerId || '',
+        accountNumber: walletAccount.accountNumber,
+        accountTypeId: walletAccount._id,
+        date: formattedDate,
+        package: "Wallet",
+        narration: `Customer request debit for ${item.productName} - ${requestRef}`,
+        direction: "Debit",
+      });
+
+      await AccountTransaction.DepositTransactionAccount({
+        createdBy,
+        transactionOwnerId: createdBy,
+        customerId: sbaccount.customerId,
+        amount: itemAmount,
+        balance: currentSBBalance,
+        branchId: sbaccount.branchId,
+        accountManagerId: sbaccount.accountManagerId || walletAccount.accountManagerId || '',
+        accountNumber: sbaccount.accountNumber,
+        accountTypeId: sbaccount._id,
+        date: formattedDate,
+        package: "SB",
+        narration: `Customer request reserved from SB Order Wallet for ${item.productName} - ${requestRef}`,
+        direction: "Credit",
+      });
+
+      await Account.findByIdAndUpdate(walletAccount._id, {
+        $set: {
+          availableBalance: nextWalletAvailableBalance,
+          ledgerBalance: nextWalletLedgerBalance,
+        }
+      });
+
+      sbaccount.items[itemIndex].paidAmount = itemAmount;
+      await sbaccount.save();
+
+      return {
+        sbAccount: sbaccount,
+        message: 'Customer request submitted successfully'
+      };
     };
 
     const getSBAccountByAccountNumber = async (SBAccountNumber) => {
@@ -880,6 +1110,7 @@ module.exports = {
     withdrawSBContribution,
     sellProduct,
     markSBAccountItemDelivered,
+    requestSBAccountItemFromWallet,
     updateSBAccountItemCostPrice,
     updateCostPrice
   };

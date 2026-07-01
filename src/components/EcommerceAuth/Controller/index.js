@@ -114,12 +114,14 @@ const getWallet = async (req, res) => {
 const initializeWalletFunding = async (req, res) => {
   try {
     const customerId = req.customer.customerId;
-    const { amount, customerEmail, callbackUrl } = req.body;
+    const { amount, customerEmail, callbackUrl, autoPayOrderNumber, autoPayItemId } = req.body;
 
     const result = await EcommerceAuthService.initializeWalletFunding(customerId, {
       amount,
       customerEmail,
-      callbackUrl
+      callbackUrl,
+      autoPayOrderNumber,
+      autoPayItemId
     });
 
     res.status(200).json({
@@ -190,12 +192,22 @@ const resetPassword = async (req, res) => {
   }
 };
 
+const resetAdminForcedPassword = async (req, res) => {
+  try {
+    const result = await EcommerceAuthService.resetAdminForcedPassword(req.body);
+    res.status(200).json(result);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
 module.exports = {
   register,
   login,
   checkPhone,
   forgotPassword,
   resetPassword,
+  resetAdminForcedPassword,
   getProfile,
   updateProfile,
   changePassword,

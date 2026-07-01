@@ -10,6 +10,11 @@ const accountSchema = new mongoose.Schema({
     type: String, 
     required: true 
 },
+  walletType: {
+    type: String,
+    enum: ['free_to_withdraw', 'sb_order_wallet'],
+    default: 'free_to_withdraw',
+  },
   availableBalance: {
     type: Number,
     required: true,

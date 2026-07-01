@@ -5,8 +5,11 @@ const { staffAuth, customerAuth, adminOnly, staffExceptProductManager } = requir
 
 // Customer routes (orders created only via payment verification)
 router.get('/my-orders', customerAuth, EcommerceOrderController.getMyOrders);
+router.get('/active', customerAuth, EcommerceOrderController.getActiveOrder);
+router.post('/active/items', customerAuth, EcommerceOrderController.addItemsToActiveOrder);
 router.get('/number/:orderNumber', customerAuth, EcommerceOrderController.getOrderByNumber);
 router.put('/number/:orderNumber/items/:itemId/replace', customerAuth, EcommerceOrderController.replaceInstallmentOrderItem);
+router.post('/number/:orderNumber/items/:itemId/pay-wallet', customerAuth, EcommerceOrderController.payOrderItemFromWallet);
 router.post('/number/:orderNumber/payoff', customerAuth, EcommerceOrderController.payoffRemainingBalance);
 router.post('/number/:orderNumber/deposit/initialize', customerAuth, EcommerceOrderController.initializeOrderDepositPayment);
 
@@ -17,6 +20,7 @@ router.post('/webhook/paystack', EcommerceOrderController.handlePaystackWebhook)
 
 // Admin/Staff routes
 router.get('/', staffAuth, staffExceptProductManager, EcommerceOrderController.getAllOrders);
+router.get('/product-action-requests', staffAuth, staffExceptProductManager, EcommerceOrderController.getProductActionRequests);
 router.get('/overdue', staffAuth, staffExceptProductManager, EcommerceOrderController.getOverdueInstallments);
 router.get('/branch/:branchId', staffAuth, staffExceptProductManager, EcommerceOrderController.getOrdersByBranch);
 router.get('/product-demand', staffAuth, adminOnly, EcommerceOrderController.getProductDemandSummary);

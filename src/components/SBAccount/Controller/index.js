@@ -154,6 +154,25 @@ const formatSBAccountResponse = (data, requesterRole) => {
           res.status(500).json({ message: error.message });
         }
       }
+      const requestItemFromWallet = async (req, res) => {
+        try {
+          const createdBy = req.staff.staffId;
+          const requesterRole = req.staff.role;
+          const { SBAccountNumber, itemId } = req.params;
+          const result = await SBAccountService.requestSBAccountItemFromWallet({
+            SBAccountNumber,
+            itemId,
+            createdBy,
+            requesterRole
+          });
+          res.status(200).json({
+            ...result,
+            sbAccount: formatSBAccountResponse(result.sbAccount, req.staff?.role)
+          });
+        } catch (error) {
+          res.status(500).json({ message: error.message });
+        }
+      }
       const updateItemCostPrice = async (req, res) => {
         try {
           const editedBy = req.staff.staffId;
@@ -175,6 +194,7 @@ const formatSBAccountResponse = (data, requesterRole) => {
     withdrawSBContribution,
     sellProduct,
     markItemDelivered,
+    requestItemFromWallet,
     updateItemCostPrice,
     updateCostPrice
   };

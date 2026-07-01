@@ -13,7 +13,7 @@ const buildFallbackEmail = (customer) => {
   const identifier = String(customer?.phone || customer?._id || 'customer')
     .replace(/[^a-zA-Z0-9]/g, '')
     .toLowerCase();
-  return `${identifier || 'customer'}@surebank.shop`;
+  return `${identifier || 'customer'}@surebankstores.com`;
 };
 
 const resolvePaymentEmail = async ({ customerId, customerEmail, orderEmail }) => {
@@ -111,6 +111,46 @@ const getMyOrders = async (req, res) => {
   }
 };
 
+const getProductActionRequests = async (req, res) => {
+  try {
+    const result = await EcommerceOrderService.getProductActionRequests(req.staff);
+    res.status(200).json(result);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getActiveOrder = async (req, res) => {
+  try {
+    const customerId = req.customer.customerId;
+    const order = await EcommerceOrderService.getActiveCustomerEcommerceOrder(customerId);
+    res.status(200).json({
+      hasActiveOrder: Boolean(order),
+      order
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const addItemsToActiveOrder = async (req, res) => {
+  try {
+    const customerId = req.customer.customerId;
+    const order = await EcommerceOrderService.addItemsToActiveOrder({
+      ...req.body,
+      customerId,
+      accountNumber: req.body.accountNumber || req.customer.phone
+    });
+
+    res.status(200).json({
+      message: 'Product added to your active SB order',
+      order
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
 const replaceInstallmentOrderItem = async (req, res) => {
   try {
     const customerId = req.customer.customerId;
@@ -150,6 +190,25 @@ const payoffRemainingBalance = async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
+  }
+};
+
+const payOrderItemFromWallet = async (req, res) => {
+  try {
+    const customerId = req.customer.customerId;
+    const { orderNumber, itemId } = req.params;
+    const order = await EcommerceOrderService.payOrderItemFromWallet({
+      orderNumber,
+      itemId,
+      customerId
+    });
+
+    res.status(200).json({
+      message: 'Product paid successfully from wallet',
+      order
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
   }
 };
 
@@ -642,9 +701,21 @@ const verifyPayment = async (req, res) => {
     const existingOrder = await EcommerceOrderService.getOrderByReference(reference);
     if (existingOrder) {
       console.log('Order already exists:', existingOrder.orderNumber);
+      const alreadyPaid = existingOrder.installmentPlan?.payments?.some(
+        (payment) => payment.transactionRef === reference
+      );
+      if (!alreadyPaid && existingOrder.SBAccountNumber) {
+        await EcommerceOrderService.creditSBAccountForOrderDirect(
+          existingOrder._id,
+          walletPaymentAmount,
+          reference,
+          'PAYSTACK_PAYMENT'
+        );
+      }
+      const refreshedOrder = await EcommerceOrderService.getOrderById(existingOrder._id);
       return res.status(200).json({
         message: 'Order already exists',
-        order: existingOrder
+        order: refreshedOrder
       });
     }
 
@@ -670,56 +741,28 @@ const verifyPayment = async (req, res) => {
 
     console.log('Order created:', order.orderNumber, 'Type:', orderData.paymentType);
 
-    // If outright payment, mark as paid
-    if (orderData.paymentType === 'outright') {
-      console.log('Processing outright payment for order:', order._id);
+    console.log('Processing ecommerce account payment:', walletPaymentAmount, 'SBAccountNumber:', order.SBAccountNumber);
+
+    if (order.SBAccountNumber) {
       try {
-        await EcommerceOrderService.recordWalletMovementForOrderPayment(
+        await EcommerceOrderService.creditSBAccountForOrderDirect(
           order._id,
           walletPaymentAmount,
-          reference
+          reference,
+          'PAYSTACK_PAYMENT'
         );
-        await EcommerceOrderService.recordOutrightPayment(order._id, reference);
-        console.log('Outright payment recorded successfully');
-      } catch (paymentError) {
-        console.error('Error recording outright payment:', paymentError);
+        console.log('Ecommerce account payment credited successfully');
+      } catch (creditError) {
+        console.error('Error crediting ecommerce account payment:', creditError);
         // Still continue - order was created
       }
     } else {
-      console.log('Processing installment payment:', walletPaymentAmount, 'SBAccountNumber:', order.SBAccountNumber);
-
-      if (order.SBAccountNumber) {
-        try {
-          await EcommerceOrderService.creditSBAccountForOrderDirect(
-            order._id,
-            walletPaymentAmount,
-            reference,
-            'PAYSTACK_PAYMENT'
-          );
-          console.log('Installment payment credited successfully');
-        } catch (creditError) {
-          console.error('Error crediting SB account:', creditError);
-          // Still continue - order was created
-        }
-      } else {
-        console.warn('No SBAccountNumber for installment order - payment status may not update');
-      }
+      console.warn('No SBAccountNumber for ecommerce order - payment status may not update');
     }
 
     // Get updated order - fetch fresh from database
     const updatedOrder = await EcommerceOrderService.getOrderById(order._id);
     console.log('Final order status:', updatedOrder.paymentStatus, updatedOrder.status);
-
-    // Double-check: if outright payment and still showing unpaid, force update
-    if (orderData.paymentType === 'outright' && updatedOrder.paymentStatus !== 'paid') {
-      console.warn('Payment status still not updated, forcing update...');
-      updatedOrder.paymentStatus = 'paid';
-      updatedOrder.status = 'paid';
-      await updatedOrder.save();
-      // Update SBAccount status to sold
-      await EcommerceOrderService.updateSBAccountToSold(updatedOrder.SBAccountNumber);
-      console.log('Forced update complete - status:', updatedOrder.paymentStatus);
-    }
 
     res.status(200).json({
       message: 'Payment verified and order created',
@@ -772,7 +815,19 @@ const handlePaystackWebhook = async (req, res) => {
 
         // Check if order already exists
         const existingOrder = await EcommerceOrderService.getOrderByReference(reference);
-        if (!existingOrder) {
+        if (existingOrder) {
+          const alreadyPaid = existingOrder.installmentPlan?.payments?.some(
+            (payment) => payment.transactionRef === reference
+          );
+          if (!alreadyPaid && existingOrder.SBAccountNumber) {
+            await EcommerceOrderService.creditSBAccountForOrderDirect(
+              existingOrder._id,
+              walletPaymentAmount,
+              reference,
+              'PAYSTACK_WEBHOOK'
+            );
+          }
+        } else {
           // Create order
           const order = await EcommerceOrderService.createOrder({
             customerId: orderData.customerId,
@@ -793,34 +848,13 @@ const handlePaystackWebhook = async (req, res) => {
             paymentReference: reference
           });
 
-          // Handle payment based on type
-          if (orderData.paymentType === 'outright') {
-            await EcommerceOrderService.recordWalletMovementForOrderPayment(
+          if (order.SBAccountNumber) {
+            await EcommerceOrderService.creditSBAccountForOrderDirect(
               order._id,
               walletPaymentAmount,
-              reference
+              reference,
+              'PAYSTACK_WEBHOOK'
             );
-            await EcommerceOrderService.recordOutrightPayment(order._id, reference);
-
-            // Verify the update
-            const verifyOrder = await EcommerceOrderService.getOrderById(order._id);
-            if (verifyOrder.paymentStatus !== 'paid') {
-              console.warn('Webhook: Payment status not updated, forcing...');
-              verifyOrder.paymentStatus = 'paid';
-              verifyOrder.status = 'paid';
-              await verifyOrder.save();
-              // Update SBAccount status to sold
-              await EcommerceOrderService.updateSBAccountToSold(verifyOrder.SBAccountNumber);
-            }
-          } else {
-            if (order.SBAccountNumber) {
-              await EcommerceOrderService.creditSBAccountForOrderDirect(
-                order._id,
-                walletPaymentAmount,
-                reference,
-                'PAYSTACK_WEBHOOK'
-              );
-            }
           }
         }
       }
@@ -838,7 +872,11 @@ module.exports = {
   getOrderById,
   getOrderByNumber,
   getMyOrders,
+  getProductActionRequests,
+  getActiveOrder,
+  addItemsToActiveOrder,
   replaceInstallmentOrderItem,
+  payOrderItemFromWallet,
   payoffRemainingBalance,
   initializeOrderDepositPayment,
   getAllOrders,

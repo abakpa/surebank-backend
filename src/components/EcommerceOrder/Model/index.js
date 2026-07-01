@@ -58,6 +58,36 @@ const orderItemSchema = new mongoose.Schema({
     type: Number,
     required: true
   },
+  paymentType: {
+    type: String,
+    enum: ['outright', 'installment'],
+    default: 'installment'
+  },
+  addedAt: {
+    type: Date
+  },
+  paymentReference: {
+    type: String
+  },
+  costPrice: {
+    type: Number,
+    default: 0
+  },
+  costSubtotal: {
+    type: Number,
+    default: 0
+  },
+  profitAmount: {
+    type: Number,
+    default: 0
+  },
+  profitReported: {
+    type: Boolean,
+    default: false
+  },
+  profitReportedAt: {
+    type: Date
+  },
   paidAmount: {
     type: Number,
     default: 0
@@ -178,7 +208,24 @@ const ecommerceOrderSchema = new mongoose.Schema({
     type: String,
     unique: true,
     sparse: true
-  }
+  },
+  paymentReferences: [{
+    reference: {
+      type: String
+    },
+    amount: {
+      type: Number,
+      default: 0
+    },
+    paymentType: {
+      type: String,
+      enum: ['outright', 'installment']
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now
+    }
+  }]
 }, { timestamps: true });
 
 const EcommerceOrder = mongoose.model('EcommerceOrder', ecommerceOrderSchema);

@@ -1,11 +1,14 @@
 const EcommerceOrder = require('../Model/index');
 const Cart = require('../../Cart/Model/index');
+const CartService = require('../../Cart/Service/index');
 const Product = require('../../Product/Model/index');
 const ProductService = require('../../Product/Service/index');
 const SBAccount = require('../../SBAccount/Model/index');
 const Account = require('../../Account/Model/index');
 const AccountTransaction = require('../../AccountTransaction/Service/index');
 const AccountTransactionModel = require('../../AccountTransaction/Model/index');
+const SureBankAccountTransaction = require('../../SureBankAccount/Model/index');
+const SureBankAccountTransactionService = require('../../SureBankAccount/Service/index');
 const Staff = require('../../Staff/Model/index');
 const Customer = require('../../Customer/Model/index');
 const ProductBranchStock = require('../../ProductBranchStock/Model/index');
@@ -20,6 +23,84 @@ const formatTransactionDate = (date = new Date()) => {
     minute: "2-digit",
     hour12: true,
   });
+};
+
+const escapeRegex = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const getOrderItemVariation = (product, variationId = '') => {
+  if (!product || !variationId || !Array.isArray(product.variations)) {
+    return null;
+  }
+
+  return product.variations.find((variation) => String(variation._id || '') === String(variationId)) || null;
+};
+
+const calculateOrderItemProfit = (product, item) => {
+  const quantity = Math.max(1, Number(item.quantity || 1));
+  const subtotal = Number(item.subtotal || item.price || 0);
+  const variation = getOrderItemVariation(product, item.variationId || '');
+  const costPrice = Number((variation ? variation.costPrice : product?.costPrice) || 0);
+
+  if (subtotal <= 0 || costPrice <= 0) {
+    return { costPrice: 0, costSubtotal: 0, profitAmount: 0 };
+  }
+
+  const costSubtotal = costPrice * quantity;
+  const profitAmount = Math.max(0, Math.round((subtotal - costSubtotal) * 100) / 100);
+
+  return { costPrice, costSubtotal, profitAmount };
+};
+
+const recordEcommerceOrderItemIncome = async (order, item, staff) => {
+  if (!order || !item || item.profitReported) {
+    return null;
+  }
+
+  const product = await Product.findById(item.productId);
+  const { costPrice, costSubtotal, profitAmount } = calculateOrderItemProfit(product, item);
+
+  item.costPrice = costPrice;
+  item.costSubtotal = costSubtotal;
+  item.profitAmount = profitAmount;
+
+  if (profitAmount <= 0) {
+    return null;
+  }
+
+  const itemId = String(item._id || item.productId || '');
+  const narrationRef = `ECOMMERCE_ITEM_PROFIT_${order.orderNumber}_${itemId}`;
+  const existingIncome = await SureBankAccountTransaction.findOne({
+    package: 'ECOMMERCE',
+    direction: 'Credit',
+    narration: { $regex: escapeRegex(narrationRef) }
+  });
+
+  if (existingIncome) {
+    item.profitReported = true;
+    item.profitReportedAt = existingIncome.createdAt || new Date();
+    return existingIncome;
+  }
+
+  const sbAccount = order.SBAccountNumber
+    ? await SBAccount.findOne({ SBAccountNumber: order.SBAccountNumber })
+    : null;
+  const currentDate = new Date();
+
+  const result = await SureBankAccountTransactionService.DepositTransactionAccount({
+    package: 'ECOMMERCE',
+    date: formatTransactionDate(currentDate),
+    direction: 'Credit',
+    narration: `${narrationRef} - Profit on ${item.productName}`,
+    branchId: order.branchId || sbAccount?.branchId || '',
+    amount: profitAmount,
+    customerId: order.customerId,
+    type: sbAccount?._id?.toString() || order._id?.toString(),
+  });
+
+  item.profitReported = true;
+  item.profitReportedAt = currentDate;
+
+  return result;
 };
 
 const generateOrderNumber = async () => {
@@ -82,12 +163,21 @@ const getOrderStatusFromSBAccount = (sbAccount, paidAmountOverride = null) => {
   return 'pending';
 };
 
-const allocateOrderItemPayments = (order) => {
+const allocateOrderItemPayments = (order, preferredPaymentReference = '') => {
   if (!order || !Array.isArray(order.items)) return order;
 
-  order.items.forEach((item) => {
+  let remainingPaid = Number(order.installmentPlan?.totalPaid || 0);
+  const orderedItems = preferredPaymentReference
+    ? [
+        ...order.items.filter((item) => item.paymentReference === preferredPaymentReference),
+        ...order.items.filter((item) => item.paymentReference !== preferredPaymentReference)
+      ]
+    : order.items;
+
+  orderedItems.forEach((item) => {
     const subtotal = Number(item.subtotal || 0);
-    const paidAmount = Math.min(subtotal, Math.max(0, Number(item.paidAmount || 0)));
+    const paidAmount = Math.min(subtotal, Math.max(0, remainingPaid));
+    remainingPaid -= paidAmount;
     item.paidAmount = paidAmount;
     item.paymentStatus = paidAmount >= subtotal
       ? 'paid'
@@ -201,6 +291,48 @@ const mergeOrderPaymentRecordsWithSBDeposits = async (plainOrder) => {
   return plainOrder;
 };
 
+async function normalizeMultiItemOrderPayments(plainOrder) {
+  if (!plainOrder?.SBAccountNumber || plainOrder.paymentType !== 'installment') {
+    return plainOrder;
+  }
+
+  const sbAccount = await SBAccount.findOne({ SBAccountNumber: plainOrder.SBAccountNumber }).select('accountMode').lean();
+  if (sbAccount?.accountMode !== 'multi_item') {
+    return plainOrder;
+  }
+
+  const payments = Array.isArray(plainOrder.installmentPlan?.payments)
+    ? plainOrder.installmentPlan.payments
+    : [];
+
+  plainOrder.items = await Promise.all((plainOrder.items || []).map(async (item) => {
+    const subtotal = Number(item.subtotal || 0);
+    const itemId = String(item._id || '');
+    const isDelivered = ['delivered', 'completed'].includes(item.fulfillmentStatus);
+    const hasItemPayment = payments.some((payment) => (
+      payment.status === 'paid' &&
+      String(payment.transactionRef || '').startsWith(`ITEM_PAYMENT_${plainOrder.orderNumber}_${itemId}_`)
+    ));
+    const hasDeliverySettlement = Boolean(await findExistingItemDeliverySettlement(plainOrder, item));
+
+    if (isDelivered || hasItemPayment || hasDeliverySettlement) {
+      return {
+        ...item,
+        paidAmount: subtotal,
+        paymentStatus: 'paid'
+      };
+    }
+
+    return {
+      ...item,
+      paidAmount: 0,
+      paymentStatus: 'unpaid'
+    };
+  }));
+
+  return plainOrder;
+}
+
 const buildOrderFromSBAccount = async (sbAccount) => {
   const sellingPrice = Number(sbAccount.sellingPrice || 0);
   const payments = await getSBAccountPaymentRecords(sbAccount._id);
@@ -234,6 +366,7 @@ const buildOrderFromSBAccount = async (sbAccount) => {
 	      quantity,
 	      price: Number(item.price || subtotal / quantity || 0),
 	      subtotal,
+	      addedAt: resolveOrderItemAddedAt(item, sbAccount.createdAt),
 	      paidAmount,
 	      paymentStatus: paidAmount >= subtotal ? 'paid' : paidAmount > 0 ? 'partial' : 'unpaid',
 	      fulfillmentStatus: item.fulfillmentStatus || (sbAccount.status === 'sold' ? 'completed' : 'pending')
@@ -359,11 +492,13 @@ const decorateOrderProductAvailability = async (order) => {
 
   const plainOrder = typeof order.toObject === 'function' ? order.toObject() : { ...order };
   await mergeOrderPaymentRecordsWithSBDeposits(plainOrder);
+  await normalizeMultiItemOrderPayments(plainOrder);
   const outOfMarketProductIds = await getOutOfMarketProductIds(plainOrder.items || []);
   const orderIsCompleted = plainOrder.paymentStatus === 'paid' && plainOrder.status === 'completed';
 
   plainOrder.items = (plainOrder.items || []).map((item) => ({
     ...item,
+    addedAt: resolveOrderItemAddedAt(item, plainOrder.createdAt),
     isOutOfMarket: outOfMarketProductIds.has(item.productId?.toString()),
     requiresReplacement: outOfMarketProductIds.has(item.productId?.toString()) && !orderIsCompleted
   }));
@@ -421,36 +556,107 @@ const normalizePaymentAmount = (amount) => {
   return numericAmount;
 };
 
-const getCustomerWalletAccount = async (order) => {
-  let account = await Account.findOne({ accountNumber: order.accountNumber });
+const getObjectIdTimestamp = (id) => {
+  if (!id) return null;
+  if (typeof id.getTimestamp === 'function') {
+    return id.getTimestamp();
+  }
+  const value = id.toString?.() || String(id);
+  if (!/^[a-fA-F0-9]{24}$/.test(value)) {
+    return null;
+  }
+  const timestamp = parseInt(value.substring(0, 8), 16) * 1000;
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
 
-  if (!account) {
-    account = await Account.findOne({ customerId: order.customerId });
+const resolveOrderItemAddedAt = (item, fallbackDate) => {
+  const fallback = fallbackDate ? new Date(fallbackDate) : null;
+  const idTimestamp = getObjectIdTimestamp(item?._id);
+  const addedAt = item?.addedAt ? new Date(item.addedAt) : null;
+
+  if (idTimestamp && addedAt && addedAt.getTime() - idTimestamp.getTime() > 60 * 1000) {
+    return idTimestamp;
+  }
+  if (addedAt && !Number.isNaN(addedAt.getTime())) {
+    return addedAt;
+  }
+  if (idTimestamp) {
+    return idTimestamp;
+  }
+  return fallback && !Number.isNaN(fallback.getTime()) ? fallback : undefined;
+};
+
+const getPrimaryCustomerAccount = async ({ accountNumber, customerId }) => {
+  let account = null;
+  if (accountNumber) {
+    account = await Account.findOne({
+      accountNumber,
+      walletType: { $ne: 'sb_order_wallet' }
+    });
+  }
+  if (!account && customerId) {
+    account = await Account.findOne({
+      customerId: customerId.toString(),
+      walletType: { $ne: 'sb_order_wallet' }
+    });
+  }
+  return account;
+};
+
+const buildSBOrderWalletAccountNumber = (customer) => `${customer.phone}-SBW`;
+
+const ensureSBOrderWalletForCustomer = async ({ customerId, accountNumber }) => {
+  let customer = null;
+  if (customerId) {
+    customer = await Customer.findById(customerId);
+  }
+
+  let account = null;
+  if (customer?._id) {
+    account = await Account.findOne({
+      customerId: customer._id.toString(),
+      walletType: 'sb_order_wallet'
+    });
+  }
+
+  if (!account && accountNumber && String(accountNumber).endsWith('-SBW')) {
+    account = await Account.findOne({
+      accountNumber,
+      walletType: 'sb_order_wallet'
+    });
+  }
+
+  if (!account && customer) {
+    account = await Account.create({
+      customerId: customer._id.toString(),
+      accountNumber: buildSBOrderWalletAccountNumber(customer),
+      walletType: 'sb_order_wallet',
+      createdBy: 'ECOMMERCE_SYSTEM',
+      branchId: customer.branchId || '',
+      accountManagerId: customer.accountManagerId || '',
+      status: 'active',
+      availableBalance: 0,
+      ledgerBalance: 0
+    });
   }
 
   if (!account) {
-    throw new Error('Customer wallet account not found');
+    throw new Error('Customer SB order wallet not found');
   }
 
   return account;
 };
 
+const getCustomerWalletAccount = async (order) => {
+  return await ensureSBOrderWalletForCustomer({
+    customerId: order.customerId,
+    accountNumber: order.accountNumber
+  });
+};
+
 const getWalletAccountForCustomer = async ({ customerId, accountNumber }) => {
-  let account = null;
-
-  if (accountNumber) {
-    account = await Account.findOne({ accountNumber });
-  }
-
-  if (!account && customerId) {
-    account = await Account.findOne({ customerId: customerId.toString() });
-  }
-
-  if (!account) {
-    throw new Error('Customer wallet account not found');
-  }
-
-  return account;
+  return await ensureSBOrderWalletForCustomer({ customerId, accountNumber });
 };
 
 const getStaffDisplayName = async (staffId) => {
@@ -474,7 +680,8 @@ const resolveOrderOwnership = async ({ customerId, accountNumber, branchId }) =>
       $or: [
         { customerId: customerId?.toString() },
         { accountNumber }
-      ]
+      ],
+      walletType: { $ne: 'sb_order_wallet' }
     }).lean(),
     Customer.findById(customerId).lean()
   ]);
@@ -495,6 +702,416 @@ const resolveOrderOwnership = async ({ customerId, accountNumber, branchId }) =>
     accountManagerId: resolvedAccountManagerId,
     branchId: resolvedBranchId,
   };
+};
+
+const ACTIVE_ORDER_STATUSES = ['pending', 'confirmed', 'paid', 'partially_paid', 'processing', 'shipped', 'delivered'];
+
+const findActiveCustomerEcommerceOrder = async (customerId) => {
+  return await EcommerceOrder.findOne({
+    customerId: customerId.toString(),
+    status: { $in: ACTIVE_ORDER_STATUSES }
+  }).sort({ updatedAt: -1, createdAt: -1 });
+};
+
+const findActiveCustomerMultiItemSBAccount = async (customerId) => {
+  return await SBAccount.findOne({
+    customerId: customerId.toString(),
+    accountMode: 'multi_item',
+    status: { $ne: 'sold' }
+  }).sort({ updatedAt: -1, createdAt: -1 });
+};
+
+const mapSBAccountItemsToOrderItems = (sbAccount) => (
+  (sbAccount.items || []).map((item) => {
+    const subtotal = Number(item.subtotal || item.price || 0);
+    const paidAmount = Number(item.paidAmount || 0);
+    return {
+      _id: item._id,
+      productId: item.productId || '',
+      variationId: item.variationId || '',
+      variationName: item.variationName || '',
+      productName: item.productName,
+      quantity: Number(item.quantity || 1),
+      price: Number(item.price || 0),
+      subtotal,
+      paymentType: 'installment',
+      addedAt: item.addedAt || sbAccount.createdAt,
+      paidAmount,
+      paymentStatus: paidAmount >= subtotal ? 'paid' : paidAmount > 0 ? 'partial' : 'unpaid',
+      fulfillmentStatus: item.fulfillmentStatus || 'pending',
+      fulfilledAt: item.fulfilledAt,
+      fulfilledBy: item.fulfilledBy,
+      costPrice: Number(item.costPrice || 0),
+      costSubtotal: Number(item.costSubtotal || 0),
+      profitAmount: Number(item.profitAmount || 0),
+      profitReported: Boolean(item.profitReported),
+      profitReportedAt: item.profitReportedAt
+    };
+  })
+);
+
+const createEcommerceOrderFromActiveSBAccount = async ({ sbAccount, customerId, accountNumber, ownership }) => {
+  const existingLinkedOrder = await EcommerceOrder.findOne({
+    customerId: customerId.toString(),
+    SBAccountNumber: sbAccount.SBAccountNumber,
+    status: { $in: ACTIVE_ORDER_STATUSES }
+  }).sort({ updatedAt: -1, createdAt: -1 });
+
+  if (existingLinkedOrder) {
+    return existingLinkedOrder;
+  }
+
+  const orderNumber = await generateOrderNumber();
+  const totalAmount = Number(sbAccount.sellingPrice || 0);
+  const order = new EcommerceOrder({
+    orderNumber,
+    customerId: customerId.toString(),
+    accountNumber: accountNumber || sbAccount.accountNumber,
+    SBAccountNumber: sbAccount.SBAccountNumber,
+    items: mapSBAccountItemsToOrderItems(sbAccount),
+    totalAmount,
+    paymentType: 'installment',
+    installmentPlan: calculateFlexibleInstallmentPlan(totalAmount),
+    shippingAddress: 'Created in backoffice',
+    shippingCity: '',
+    shippingState: '',
+    customerPhone: ownership?.customer?.phone || accountNumber || sbAccount.accountNumber,
+    customerEmail: ownership?.customer?.email || '',
+    notes: sbAccount.productDescription || '',
+    branchId: ownership?.branchId || sbAccount.branchId,
+    accountManagerId: ownership?.accountManagerId || sbAccount.accountManagerId || 'ECOMMERCE_SYSTEM',
+    status: 'pending',
+    paymentStatus: 'unpaid',
+    ...(sbAccount.paymentReference ? { paymentReference: sbAccount.paymentReference } : {})
+  });
+
+  return await order.save();
+};
+
+const syncEcommerceOrderFromSBAccount = async (order) => {
+  if (!order?.SBAccountNumber) {
+    return order;
+  }
+
+  const sbAccount = await SBAccount.findOne({
+    SBAccountNumber: order.SBAccountNumber,
+    accountMode: 'multi_item'
+  });
+  if (!sbAccount) {
+    return order;
+  }
+
+  const totalAmount = Number(sbAccount.sellingPrice || 0);
+  order.items = mapSBAccountItemsToOrderItems(sbAccount);
+  order.totalAmount = totalAmount;
+  order.paymentType = 'installment';
+  order.installmentPlan = order.installmentPlan || calculateFlexibleInstallmentPlan(0);
+  order.installmentPlan.frequency = 'flexible';
+  order.installmentPlan.duration = 0;
+  order.installmentPlan.amountPerPeriod = 0;
+  order.installmentPlan.remainingBalance = Math.max(0, totalAmount - Number(order.installmentPlan.totalPaid || 0));
+  order.installmentPlan.creditBalance = Math.max(0, Number(order.installmentPlan.totalPaid || 0) - totalAmount);
+  order.installmentPlan.nextPaymentDate = null;
+  order.notes = sbAccount.productDescription || order.notes;
+  order.branchId = sbAccount.branchId || order.branchId;
+  order.accountManagerId = sbAccount.accountManagerId || order.accountManagerId;
+  if (!['delivered', 'completed', 'cancelled'].includes(order.status || '')) {
+    order.status = order.installmentPlan.remainingBalance <= 0
+      ? 'paid'
+      : Number(order.installmentPlan.totalPaid || 0) > 0
+        ? 'partially_paid'
+        : 'pending';
+  }
+  order.paymentStatus = order.installmentPlan.remainingBalance <= 0
+    ? 'paid'
+    : Number(order.installmentPlan.totalPaid || 0) > 0
+      ? 'partial'
+      : 'unpaid';
+
+  return await order.save();
+};
+
+const findOrCreateActiveCustomerEcommerceOrder = async ({ customerId, accountNumber, branchId }) => {
+  const activeOrder = await findActiveCustomerEcommerceOrder(customerId);
+  if (activeOrder) {
+    return await syncEcommerceOrderFromSBAccount(activeOrder);
+  }
+
+  const activeSBAccount = await findActiveCustomerMultiItemSBAccount(customerId);
+  if (!activeSBAccount) {
+    return null;
+  }
+
+  const ownership = await resolveOrderOwnership({ customerId, accountNumber, branchId });
+  return await createEcommerceOrderFromActiveSBAccount({
+    sbAccount: activeSBAccount,
+    customerId,
+    accountNumber,
+    ownership
+  });
+};
+
+const getActiveCustomerEcommerceOrder = async (customerId) => {
+  const order = await findActiveCustomerEcommerceOrder(customerId);
+  if (order) {
+    const syncedOrder = await syncEcommerceOrderFromSBAccount(order);
+    return await decorateOrderProductAvailability(syncedOrder);
+  }
+
+  const activeSBAccount = await findActiveCustomerMultiItemSBAccount(customerId);
+  if (!activeSBAccount) {
+    return null;
+  }
+
+  return await buildOrderFromSBAccount(activeSBAccount);
+};
+
+const appendItemsToExistingOrder = async ({
+  order,
+  customerId,
+  accountNumber,
+  paymentType,
+  shippingAddress,
+  shippingCity,
+  shippingState,
+  customerPhone,
+  customerEmail,
+  notes,
+  branchId,
+  paymentReference,
+  items,
+  totalAmount,
+  clearCustomerCart = false
+}) => {
+  if (!order) {
+    throw new Error('Active order not found');
+  }
+
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error('No product selected');
+  }
+
+  const ownership = await resolveOrderOwnership({ customerId, accountNumber, branchId });
+  const newOrderItems = items.map((item) => ({
+    ...(typeof item.toObject === 'function' ? item.toObject() : item),
+    paymentType,
+    addedAt: new Date(),
+    paymentReference,
+    paidAmount: 0,
+    paymentStatus: 'unpaid',
+    fulfillmentStatus: 'pending'
+  }));
+
+  newOrderItems.forEach((item) => order.items.push(item));
+  order.totalAmount = Number(order.totalAmount || 0) + Number(totalAmount || 0);
+  order.shippingAddress = shippingAddress || order.shippingAddress;
+  order.shippingCity = shippingCity || order.shippingCity;
+  order.shippingState = shippingState || order.shippingState;
+  order.customerPhone = customerPhone || order.customerPhone;
+  order.customerEmail = customerEmail || order.customerEmail;
+  order.notes = notes || order.notes;
+  order.branchId = ownership.branchId || order.branchId;
+  order.accountManagerId = ownership.accountManagerId || order.accountManagerId;
+  order.paymentType = 'installment';
+  order.installmentPlan = order.installmentPlan || calculateFlexibleInstallmentPlan(0);
+  order.installmentPlan.frequency = 'flexible';
+  order.installmentPlan.duration = 0;
+  order.installmentPlan.amountPerPeriod = 0;
+  order.installmentPlan.remainingBalance = Math.max(
+    0,
+    Number(order.totalAmount || 0) - Number(order.installmentPlan.totalPaid || 0)
+  );
+  order.installmentPlan.creditBalance = Math.max(
+    0,
+    Number(order.installmentPlan.totalPaid || 0) - Number(order.totalAmount || 0)
+  );
+  order.installmentPlan.nextPaymentDate = null;
+  if (paymentReference) {
+    order.paymentReferences = order.paymentReferences || [];
+    if (!order.paymentReferences.some((entry) => entry.reference === paymentReference)) {
+      order.paymentReferences.push({
+        reference: paymentReference,
+        amount: 0,
+        paymentType
+      });
+    }
+  }
+
+  if (order.installmentPlan.remainingBalance <= 0) {
+    order.paymentStatus = 'paid';
+    if (!['delivered', 'completed', 'cancelled'].includes(order.status)) {
+      order.status = 'paid';
+    }
+  } else if (Number(order.installmentPlan.totalPaid || 0) > 0) {
+    order.paymentStatus = 'partial';
+    if (!['delivered', 'completed', 'cancelled'].includes(order.status)) {
+      order.status = 'partially_paid';
+    }
+  } else {
+    order.paymentStatus = 'unpaid';
+    if (!['delivered', 'completed', 'cancelled'].includes(order.status)) {
+      order.status = 'pending';
+    }
+  }
+
+  let account = ownership.account || await getPrimaryCustomerAccount({ accountNumber, customerId });
+  if (!account) {
+    throw new Error('Customer wallet account not found');
+  }
+  await ensureOrderSBAccount({ order, customerId, account, ownership, paymentReference });
+  const savedOrder = await order.save();
+  await syncSBAccountItemsFromOrder(savedOrder);
+
+  if (clearCustomerCart) {
+    await Cart.findOneAndUpdate(
+      { customerId },
+      { $set: { items: [], totalAmount: 0, totalItems: 0 } }
+    );
+  }
+
+  return savedOrder;
+};
+
+const addItemsToActiveOrder = async (orderData) => {
+  const {
+    customerId: rawCustomerId,
+    accountNumber,
+    paymentType = 'installment',
+    shippingAddress,
+    shippingCity,
+    shippingState,
+    customerPhone,
+    customerEmail,
+    notes,
+    branchId,
+    paymentReference,
+    productId,
+    variationId = '',
+    quantity = 1
+  } = orderData;
+
+  const customerId = rawCustomerId ? rawCustomerId.toString() : rawCustomerId;
+  const activeOrder = await findOrCreateActiveCustomerEcommerceOrder({ customerId, accountNumber, branchId });
+  if (!activeOrder) {
+    throw new Error('No active SB order found for this customer');
+  }
+
+  let items = [];
+  let totalAmount = 0;
+  let clearCustomerCart = false;
+
+  if (productId) {
+    const item = await CartService.getProductForPayment(productId, Number(quantity || 1), variationId || '');
+    items = [item];
+    totalAmount = Number(item.subtotal || 0);
+  } else {
+    const cart = await Cart.findOne({ customerId });
+    if (!cart || cart.items.length === 0) {
+      throw new Error('Cart is empty');
+    }
+    const outOfMarketProductIds = await getOutOfMarketProductIds(cart.items);
+    if (outOfMarketProductIds.size > 0) {
+      throw new Error('One or more products in your cart are out of market. Remove them and select another product from SureBank stores.');
+    }
+    items = cart.items;
+    totalAmount = Number(cart.totalAmount || 0);
+    clearCustomerCart = true;
+  }
+
+  const savedOrder = await appendItemsToExistingOrder({
+    order: activeOrder,
+    customerId,
+    accountNumber,
+    paymentType,
+    shippingAddress,
+    shippingCity,
+    shippingState,
+    customerPhone,
+    customerEmail,
+    notes,
+    branchId,
+    paymentReference,
+    items,
+    totalAmount,
+    clearCustomerCart
+  });
+
+  return await decorateOrderProductAvailability(savedOrder);
+};
+
+const syncSBAccountItemsFromOrder = async (order) => {
+  if (!order?.SBAccountNumber) return null;
+
+  return await SBAccount.findOneAndUpdate(
+    { SBAccountNumber: order.SBAccountNumber },
+    {
+      $set: {
+        productName: buildOrderProductSummary(order.items || [], order.orderNumber),
+        productDescription: `Ecommerce product account for order ${order.orderNumber}`,
+        sellingPrice: Number(order.totalAmount || 0),
+        accountMode: 'multi_item',
+        status: order.status === 'completed' ? 'sold' : 'booked',
+        items: (order.items || []).map((item) => ({
+          _id: item._id,
+          productId: item.productId,
+          variationId: item.variationId || '',
+          productName: item.productName,
+          productDescription: '',
+          quantity: Number(item.quantity || 1),
+          price: Number(item.price || 0),
+          subtotal: Number(item.subtotal || 0),
+          addedAt: resolveOrderItemAddedAt(item, order.createdAt),
+          paidAmount: Number(item.paidAmount || 0),
+          fulfillmentStatus: item.fulfillmentStatus || 'pending'
+        }))
+      }
+    },
+    { new: true }
+  );
+};
+
+const ensureOrderSBAccount = async ({ order, customerId, account, ownership, paymentReference }) => {
+  if (order.SBAccountNumber) {
+    return await syncSBAccountItemsFromOrder(order);
+  }
+
+  const currentDate = new Date();
+  const startDate = formatTransactionDate(currentDate);
+  const SBAccountNumber = await generateUniqueAccountNumber('SBA');
+  const sbAccount = new SBAccount({
+    customerId,
+    accountNumber: account.accountNumber,
+    SBAccountNumber,
+    createdBy: 'ECOMMERCE_SYSTEM',
+    productName: buildOrderProductSummary(order.items || [], order.orderNumber),
+    productDescription: `Ecommerce product account for order ${order.orderNumber}`,
+    accountManagerId: ownership.accountManagerId,
+    paymentReference,
+    branchId: ownership.branchId,
+    status: 'booked',
+    accountMode: 'multi_item',
+    startDate,
+    sellingPrice: Number(order.totalAmount || 0),
+    items: (order.items || []).map((item) => ({
+      productId: item.productId,
+      variationId: item.variationId || '',
+      productName: item.productName,
+      productDescription: '',
+      quantity: Number(item.quantity || 1),
+      price: Number(item.price || 0),
+      subtotal: Number(item.subtotal || 0),
+      addedAt: resolveOrderItemAddedAt(item, order.createdAt),
+      paidAmount: Number(item.paidAmount || 0),
+      fulfillmentStatus: item.fulfillmentStatus || 'pending'
+    })),
+    costPrice: 0,
+    balance: 0,
+    profit: 0
+  });
+
+  await sbAccount.save();
+  order.SBAccountNumber = SBAccountNumber;
+  return sbAccount;
 };
 
 const createOrder = async (orderData) => {
@@ -555,20 +1172,95 @@ const createOrder = async (orderData) => {
   // Note: Stock check removed - orders can be placed regardless of stock
   // Stock will be managed separately by admin
 
+  const newOrderItems = cart.items.map((item) => ({
+    ...(typeof item.toObject === 'function' ? item.toObject() : item),
+    paymentType,
+    addedAt: new Date(),
+    paymentReference,
+    paidAmount: 0,
+    paymentStatus: 'unpaid',
+    fulfillmentStatus: 'pending'
+  }));
+
+  const activeOrder = await findOrCreateActiveCustomerEcommerceOrder({ customerId, accountNumber, branchId });
+  if (activeOrder) {
+    newOrderItems.forEach((item) => activeOrder.items.push(item));
+    activeOrder.totalAmount = Number(activeOrder.totalAmount || 0) + Number(cart.totalAmount || 0);
+    activeOrder.shippingAddress = shippingAddress || activeOrder.shippingAddress;
+    activeOrder.shippingCity = shippingCity || activeOrder.shippingCity;
+    activeOrder.shippingState = shippingState || activeOrder.shippingState;
+    activeOrder.customerPhone = customerPhone || activeOrder.customerPhone;
+    activeOrder.customerEmail = customerEmail || activeOrder.customerEmail;
+    activeOrder.notes = notes || activeOrder.notes;
+    activeOrder.branchId = ownership.branchId || activeOrder.branchId;
+    activeOrder.accountManagerId = ownership.accountManagerId || activeOrder.accountManagerId;
+    activeOrder.paymentType = 'installment';
+    activeOrder.installmentPlan = activeOrder.installmentPlan || calculateFlexibleInstallmentPlan(0);
+    activeOrder.installmentPlan.frequency = 'flexible';
+    activeOrder.installmentPlan.duration = 0;
+    activeOrder.installmentPlan.amountPerPeriod = 0;
+    activeOrder.installmentPlan.remainingBalance = Math.max(
+      0,
+      Number(activeOrder.totalAmount || 0) - Number(activeOrder.installmentPlan.totalPaid || 0)
+    );
+    activeOrder.installmentPlan.creditBalance = Math.max(
+      0,
+      Number(activeOrder.installmentPlan.totalPaid || 0) - Number(activeOrder.totalAmount || 0)
+    );
+    activeOrder.installmentPlan.nextPaymentDate = null;
+    if (paymentReference) {
+      activeOrder.paymentReferences = activeOrder.paymentReferences || [];
+      if (!activeOrder.paymentReferences.some((entry) => entry.reference === paymentReference)) {
+        activeOrder.paymentReferences.push({
+          reference: paymentReference,
+          amount: 0,
+          paymentType
+        });
+      }
+    }
+
+    if (activeOrder.installmentPlan.remainingBalance <= 0) {
+      activeOrder.paymentStatus = 'paid';
+      if (!['delivered', 'completed', 'cancelled'].includes(activeOrder.status)) {
+        activeOrder.status = 'paid';
+      }
+    } else if (Number(activeOrder.installmentPlan.totalPaid || 0) > 0) {
+      activeOrder.paymentStatus = 'partial';
+      if (!['delivered', 'completed', 'cancelled'].includes(activeOrder.status)) {
+        activeOrder.status = 'partially_paid';
+      }
+    } else {
+      activeOrder.paymentStatus = 'unpaid';
+      if (!['delivered', 'completed', 'cancelled'].includes(activeOrder.status)) {
+        activeOrder.status = 'pending';
+      }
+    }
+
+    let account = ownership.account || await getPrimaryCustomerAccount({ accountNumber, customerId });
+    if (!account) {
+      throw new Error('Customer wallet account not found');
+    }
+    await ensureOrderSBAccount({ order: activeOrder, customerId, account, ownership, paymentReference });
+    const savedActiveOrder = await activeOrder.save();
+    await syncSBAccountItemsFromOrder(savedActiveOrder);
+
+    await Cart.findOneAndUpdate(
+      { customerId },
+      { $set: { items: [], totalAmount: 0, totalItems: 0 } }
+    );
+
+    return savedActiveOrder;
+  }
+
   const orderNumber = await generateOrderNumber();
 
   let order = {
     orderNumber,
     customerId,
     accountNumber,
-    items: cart.items.map((item) => ({
-      ...(typeof item.toObject === 'function' ? item.toObject() : item),
-      paidAmount: 0,
-      paymentStatus: 'unpaid',
-      fulfillmentStatus: 'pending'
-    })),
+    items: newOrderItems,
     totalAmount: cart.totalAmount,
-    paymentType,
+    paymentType: 'installment',
     shippingAddress,
     shippingCity,
     shippingState,
@@ -582,8 +1274,8 @@ const createOrder = async (orderData) => {
     paymentStatus: 'unpaid'
   };
 
-  // Handle installment payment
-  if (paymentType === 'installment') {
+  // Handle the customer's single ecommerce SB order as a flexible installment account.
+  if (true) {
     if (installmentFrequency && installmentFrequency !== 'flexible' && installmentDuration) {
       if (installmentFrequency === 'daily' && (installmentDuration < 7 || installmentDuration > 90)) {
         throw new Error('Daily installment duration must be between 7 and 90 days');
@@ -616,12 +1308,12 @@ const createOrder = async (orderData) => {
     });
 
     console.log('Looking for account with accountNumber:', accountNumber);
-    let account = ownership.account || await Account.findOne({ accountNumber });
+    let account = ownership.account || await getPrimaryCustomerAccount({ accountNumber, customerId });
 
     // Fallback: try to find by customerId if accountNumber lookup fails
     if (!account) {
       console.log('Account not found by accountNumber, trying customerId:', customerId);
-      account = await Account.findOne({ customerId });
+      account = await getPrimaryCustomerAccount({ customerId });
     }
 
     console.log('Account found:', account ? 'Yes' : 'No', account ? account._id : 'N/A');
@@ -643,13 +1335,24 @@ const createOrder = async (orderData) => {
                 SBAccountNumber,
                 createdBy: 'ECOMMERCE_SYSTEM',
                 productName: productNames ? `${productNames} (${orderNumber})` : `E-Commerce Order: ${orderNumber}`,
-                productDescription: `Installment payment for order ${orderNumber}`,
+                productDescription: `Ecommerce product account for order ${orderNumber}`,
                 accountManagerId: ownership.accountManagerId,
                 paymentReference,
                 branchId: ownership.branchId,
                 status: 'booked',
                 startDate,
                 sellingPrice: cart.totalAmount,
+                items: newOrderItems.map((item) => ({
+                  productId: item.productId,
+                  variationId: item.variationId || '',
+                  productName: item.productName,
+                  productDescription: '',
+                  quantity: Number(item.quantity || 1),
+                  price: Number(item.price || 0),
+                  subtotal: Number(item.subtotal || 0),
+                  paidAmount: Number(item.paidAmount || 0),
+                  fulfillmentStatus: item.fulfillmentStatus || 'pending'
+                })),
                 costPrice: 0,
                 balance: 0,
                 profit: 0
@@ -671,19 +1374,22 @@ const createOrder = async (orderData) => {
           SBAccountNumber,
           createdBy: 'ECOMMERCE_SYSTEM',
           productName: productNames ? `${productNames} (${orderNumber})` : `E-Commerce Order: ${orderNumber}`,
-          productDescription: `Installment payment for order ${orderNumber}`,
+          productDescription: `Ecommerce product account for order ${orderNumber}`,
           accountManagerId: ownership.accountManagerId,
           branchId: ownership.branchId,
           status: 'booked',
+          accountMode: 'multi_item',
           startDate,
           sellingPrice: cart.totalAmount,
-          items: cart.items.map((item) => ({
+          items: newOrderItems.map((item) => ({
             productId: item.productId,
+            variationId: item.variationId || '',
             productName: item.productName,
             productDescription: item.productDescription || '',
             quantity: Number(item.quantity || 1),
             price: Number(item.price || 0),
-            subtotal: Number(item.subtotal || 0)
+            subtotal: Number(item.subtotal || 0),
+            addedAt: item.addedAt || new Date()
           })),
           costPrice: 0,
           balance: 0,
@@ -728,7 +1434,10 @@ const getOrderById = async (orderId) => {
   if (!order) {
     throw new Error('Order not found');
   }
-  return await decorateOrderProductAvailability(order);
+  const syncedOrder = await syncEcommerceOrderFromSBAccount(order);
+  const populatedOrder = await EcommerceOrder.findById(syncedOrder._id)
+    .populate('customerId', 'firstName lastName phone address');
+  return await decorateOrderProductAvailability(populatedOrder || syncedOrder);
 };
 
 const getOrderByNumber = async (orderNumber) => {
@@ -736,7 +1445,8 @@ const getOrderByNumber = async (orderNumber) => {
   const order = await EcommerceOrder.findOne({ orderNumber });
   if (order) {
     console.log('Found order - status:', order.status, 'paymentStatus:', order.paymentStatus);
-    return await decorateOrderProductAvailability(order);
+    const syncedOrder = await syncEcommerceOrderFromSBAccount(order);
+    return await decorateOrderProductAvailability(syncedOrder);
   }
 
   const sbAccount = await SBAccount.findOne({ SBAccountNumber: orderNumber });
@@ -749,10 +1459,11 @@ const getOrderByNumber = async (orderNumber) => {
 
 const getCustomerOrders = async (customerId) => {
   console.log('getCustomerOrders called with customerId:', customerId, 'type:', typeof customerId);
-  const [orders, sbAccounts] = await Promise.all([
+  const [rawOrders, sbAccounts] = await Promise.all([
     EcommerceOrder.find({ customerId }).sort({ createdAt: -1 }),
     SBAccount.find({ customerId }).sort({ createdAt: -1 })
   ]);
+  const orders = await Promise.all(rawOrders.map((order) => syncEcommerceOrderFromSBAccount(order)));
   const orderSBAccountNumbers = new Set(
     orders
       .map((order) => order.SBAccountNumber)
@@ -855,7 +1566,6 @@ const replaceInstallmentOrderItem = async ({
     );
   }
 
-  allocateOrderItemPayments(order);
   return await order.save();
 };
 
@@ -1008,7 +1718,6 @@ const updateOrderStatus = async (orderId, status, staff) => {
   // If changing to 'delivered' or 'completed', reduce stock
   if ((status === 'delivered' || status === 'completed') &&
       previousStatus !== 'delivered' && previousStatus !== 'completed') {
-    allocateOrderItemPayments(order);
     for (const item of order.items) {
       if (!['delivered', 'completed'].includes(item.fulfillmentStatus)) {
         await assertOrderItemBranchStockAvailable(order, item);
@@ -1022,6 +1731,7 @@ const updateOrderStatus = async (orderId, status, staff) => {
       item.fulfillmentStatus = status === 'completed' ? 'completed' : 'delivered';
       item.fulfilledAt = new Date();
       item.fulfilledBy = staff?.staffId || '';
+      await recordEcommerceOrderItemIncome(order, item, staff);
     }
   }
 
@@ -1072,6 +1782,7 @@ const updateOrderItemFulfillment = async (orderId, itemId, status, staff) => {
   item.fulfillmentStatus = status;
   item.fulfilledAt = new Date();
   item.fulfilledBy = staff?.staffId || '';
+  await recordEcommerceOrderItemIncome(order, item, staff);
 
   if (order.items.every((orderItem) => orderItem.fulfillmentStatus === 'completed')) {
     order.status = 'completed';
@@ -1081,6 +1792,7 @@ const updateOrderItemFulfillment = async (orderId, itemId, status, staff) => {
 
   order.processedBy = staff?.staffId;
   await order.save();
+  await syncSBAccountItemsFromOrder(order);
 
   return await decorateOrderProductAvailability(order);
 };
@@ -1132,7 +1844,10 @@ const creditSBAccountForOrder = async (orderId, amount, staffId) => {
   if (paymentAmount > remainingBalance) {
     throw new Error(`Payment amount cannot exceed remaining balance of ₦${remainingBalance.toLocaleString()}`);
   }
-  if (!order.SBAccountNumber || !(await SBAccount.findOne({ SBAccountNumber: order.SBAccountNumber }))) {
+  const orderSBAccount = order.SBAccountNumber
+    ? await SBAccount.findOne({ SBAccountNumber: order.SBAccountNumber })
+    : null;
+  if (!orderSBAccount) {
     throw new Error('SB Account not found');
   }
 
@@ -1170,6 +1885,14 @@ const creditSBAccountForOrder = async (orderId, amount, staffId) => {
     { new: true }
   );
 
+  if (orderSBAccount.accountMode === 'multi_item') {
+    return {
+      walletAccount: updatedWalletAccount,
+      order,
+      sbAccount: orderSBAccount
+    };
+  }
+
   const paymentResult = await recordFlexibleInstallmentOrderPayment(
     order._id,
     paymentAmount,
@@ -1188,9 +1911,12 @@ const debitSBAccountForPayment = async (sbAccount, amount, order, staffId, optio
   const formattedDate = formatTransactionDate(currentDate);
 
   // Update Account ledger balance
-  const account = await Account.findOne({ accountNumber: sbAccount.accountNumber });
+  const account = await ensureSBOrderWalletForCustomer({
+    customerId: sbAccount.customerId,
+    accountNumber: sbAccount.accountNumber
+  });
   if (!account) {
-    throw new Error('Customer account not found');
+    throw new Error('Customer SB order wallet not found');
   }
 
   const newBalance = sbAccount.balance - amount;
@@ -1221,7 +1947,7 @@ const debitSBAccountForPayment = async (sbAccount, amount, order, staffId, optio
   // Update Account ledger balance
   if (!options.skipAccountLedgerUpdate) {
     await Account.findOneAndUpdate(
-      { accountNumber: sbAccount.accountNumber },
+      { _id: account._id },
       { $set: { ledgerBalance: account.ledgerBalance - amount } }
     );
   }
@@ -1369,18 +2095,13 @@ const createOrderAndPayFromWallet = async ({
     paymentReference: transactionRef
   });
 
-  if (paymentType === 'outright') {
-    await debitWalletForOrderPayment(order, normalizedPaymentAmount, transactionRef);
-    await recordOutrightPayment(order._id, transactionRef);
-  } else {
-    await recordFlexibleInstallmentOrderPayment(
-      order._id,
-      normalizedPaymentAmount,
-      transactionRef,
-      customerId.toString(),
-      { creditWallet: false }
-    );
-  }
+  await recordFlexibleInstallmentOrderPayment(
+    order._id,
+    normalizedPaymentAmount,
+    transactionRef,
+    customerId.toString(),
+    { creditWallet: false }
+  );
 
   return await EcommerceOrder.findById(order._id);
 };
@@ -1433,19 +2154,25 @@ const creditSBAccountWithoutLedgerImpact = async (order, amount, transactionRef,
   const formattedDate = formatTransactionDate();
   const effectiveAccountManagerId = sbAccount.accountManagerId || 'ECOMMERCE_SYSTEM';
   const reportingActor = getReportingStaffId(effectiveAccountManagerId, source);
+  const shouldUseSBOrderWalletOnly = sbAccount.accountMode === 'multi_item';
+  const nextSBBalance = shouldUseSBOrderWalletOnly
+    ? Number(sbAccount.balance || 0)
+    : Number(sbAccount.balance || 0) + amount;
 
   await AccountTransaction.DepositTransactionAccount({
     createdBy: reportingActor,
     transactionOwnerId: source,
     customerId: sbAccount.customerId,
     amount,
-    balance: sbAccount.balance + amount,
+    balance: nextSBBalance,
     branchId: sbAccount.branchId || 'ECOMMERCE',
     accountManagerId: effectiveAccountManagerId,
     accountNumber: sbAccount.accountNumber,
     accountTypeId: sbAccount._id,
     date: formattedDate,
-    narration: `Wallet Transfer to SB Account - Order: ${order.orderNumber} - Ref: ${transactionRef}`,
+    narration: shouldUseSBOrderWalletOnly
+      ? `SB Order Wallet payment reserved for Order: ${order.orderNumber} - Ref: ${transactionRef}`
+      : `Wallet Transfer to SB Account - Order: ${order.orderNumber} - Ref: ${transactionRef}`,
     package: "SB",
     direction: "Credit",
     excludeFromStaffStats: true,
@@ -1453,7 +2180,7 @@ const creditSBAccountWithoutLedgerImpact = async (order, amount, transactionRef,
 
   return await SBAccount.findByIdAndUpdate(
     sbAccount._id,
-    { balance: sbAccount.balance + amount },
+    { balance: nextSBBalance },
     { new: true }
   );
 };
@@ -1513,7 +2240,7 @@ const findExistingItemDeliverySettlement = async (order, item) => {
 
   return await AccountTransactionModel.findOne({
     package: 'SB',
-    direction: 'Debit',
+    direction: { $in: ['Debit', 'Purchased'] },
     narration: { $regex: escapedPrefix }
   }).lean();
 };
@@ -1547,6 +2274,30 @@ const settleOrderItemPaymentFromSBAccount = async (order, item, staff) => {
     throw new Error('SB Account not found');
   }
 
+  if (sbAccount.accountMode === 'multi_item') {
+    await debitWalletForOrderPayment(order, amountDue, transactionRef);
+
+    await AccountTransaction.DepositTransactionAccount({
+      createdBy: source,
+      transactionOwnerId: source,
+      customerId: sbAccount.customerId,
+      amount: amountDue,
+      balance: Number(sbAccount.balance || 0),
+      branchId: sbAccount.branchId || order.branchId || 'ECOMMERCE',
+      accountManagerId: sbAccount.accountManagerId || order.accountManagerId || 'ECOMMERCE_SYSTEM',
+      accountNumber: sbAccount.accountNumber,
+      accountTypeId: sbAccount._id,
+      date: formatTransactionDate(),
+      narration: `Product delivered: ${item.productName || item._id} - Order ${order.orderNumber} - Ref: ${transactionRef}`,
+      package: "SB",
+      direction: "Purchased",
+    });
+
+    item.paidAmount = subtotal;
+    item.paymentStatus = 'paid';
+    return await SBAccount.findOne({ SBAccountNumber: order.SBAccountNumber });
+  }
+
   const sbBalance = Number(sbAccount.balance || 0);
   if (sbBalance < amountDue) {
     const shortfall = amountDue - sbBalance;
@@ -1556,7 +2307,7 @@ const settleOrderItemPaymentFromSBAccount = async (order, item, staff) => {
 
   await debitSBAccountForPayment(sbAccount, amountDue, order, source, {
     skipAccountLedgerUpdate: true,
-    narration: `Item Delivery Settlement - Order: ${order.orderNumber} - Item: ${item.productName || item._id} - Ref: ${transactionRef}`
+    narration: `Product delivered: ${item.productName || item._id} - Order ${order.orderNumber} - Ref: ${transactionRef}`
   });
 
   item.paidAmount = subtotal;
@@ -1648,7 +2399,21 @@ const recordFlexibleInstallmentOrderPayment = async (orderId, amount, transactio
 
   order.installmentPlan.totalPaid = Number(order.installmentPlan.totalPaid || 0) + paymentAmount;
   order.installmentPlan.remainingBalance = Math.max(0, remainingBalance - paymentAmount);
+  order.installmentPlan.creditBalance = Math.max(0, Number(order.installmentPlan.totalPaid || 0) - Number(order.totalAmount || 0));
   order.installmentPlan.nextPaymentDate = null;
+  if (transactionRef) {
+    order.paymentReferences = order.paymentReferences || [];
+    const paymentReferenceEntry = order.paymentReferences.find((entry) => entry.reference === transactionRef);
+    if (paymentReferenceEntry) {
+      paymentReferenceEntry.amount = paymentAmount;
+    } else {
+      order.paymentReferences.push({
+        reference: transactionRef,
+        amount: paymentAmount,
+        paymentType: options.paymentType || 'installment'
+      });
+    }
+  }
 
   if (order.installmentPlan.remainingBalance <= 0) {
     order.paymentStatus = 'paid';
@@ -1658,12 +2423,220 @@ const recordFlexibleInstallmentOrderPayment = async (orderId, amount, transactio
     order.status = 'partially_paid';
   }
 
-  allocateOrderItemPayments(order);
   await order.save();
 
   return {
     order: await EcommerceOrder.findById(order._id),
     sbAccount: await SBAccount.findOne({ SBAccountNumber: order.SBAccountNumber })
+  };
+};
+
+const payOrderItemFromWallet = async ({ orderNumber, customerId, itemId }) => {
+  const order = await EcommerceOrder.findOne({ orderNumber, customerId: customerId.toString() });
+  if (!order) {
+    throw new Error('Order not found');
+  }
+
+  const item = order.items.id(itemId);
+  if (!item) {
+    throw new Error('Order item not found');
+  }
+  if (['delivered', 'completed'].includes(item.fulfillmentStatus)) {
+    throw new Error('This product has already been collected or delivered');
+  }
+
+  const subtotal = Number(item.subtotal || 0);
+  const paidAmount = Math.min(subtotal, Math.max(0, Number(item.paidAmount || 0)));
+  const amountDue = Math.max(0, subtotal - paidAmount);
+  if (amountDue <= 0) {
+    item.paidAmount = subtotal;
+    item.paymentStatus = 'paid';
+    await order.save();
+    return await decorateOrderProductAvailability(order);
+  }
+
+  const walletAccount = await getCustomerWalletAccount(order);
+  if (Number(walletAccount.availableBalance || 0) < amountDue) {
+    throw new Error(`Insufficient wallet balance. Available: ₦${Number(walletAccount.availableBalance || 0).toLocaleString()}, Required: ₦${amountDue.toLocaleString()}`);
+  }
+
+  const transactionRef = `ITEM_PAYMENT_${order.orderNumber}_${item._id}_${Date.now()}`;
+  await debitWalletForOrderPayment(order, amountDue, transactionRef);
+  await creditSBAccountWithoutLedgerImpact(order, amountDue, transactionRef, customerId.toString());
+
+  item.paidAmount = subtotal;
+  item.paymentStatus = 'paid';
+  order.installmentPlan = order.installmentPlan || calculateFlexibleInstallmentPlan(Number(order.totalAmount || 0));
+  order.installmentPlan.payments = order.installmentPlan.payments || [];
+  order.installmentPlan.payments.push({
+    date: new Date(),
+    amount: amountDue,
+    status: 'paid',
+    paidAt: new Date(),
+    transactionRef
+  });
+  order.installmentPlan.totalPaid = Number(order.installmentPlan.totalPaid || 0) + amountDue;
+  order.installmentPlan.remainingBalance = Math.max(0, Number(order.totalAmount || 0) - Number(order.installmentPlan.totalPaid || 0));
+  order.installmentPlan.creditBalance = Math.max(0, Number(order.installmentPlan.totalPaid || 0) - Number(order.totalAmount || 0));
+  order.installmentPlan.nextPaymentDate = null;
+  order.paymentStatus = order.installmentPlan.remainingBalance <= 0 ? 'paid' : 'partial';
+  if (!['delivered', 'completed', 'cancelled'].includes(order.status)) {
+    order.status = order.paymentStatus === 'paid' ? 'paid' : 'partially_paid';
+  }
+
+  await order.save();
+  await syncSBAccountItemsFromOrder(order);
+
+  return await decorateOrderProductAvailability(await EcommerceOrder.findById(order._id));
+};
+
+const hasRepAccessToCustomer = (staffId, customer, ownerId = '') => {
+  const normalizedStaffId = String(staffId || '');
+  return (
+    String(ownerId || '') === normalizedStaffId ||
+    String(customer?.accountManagerId || '') === normalizedStaffId ||
+    String(customer?.createdBy || '') === normalizedStaffId
+  );
+};
+
+const getCustomerDisplayName = (customer) => {
+  return [customer?.firstName, customer?.lastName].filter(Boolean).join(' ').trim() || 'Unknown Customer';
+};
+
+const getProductActionRequests = async (staff) => {
+  const role = staff?.role;
+  const staffId = String(staff?.staffId || '');
+  const isRep = ['Agent', 'OnlineRep', 'Rep'].includes(role);
+
+  const [ecommerceOrders, sbAccounts] = await Promise.all([
+    EcommerceOrder.find({
+      status: { $ne: 'cancelled' },
+      'items.paymentStatus': 'paid'
+    }).lean(),
+    SBAccount.find({
+      createdBy: { $ne: 'ECOMMERCE_SYSTEM' },
+      status: { $ne: 'sold' },
+      items: { $exists: true, $ne: [] }
+    }).lean()
+  ]);
+
+  const customerIds = new Set();
+  ecommerceOrders.forEach((order) => customerIds.add(String(order.customerId || '')));
+  sbAccounts.forEach((account) => customerIds.add(String(account.customerId || '')));
+
+  const customers = await Customer.find({
+    _id: { $in: Array.from(customerIds).filter(Boolean) }
+  }).select('firstName lastName phone accountManagerId createdBy branchId').lean();
+  const customerById = new Map(customers.map((customer) => [String(customer._id), customer]));
+
+  const actionItems = [];
+
+  ecommerceOrders.forEach((order) => {
+    const customer = customerById.get(String(order.customerId || ''));
+    if (isRep && !hasRepAccessToCustomer(staffId, customer, order.accountManagerId)) {
+      return;
+    }
+
+    const payments = Array.isArray(order.installmentPlan?.payments)
+      ? order.installmentPlan.payments
+      : [];
+
+    (order.items || []).forEach((item) => {
+      const itemId = String(item._id || '');
+      const successfulItemPayment = payments.find((payment) => (
+        payment.status === 'paid' &&
+        String(payment.transactionRef || '').startsWith(`ITEM_PAYMENT_${order.orderNumber}_${itemId}_`)
+      ));
+      const outrightInitialPayment = (
+        item.paymentType === 'outright' &&
+        item.paymentStatus === 'paid' &&
+        item.paymentReference &&
+        payments.some((payment) => (
+          payment.status === 'paid' &&
+          payment.transactionRef === item.paymentReference
+        ))
+      );
+
+      if ((!successfulItemPayment && !outrightInitialPayment) || ['delivered', 'completed'].includes(item.fulfillmentStatus)) {
+        return;
+      }
+
+      actionItems.push({
+        id: `ecommerce-${order._id}-${itemId}`,
+        source: 'ecommerce',
+        sourceLabel: 'Ecommerce',
+        orderId: String(order._id),
+        orderNumber: order.orderNumber,
+        SBAccountNumber: order.SBAccountNumber || '',
+        customerId: String(order.customerId || ''),
+        customerName: getCustomerDisplayName(customer),
+        customerPhone: customer?.phone || order.customerPhone || '',
+        accountManagerId: order.accountManagerId || customer?.accountManagerId || '',
+        branchId: order.branchId || customer?.branchId || '',
+        productId: item.productId || '',
+        itemId,
+        productName: item.productName,
+        variationName: item.variationName || '',
+        quantity: Number(item.quantity || 1),
+        amount: Number(item.subtotal || 0),
+        paidAmount: Number(item.paidAmount || item.subtotal || 0),
+        paymentStatus: item.paymentStatus || 'paid',
+        fulfillmentStatus: item.fulfillmentStatus || 'pending',
+        paidAt: successfulItemPayment?.paidAt || successfulItemPayment?.date || order.updatedAt,
+        createdAt: item.addedAt || order.createdAt,
+        actionUrl: `/ecommerce-order/${order._id}`
+      });
+    });
+  });
+
+  sbAccounts.forEach((account) => {
+    const customer = customerById.get(String(account.customerId || ''));
+    if (isRep && !hasRepAccessToCustomer(staffId, customer, account.accountManagerId || account.createdBy)) {
+      return;
+    }
+
+    (account.items || []).forEach((item) => {
+      const itemId = String(item._id || '');
+      const itemAmount = Number(item.subtotal || item.price || 0);
+      const paidAmount = Number(item.paidAmount || 0);
+      const itemIsPaid = paidAmount >= itemAmount;
+
+      if (!itemIsPaid || ['delivered', 'completed'].includes(item.fulfillmentStatus)) {
+        return;
+      }
+
+      actionItems.push({
+        id: `backoffice-${account._id}-${itemId}`,
+        source: 'backoffice',
+        sourceLabel: 'Backoffice',
+        sbAccountId: String(account._id),
+        SBAccountNumber: account.SBAccountNumber,
+        customerId: String(account.customerId || ''),
+        customerName: getCustomerDisplayName(customer),
+        customerPhone: customer?.phone || account.accountNumber || '',
+        accountManagerId: account.accountManagerId || customer?.accountManagerId || account.createdBy || '',
+        branchId: account.branchId || customer?.branchId || '',
+        productId: item.productId || '',
+        itemId,
+        productName: item.productName,
+        variationName: item.variationName || '',
+        quantity: Number(item.quantity || 1),
+        amount: itemAmount,
+        paidAmount: paidAmount >= itemAmount ? paidAmount : Number(account.balance || 0),
+        paymentStatus: 'paid',
+        fulfillmentStatus: item.fulfillmentStatus || 'pending',
+        paidAt: account.updatedAt || account.createdAt,
+        createdAt: account.createdAt,
+        actionUrl: `/customeraccountdashboard/${account.customerId}`
+      });
+    });
+  });
+
+  actionItems.sort((a, b) => new Date(b.paidAt || b.createdAt || 0) - new Date(a.paidAt || a.createdAt || 0));
+
+  return {
+    total: actionItems.length,
+    items: actionItems
   };
 };
 
@@ -1848,7 +2821,6 @@ const payoffRemainingBalanceFromWallet = async (orderNumber, customerId) => {
     order.installmentPlan.nextPaymentDate = null;
     order.paymentStatus = 'paid';
     order.status = 'paid';
-    allocateOrderItemPayments(order);
     await order.save();
     return await EcommerceOrder.findById(order._id);
   }
@@ -1872,7 +2844,6 @@ const payoffRemainingBalanceFromWallet = async (orderNumber, customerId) => {
   order.paymentStatus = 'paid';
   order.status = 'paid';
 
-  allocateOrderItemPayments(order);
   await order.save();
 
   return await EcommerceOrder.findById(order._id);
@@ -1935,7 +2906,6 @@ const recordInstallmentPayment = async (orderId, amount, transactionRef, staffId
     order.status = 'partially_paid';
   }
 
-  allocateOrderItemPayments(order);
   return await order.save();
 };
 
@@ -2039,7 +3009,6 @@ const processAutomaticPayments = async () => {
         order.status = 'partially_paid';
       }
 
-      allocateOrderItemPayments(order);
       await order.save();
     } catch (err) {
       results.errors.push({
@@ -2121,7 +3090,6 @@ const checkAndProcessPendingPayments = async (SBAccountNumber) => {
     order.status = 'partially_paid';
   }
 
-  allocateOrderItemPayments(order);
   await order.save();
 
   return results;
@@ -2207,7 +3175,13 @@ const getOverdueInstallments = async () => {
 
 // Get order by payment reference
 const getOrderByReference = async (paymentReference) => {
-  return await EcommerceOrder.findOne({ paymentReference });
+  return await EcommerceOrder.findOne({
+    $or: [
+      { paymentReference },
+      { 'paymentReferences.reference': paymentReference },
+      { 'items.paymentReference': paymentReference }
+    ]
+  });
 };
 
 // Credit SB Account directly (used by Paystack payment flow)
@@ -2220,6 +3194,9 @@ module.exports = {
   getOrderById,
   getOrderByNumber,
   getCustomerOrders,
+  getActiveCustomerEcommerceOrder,
+  addItemsToActiveOrder,
+  getProductActionRequests,
   getAllOrders,
   updateOrderStatus,
   updateOrderItemFulfillment,
@@ -2243,5 +3220,6 @@ module.exports = {
   recordWalletMovementForOrderPayment,
   payoffRemainingBalanceFromWallet,
   createOrderAndPayFromWallet,
-  replaceInstallmentOrderItem
+  replaceInstallmentOrderItem,
+  payOrderItemFromWallet
 };
