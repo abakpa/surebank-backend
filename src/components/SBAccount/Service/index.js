@@ -2,6 +2,7 @@ const Account = require('../../Account/Model');
 const  generateUniqueAccountNumber  = require('../../generateAccountNumber');
 const SBAccount = require('../Model/index');
 const Order = require('../Model/order');
+const EcommerceOrder = require('../../EcommerceOrder/Model/index');
 const AccountTransaction = require('../../AccountTransaction/Service/index');
 const AccountTransactionModel = require('../../AccountTransaction/Model/index');
 const SureBankAccount = require('../../SureBankAccount/Service/index');
@@ -9,6 +10,8 @@ const ProductService = require('../../Product/Service/index');
 const Product = require('../../Product/Model/index');
 const ProductBranchStock = require('../../ProductBranchStock/Model/index');
 const Customer = require('../../Customer/Model/index');
+const Staff = require('../../Staff/Model/index');
+const Branch = require('../../Branch/Model/index');
 const sendSMS = require('../../sendSMS');
 
 const getProductVariation = (product, variationId = '') => {
@@ -257,6 +260,249 @@ const refreshSBAccountCostFromItems = (sbaccount) => {
   sbaccount.costPrice = totalCost;
   sbaccount.profit = totalProfit;
   return sbaccount;
+};
+
+const getStaffDisplayName = (staff) => (
+  [staff?.firstName, staff?.lastName].filter(Boolean).join(' ').trim() || staff?.email || 'N/A'
+);
+
+const getCustomerDisplayName = (customer) => (
+  [customer?.firstName, customer?.lastName].filter(Boolean).join(' ').trim() || 'Unknown Customer'
+);
+
+const isMongoId = (value) => /^[a-f\d]{24}$/i.test(String(value || ''));
+
+const hasRepAccessToCustomer = (staffId, customer, fallbackManagerId = '') => {
+  const id = String(staffId || '');
+  if (!id) return false;
+
+  return [
+    customer?.accountManagerId,
+    customer?.createdBy,
+    fallbackManagerId
+  ].some((value) => String(value || '') === id);
+};
+
+const getBackofficeProductDeliverySummary = async (staff = {}, options = {}) => {
+  const role = staff?.role;
+  let staffId = String(staff?.staffId || '');
+  const isAdmin = role === 'Admin';
+  const isManager = role === 'Manager';
+  const isRepDashboardView = Boolean(options.staffId) && (isAdmin || isManager);
+  let isRep = ['Agent', 'OnlineRep', 'Rep'].includes(role);
+
+  if (isRepDashboardView) {
+    const targetStaff = await Staff.findById(options.staffId).select('role branchId').lean();
+    if (!targetStaff) {
+      throw new Error('Selected rep not found');
+    }
+    if (isManager && String(targetStaff.branchId || '') !== String(staff.branchId || '')) {
+      throw new Error('You can only view reps in your branch');
+    }
+
+    staffId = String(options.staffId);
+    isRep = true;
+  }
+
+  let assignedCustomerIds = [];
+  if (isRep) {
+    const assignedCustomers = await Customer.find({
+      $or: [
+        { accountManagerId: staffId },
+        { createdBy: staffId }
+      ]
+    }).select('_id').lean();
+    assignedCustomerIds = assignedCustomers.map((customer) => String(customer._id));
+  }
+
+  const query = {
+    createdBy: { $ne: 'ECOMMERCE_SYSTEM' },
+    items: { $exists: true, $ne: [] }
+  };
+  const ecommerceQuery = {
+    status: { $ne: 'cancelled' },
+    items: { $exists: true, $ne: [] }
+  };
+
+  if (isManager && staff?.branchId) {
+    query.branchId = String(staff.branchId);
+    ecommerceQuery.branchId = String(staff.branchId);
+  }
+
+  if (isRep) {
+    query.$or = [
+      { accountManagerId: staffId },
+      { createdBy: staffId },
+      { customerId: { $in: assignedCustomerIds } }
+    ];
+    ecommerceQuery.$or = [
+      { accountManagerId: staffId },
+      { processedBy: staffId },
+      { customerId: { $in: assignedCustomerIds } }
+    ];
+  }
+
+  if (!isAdmin && !isManager && !isRep) {
+    return {
+      pending: { count: 0, items: [] },
+      delivered: { count: 0, items: [] }
+    };
+  }
+
+  const [accounts, ecommerceOrders] = await Promise.all([
+    SBAccount.find(query)
+      .select('SBAccountNumber accountNumber customerId branchId createdBy accountManagerId items createdAt updatedAt status')
+      .lean(),
+    EcommerceOrder.find(ecommerceQuery)
+      .select('orderNumber SBAccountNumber accountNumber customerId customerPhone branchId accountManagerId processedBy items createdAt updatedAt status paymentStatus')
+      .lean()
+  ]);
+
+  const linkedSbNumbers = [...new Set(ecommerceOrders.map((order) => String(order.SBAccountNumber || '')).filter(Boolean))];
+  const linkedSbAccounts = linkedSbNumbers.length > 0
+    ? await SBAccount.find({ SBAccountNumber: { $in: linkedSbNumbers } }).select('SBAccountNumber createdBy').lean()
+    : [];
+  const linkedSbAccountByNumber = new Map(linkedSbAccounts.map((account) => [String(account.SBAccountNumber), account]));
+
+  const customerIds = [...new Set([
+    ...accounts.map((account) => String(account.customerId || '')),
+    ...ecommerceOrders.map((order) => String(order.customerId || ''))
+  ].filter(isMongoId))];
+  const branchIds = [...new Set([
+    ...accounts.map((account) => String(account.branchId || '')),
+    ...ecommerceOrders.map((order) => String(order.branchId || ''))
+  ].filter(isMongoId))];
+  const staffIds = [...new Set([
+    ...accounts.flatMap((account) => [
+    account.createdBy,
+    account.accountManagerId,
+    ...(account.items || []).map((item) => item.fulfilledBy)
+    ]),
+    ...ecommerceOrders.flatMap((order) => [
+      order.accountManagerId,
+      order.processedBy,
+      ...(order.items || []).map((item) => item.fulfilledBy)
+    ])
+  ].map((value) => String(value || '')).filter(isMongoId))];
+
+  const [customers, branches, staffMembers] = await Promise.all([
+    Customer.find({ _id: { $in: customerIds } }).select('firstName lastName phone accountManagerId createdBy branchId').lean(),
+    Branch.find({ _id: { $in: branchIds } }).select('name').lean(),
+    Staff.find({ _id: { $in: staffIds } }).select('firstName lastName email role').lean()
+  ]);
+
+  const customerById = new Map(customers.map((customer) => [String(customer._id), customer]));
+  const branchById = new Map(branches.map((branch) => [String(branch._id), branch]));
+  const staffById = new Map(staffMembers.map((member) => [String(member._id), member]));
+
+  const pendingItems = [];
+  const deliveredItems = [];
+
+  accounts.forEach((account) => {
+    const customer = customerById.get(String(account.customerId || ''));
+    if (isRep && !hasRepAccessToCustomer(staffId, customer, account.accountManagerId || account.createdBy)) {
+      return;
+    }
+
+    (account.items || []).forEach((item, index) => {
+      const status = item.fulfillmentStatus || 'pending';
+      const isDelivered = ['delivered', 'completed'].includes(status);
+      const itemId = String(item._id || index);
+      const branch = branchById.get(String(account.branchId || ''));
+      const createdBy = staffById.get(String(account.createdBy || ''));
+      const fulfilledBy = staffById.get(String(item.fulfilledBy || ''));
+
+      const detail = {
+        id: `${account._id}-${itemId}`,
+        sbAccountId: String(account._id),
+        SBAccountNumber: account.SBAccountNumber,
+        customerId: String(account.customerId || ''),
+        customerName: getCustomerDisplayName(customer),
+        customerPhone: customer?.phone || account.accountNumber || '',
+        branchName: branch?.name || 'N/A',
+        productName: item.productName || account.productName || 'N/A',
+        quantity: Number(item.quantity || 1),
+        amount: Number(item.subtotal || item.price || 0),
+        fulfillmentStatus: status,
+        accountStatus: account.status || '',
+        source: 'Backoffice',
+        createdBy: getStaffDisplayName(createdBy),
+        fulfilledBy: item.fulfilledBy ? getStaffDisplayName(fulfilledBy) : 'N/A',
+        addedAt: item.addedAt || account.createdAt,
+        fulfilledAt: item.fulfilledAt || null,
+        actionUrl: `/customeraccountdashboard/${account.customerId}`
+      };
+
+      if (isDelivered) {
+        deliveredItems.push(detail);
+      } else {
+        pendingItems.push(detail);
+      }
+    });
+  });
+
+  ecommerceOrders.forEach((order) => {
+    const linkedSbAccount = linkedSbAccountByNumber.get(String(order.SBAccountNumber || ''));
+    if (linkedSbAccount && linkedSbAccount.createdBy !== 'ECOMMERCE_SYSTEM') {
+      return;
+    }
+
+    const customer = customerById.get(String(order.customerId || ''));
+    if (isRep && !hasRepAccessToCustomer(staffId, customer, order.accountManagerId || order.processedBy)) {
+      return;
+    }
+
+    (order.items || []).forEach((item, index) => {
+      const status = item.fulfillmentStatus || 'pending';
+      const isDelivered = ['delivered', 'completed'].includes(status);
+      const itemId = String(item._id || index);
+      const branch = branchById.get(String(order.branchId || ''));
+      const fulfilledBy = staffById.get(String(item.fulfilledBy || order.processedBy || ''));
+
+      const detail = {
+        id: `ecommerce-${order._id}-${itemId}`,
+        orderId: String(order._id),
+        orderNumber: order.orderNumber,
+        SBAccountNumber: order.SBAccountNumber || '',
+        customerId: String(order.customerId || ''),
+        customerName: getCustomerDisplayName(customer),
+        customerPhone: customer?.phone || order.customerPhone || order.accountNumber || '',
+        branchName: branch?.name || 'N/A',
+        productName: item.productName || 'N/A',
+        quantity: Number(item.quantity || 1),
+        amount: Number(item.subtotal || item.price || 0),
+        fulfillmentStatus: status,
+        accountStatus: order.status || '',
+        source: 'Ecommerce',
+        createdBy: 'Ecommerce',
+        fulfilledBy: item.fulfilledBy ? getStaffDisplayName(fulfilledBy) : 'N/A',
+        addedAt: item.addedAt || order.createdAt,
+        fulfilledAt: item.fulfilledAt || null,
+        actionUrl: `/ecommerce-order/${order._id}`
+      };
+
+      if (isDelivered) {
+        deliveredItems.push(detail);
+      } else {
+        pendingItems.push(detail);
+      }
+    });
+  });
+
+  const sortByDateDesc = (a, b) => new Date(b.fulfilledAt || b.addedAt || 0) - new Date(a.fulfilledAt || a.addedAt || 0);
+  pendingItems.sort(sortByDateDesc);
+  deliveredItems.sort(sortByDateDesc);
+
+  return {
+    pending: {
+      count: pendingItems.length,
+      items: pendingItems
+    },
+    delivered: {
+      count: deliveredItems.length,
+      items: deliveredItems
+    }
+  };
 };
 
 const buildSBAccountItemSummary = (items = []) => {
@@ -1112,5 +1358,6 @@ module.exports = {
     markSBAccountItemDelivered,
     requestSBAccountItemFromWallet,
     updateSBAccountItemCostPrice,
+    getBackofficeProductDeliverySummary,
     updateCostPrice
   };

@@ -184,6 +184,16 @@ const formatSBAccountResponse = (data, requesterRole) => {
           res.status(500).json({ message: error.message });
         }
       }
+      const getBackofficeProductDeliverySummary = async (req, res) => {
+        try {
+          const result = await SBAccountService.getBackofficeProductDeliverySummary(req.staff, {
+            staffId: req.query.staffId
+          });
+          res.status(200).json(result);
+        } catch (error) {
+          res.status(500).json({ message: error.message });
+        }
+      }
 
   module.exports = {
     createSBAccount,
@@ -196,5 +206,6 @@ const formatSBAccountResponse = (data, requesterRole) => {
     markItemDelivered,
     requestItemFromWallet,
     updateItemCostPrice,
+    getBackofficeProductDeliverySummary,
     updateCostPrice
   };

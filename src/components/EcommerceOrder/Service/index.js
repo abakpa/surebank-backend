@@ -1500,10 +1500,6 @@ const replaceInstallmentOrderItem = async ({
     throw new Error('Order not found');
   }
 
-  if (order.paymentType !== 'installment' || !order.installmentPlan) {
-    throw new Error('Only pay-small-small orders can be edited');
-  }
-
   if (['delivered', 'completed', 'shipped', 'cancelled'].includes(order.status)) {
     throw new Error('This order can no longer be edited');
   }
@@ -1514,14 +1510,8 @@ const replaceInstallmentOrderItem = async ({
   }
 
   const existingItem = order.items[itemIndex];
-  const outOfMarketProductIds = await getOutOfMarketProductIds(order.items);
-  const isReplacingOutOfMarketItem = outOfMarketProductIds.has(existingItem.productId?.toString());
-
-  if (
-    !isReplacingOutOfMarketItem &&
-    (order.paymentStatus === 'paid' || Number(order.installmentPlan.remainingBalance || 0) <= 0)
-  ) {
-    throw new Error('This order has already been fully paid');
+  if (['delivered', 'completed'].includes(existingItem.fulfillmentStatus || 'pending')) {
+    throw new Error('This product has already been delivered and cannot be changed');
   }
 
   const replacementItem = await buildOrderItemFromProduct({
@@ -1529,18 +1519,31 @@ const replaceInstallmentOrderItem = async ({
     variationId,
     quantity: existingItem.quantity
   });
+  const carriedPaidAmount = Math.min(
+    Number(existingItem.paidAmount || 0),
+    Number(replacementItem.subtotal || 0)
+  );
+  replacementItem.addedAt = existingItem.addedAt || order.createdAt || new Date();
+  replacementItem.paidAmount = carriedPaidAmount;
+  replacementItem.paymentStatus = carriedPaidAmount >= Number(replacementItem.subtotal || 0)
+    ? 'paid'
+    : carriedPaidAmount > 0 ? 'partial' : 'unpaid';
+  replacementItem.fulfillmentStatus = 'pending';
 
   order.items.set(itemIndex, replacementItem);
   const nextTotalAmount = order.items.reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
-  const totalPaid = Number(order.installmentPlan.totalPaid || 0);
-
-  if (nextTotalAmount < totalPaid) {
-    throw new Error(`Replacement total cannot be less than the amount already paid of ₦${totalPaid.toLocaleString()}`);
+  if (!order.installmentPlan) {
+    order.installmentPlan = {};
   }
+  const paymentReferenceTotal = Array.isArray(order.paymentReferences)
+    ? order.paymentReferences.reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
+    : 0;
+  const totalPaid = Number(order.installmentPlan.totalPaid || paymentReferenceTotal || (order.paymentStatus === 'paid' ? order.totalAmount : 0) || 0);
 
   const nextRemainingBalance = Math.max(0, nextTotalAmount - totalPaid);
 
   order.totalAmount = nextTotalAmount;
+  order.installmentPlan.totalPaid = totalPaid;
   order.installmentPlan.remainingBalance = nextRemainingBalance;
   order.installmentPlan.amountPerPeriod = 0;
   order.installmentPlan.duration = 0;
@@ -1555,18 +1558,10 @@ const replaceInstallmentOrderItem = async ({
     order.status = totalPaid > 0 ? 'partially_paid' : order.status;
   }
 
-  if (order.SBAccountNumber) {
-    await SBAccount.findOneAndUpdate(
-      { SBAccountNumber: order.SBAccountNumber },
-      {
-        productName: buildOrderProductSummary(order.items, order.orderNumber),
-        sellingPrice: nextTotalAmount,
-        status: nextRemainingBalance === 0 ? 'sold' : 'booked'
-      }
-    );
-  }
+  const savedOrder = await order.save();
+  await syncSBAccountItemsFromOrder(savedOrder);
 
-  return await order.save();
+  return savedOrder;
 };
 
 const getAllOrders = async (filters = {}) => {

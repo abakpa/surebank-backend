@@ -10,6 +10,7 @@ router.put('/', staffAuth, SBAccountController.updateSBAccountAmount);
 router.put('/costprice', staffAuth, adminOnly, SBAccountController.updateCostPrice);
 router.get('/',staffAuth, SBAccountController.getDSAccount);
 router.get('/',staffAuth, SBAccountController.getDSAccount);
+router.get('/reports/backoffice-product-delivery', staffAuth, SBAccountController.getBackofficeProductDeliverySummary);
 router.put('/:SBAccountNumber/items/:itemId/costprice', staffAuth, adminOnly, SBAccountController.updateItemCostPrice);
 router.post('/:SBAccountNumber/items/:itemId/mark-delivered', staffAuth, SBAccountController.markItemDelivered);
 router.post('/:SBAccountNumber/items/:itemId/customer-request', staffAuth, SBAccountController.requestItemFromWallet);
