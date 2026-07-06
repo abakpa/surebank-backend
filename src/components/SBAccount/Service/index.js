@@ -262,6 +262,23 @@ const refreshSBAccountCostFromItems = (sbaccount) => {
   return sbaccount;
 };
 
+const isLegacySBAccount = (sbaccount) => (
+  sbaccount?.accountMode !== 'multi_item' &&
+  (!Array.isArray(sbaccount?.items) || sbaccount.items.length === 0)
+);
+
+const isClosedLegacySBAccount = (sbaccount) => (
+  isLegacySBAccount(sbaccount) && Number(sbaccount?.balance || 0) <= 0
+);
+
+const filterClosedLegacySBAccountsForRole = (accounts = [], requesterRole = '') => {
+  if (!requesterRole || requesterRole === 'Admin') {
+    return accounts;
+  }
+
+  return accounts.filter((account) => !isClosedLegacySBAccount(account));
+};
+
 const getStaffDisplayName = (staff) => (
   [staff?.firstName, staff?.lastName].filter(Boolean).join(' ').trim() || staff?.email || 'N/A'
 );
@@ -618,8 +635,10 @@ const createSBAccount = async (SBAccountData) => {
           if (items.length > 0) {
             const activeMultiItemSBAccount = await SBAccount.findOne({
               customerId: existingSBAccountNumber.customerId,
-              accountMode: 'multi_item',
-              status: { $ne: 'sold' }
+              $or: [
+                { accountMode: 'multi_item' },
+                { 'items.0': { $exists: true } }
+              ]
             }).sort({ createdAt: 1 });
 
             if (activeMultiItemSBAccount) {
@@ -790,9 +809,10 @@ const getAccountByAccountNumber = async (accountNumber) => {
     return await Account.findOne({ accountNumber });
   };
 
-  const getCustomerSBAccountById = async (customerId) =>{
+  const getCustomerSBAccountById = async (customerId, requesterRole = '') =>{
     try {
-        return await SBAccount.find({customerId:customerId});
+        const accounts = await SBAccount.find({customerId:customerId});
+        return filterClosedLegacySBAccountsForRole(accounts, requesterRole);
     } catch (error) {
         throw error;
     }
@@ -819,6 +839,10 @@ const getAccountByAccountNumber = async (accountNumber) => {
   
     if (!sbaccount) {
       throw new error('Customer does not have an active package');
+    }
+
+    if (isClosedLegacySBAccount(sbaccount)) {
+      throw new Error('This old SB account is closed and can no longer receive deposits.');
     }
   
     const SBAccountId = sbaccount._id;
@@ -1308,7 +1332,8 @@ const getAccountByAccountNumber = async (accountNumber) => {
         accountTypeId: walletAccount._id,
         date: formattedDate,
         package: "Wallet",
-        narration: `Customer request debit for ${item.productName} - ${requestRef}`,
+        narration: `Debited from wallet for ${item.productName}`,
+        transactionRef: requestRef,
         direction: "Debit",
       });
 
@@ -1325,6 +1350,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
         date: formattedDate,
         package: "SB",
         narration: `Customer request reserved from SB Order Wallet for ${item.productName} - ${requestRef}`,
+        transactionRef: requestRef,
         direction: "Credit",
       });
 

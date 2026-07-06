@@ -51,6 +51,9 @@ const accountTransactionSchema = new mongoose.Schema({
     type: String, 
     required:true
   },
+  transactionRef: {
+    type: String,
+  },
   package: { 
     type: String, 
     required:true

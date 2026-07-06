@@ -101,7 +101,7 @@ const formatSBAccountResponse = (data, requesterRole) => {
       const getCustomerSBAccountById = async (req, res) => {
         try {
           const customerId = req.params.id
-            const SBAccounts = await SBAccountService.getCustomerSBAccountById(customerId);
+            const SBAccounts = await SBAccountService.getCustomerSBAccountById(customerId, req.staff?.role || '');
             res.status(200).json(formatSBAccountResponse(SBAccounts, req.staff?.role));
         } catch (error) {
             res.status(500).json({ message: error.message });
