@@ -208,6 +208,98 @@ const markAllOrderItemsPaid = (order) => {
   return order;
 };
 
+const isDeliveredOrderItem = (item = {}) => ['delivered', 'completed'].includes(item.fulfillmentStatus);
+
+const isDebitPaymentRecord = (payment = {}) => (
+  payment.type === 'debit' || ['Debit', 'Purchased'].includes(payment.direction)
+);
+
+const getInstallmentPaymentSummary = (payments = []) => {
+  const summary = payments.reduce((totals, payment) => {
+    if (payment.status !== 'paid') {
+      return totals;
+    }
+
+    const amount = Number(payment.amount || 0);
+    if (isDebitPaymentRecord(payment)) {
+      totals.debitTotal += amount;
+      totals.netPaid -= amount;
+      return totals;
+    }
+
+    totals.grossPaid += amount;
+    totals.netPaid += amount;
+    return totals;
+  }, { grossPaid: 0, debitTotal: 0, netPaid: 0 });
+
+  summary.netPaid = Math.max(0, summary.netPaid);
+  return summary;
+};
+
+const attachOrderItemFinancialSummary = (order, options = {}) => {
+  if (!order) return order;
+
+  const items = Array.isArray(order.items) ? order.items : [];
+  const activeItemsSubtotal = items
+    .filter((item) => !isDeliveredOrderItem(item))
+    .reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
+  const outstandingItemsSubtotal = items
+    .filter((item) => !isDeliveredOrderItem(item))
+    .reduce((sum, item) => {
+      const subtotal = Number(item.subtotal || 0);
+      const paidAmount = Math.min(subtotal, Math.max(0, Number(item.paidAmount || 0)));
+      return sum + Math.max(0, subtotal - paidAmount);
+    }, 0);
+  const deliveredItemsSubtotal = items
+    .filter(isDeliveredOrderItem)
+    .reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
+
+  order.activeItemsSubtotal = activeItemsSubtotal;
+  order.outstandingItemsSubtotal = outstandingItemsSubtotal;
+  order.deliveredItemsSubtotal = deliveredItemsSubtotal;
+
+  if (order.paymentType === 'installment' && order.installmentPlan) {
+    const payments = Array.isArray(order.installmentPlan.payments)
+      ? order.installmentPlan.payments
+      : [];
+    const paymentSummary = getInstallmentPaymentSummary(payments);
+    const statementBalance = Number(
+      options.walletBalance ??
+        order.customerStatement?.walletBalance ??
+        order.installmentPlan.walletBalance ??
+        paymentSummary.netPaid
+    );
+    const currentWalletBalance = Math.max(0, statementBalance);
+    const remainingBalance = Math.max(0, outstandingItemsSubtotal - currentWalletBalance);
+
+    order.installmentPlan = {
+      ...order.installmentPlan,
+      payments,
+      totalPaid: currentWalletBalance,
+      walletBalance: currentWalletBalance,
+      grossPaid: paymentSummary.grossPaid,
+      debitTotal: paymentSummary.debitTotal,
+      remainingBalance,
+      creditBalance: Math.max(0, currentWalletBalance - outstandingItemsSubtotal)
+    };
+
+    order.customerStatement = {
+      title: 'Customer Statement of Account',
+      walletBalance: currentWalletBalance,
+      paidTotal: currentWalletBalance,
+      totalDeposits: paymentSummary.grossPaid,
+      totalProductPayments: paymentSummary.debitTotal,
+      remainingBalance,
+      activeItemsSubtotal,
+      outstandingItemsSubtotal,
+      deliveredItemsSubtotal,
+      transactions: payments
+    };
+  }
+
+  return order;
+};
+
 const getSBAccountPaymentRecords = async (sbAccountId) => {
   const transactions = await AccountTransactionModel.find({
     accountTypeId: sbAccountId.toString(),
@@ -223,14 +315,37 @@ const getSBAccountPaymentRecords = async (sbAccountId) => {
     direction: transaction.direction,
     type: ['Debit', 'Purchased'].includes(transaction.direction) ? 'debit' : 'credit',
     paidAt: transaction.createdAt || new Date(),
-    transactionRef: transaction.transactionRef || transaction.narration || transaction._id?.toString()
+    transactionRef: transaction.transactionRef || transaction.narration || transaction._id?.toString(),
+    narration: transaction.narration,
+    balance: Number(transaction.balance || 0),
+    source: transaction.createdBy === 'PAYSTACK' ? 'Paystack' : 'Backoffice'
+  }));
+};
+
+const getSBOrderWalletStatementRecords = async (walletAccountId) => {
+  const transactions = await AccountTransactionModel.find({
+    accountTypeId: walletAccountId.toString(),
+    package: 'Wallet',
+    direction: { $in: ['Credit', 'Debit'] }
+  }).sort({ createdAt: -1 }).lean();
+
+  return transactions.map((transaction) => ({
+    _id: transaction._id,
+    date: transaction.createdAt || new Date(),
+    amount: Number(transaction.amount || 0),
+    status: 'paid',
+    direction: transaction.direction,
+    type: transaction.direction === 'Debit' ? 'debit' : 'credit',
+    paidAt: transaction.createdAt || new Date(),
+    transactionRef: transaction.transactionRef || transaction.narration || transaction._id?.toString(),
+    narration: transaction.narration,
+    balance: Number(transaction.balance || 0),
+    source: transaction.createdBy === 'PAYSTACK' ? 'Paystack' : 'Backoffice'
   }));
 };
 
 const getSBAccountPaidAmountFromRecords = (payments = []) => (
-  payments
-    .filter((payment) => payment.status === 'paid' && payment.type !== 'debit' && payment.direction === 'Credit')
-    .reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
+  getInstallmentPaymentSummary(payments).netPaid
 );
 
 const mergeOrderPaymentRecordsWithSBDeposits = async (plainOrder) => {
@@ -242,46 +357,29 @@ const mergeOrderPaymentRecordsWithSBDeposits = async (plainOrder) => {
   if (!sbAccount) {
     return plainOrder;
   }
+  const walletAccount = await getCustomerWalletAccount(plainOrder);
 
-  const existingPayments = Array.isArray(plainOrder.installmentPlan.payments)
-    ? plainOrder.installmentPlan.payments
-    : [];
-  const existingRefs = new Set(
-    existingPayments
-      .map((payment) => String(payment.transactionRef || payment._id || ''))
-      .filter(Boolean)
-  );
-  const sbPayments = await getSBAccountPaymentRecords(sbAccount._id);
-  const newSBPayments = sbPayments.filter((payment) => {
-    const ref = String(payment.transactionRef || payment._id || '');
-    return ref && !existingRefs.has(ref);
-  });
+  const walletPayments = await getSBOrderWalletStatementRecords(walletAccount._id);
 
-  if (newSBPayments.length === 0) {
-    return plainOrder;
-  }
-
-  const mergedPayments = [...existingPayments, ...newSBPayments]
-    .sort((a, b) => new Date(a.paidAt || a.date || 0) - new Date(b.paidAt || b.date || 0));
-  const totalPaid = mergedPayments
-    .filter((payment) => payment.status === 'paid' && payment.type !== 'debit' && payment.direction !== 'Debit')
-    .reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
-  const totalAmount = Number(plainOrder.totalAmount || 0);
+  const mergedPayments = walletPayments
+    .map((payment) => ({
+      ...payment,
+      type: isDebitPaymentRecord(payment) ? 'debit' : payment.type || 'credit'
+    }))
+    .sort((a, b) => new Date(b.paidAt || b.date || 0) - new Date(a.paidAt || a.date || 0));
 
   plainOrder.installmentPlan = {
     ...plainOrder.installmentPlan,
-    payments: mergedPayments,
-    totalPaid,
-    remainingBalance: Math.max(0, totalAmount - totalPaid),
-    creditBalance: Math.max(0, totalPaid - totalAmount)
+    payments: mergedPayments
   };
+  attachOrderItemFinancialSummary(plainOrder, { walletBalance: Number(walletAccount.availableBalance || 0) });
 
   if (plainOrder.installmentPlan.remainingBalance <= 0) {
     plainOrder.paymentStatus = 'paid';
     if (!['delivered', 'completed', 'cancelled'].includes(plainOrder.status)) {
       plainOrder.status = 'paid';
     }
-  } else if (totalPaid > 0) {
+  } else if (Number(plainOrder.installmentPlan.totalPaid || 0) > 0) {
     plainOrder.paymentStatus = 'partial';
     if (!['delivered', 'completed', 'cancelled'].includes(plainOrder.status)) {
       plainOrder.status = 'partially_paid';
@@ -336,8 +434,13 @@ async function normalizeMultiItemOrderPayments(plainOrder) {
 const buildOrderFromSBAccount = async (sbAccount) => {
   const sellingPrice = Number(sbAccount.sellingPrice || 0);
   const isLegacyAccount = sbAccount.accountMode !== 'multi_item';
-  const payments = await getSBAccountPaymentRecords(sbAccount._id);
-  const totalPaid = getSBAccountPaidAmountFromRecords(payments);
+  const walletAccount = await ensureSBOrderWalletForCustomer({
+    customerId: sbAccount.customerId,
+    accountNumber: sbAccount.accountNumber
+  });
+  const payments = await getSBOrderWalletStatementRecords(walletAccount._id);
+  const paymentSummary = getInstallmentPaymentSummary(payments);
+  const totalPaid = Number(walletAccount.availableBalance || 0);
   const remainingBalance = Math.max(0, sellingPrice - totalPaid);
   const creditBalance = Math.max(0, totalPaid - sellingPrice);
   const sbItems = Array.isArray(sbAccount.items) && sbAccount.items.length > 0
@@ -374,7 +477,7 @@ const buildOrderFromSBAccount = async (sbAccount) => {
 	    };
   });
 
-  return {
+  const order = {
     _id: sbAccount._id,
     orderNumber: sbAccount.SBAccountNumber,
     customerId: sbAccount.customerId,
@@ -388,6 +491,9 @@ const buildOrderFromSBAccount = async (sbAccount) => {
       duration: 0,
       amountPerPeriod: 0,
       totalPaid,
+      walletBalance: totalPaid,
+      grossPaid: paymentSummary.grossPaid,
+      debitTotal: paymentSummary.debitTotal,
       remainingBalance,
       creditBalance,
       nextPaymentDate: null,
@@ -411,6 +517,9 @@ const buildOrderFromSBAccount = async (sbAccount) => {
     readOnlyReason: isLegacyAccount ? 'Previous SB account. New products cannot be added to this account.' : '',
     source: 'backoffice_sb_account'
   };
+
+  attachOrderItemFinancialSummary(order, { walletBalance: totalPaid });
+  return order;
 };
 
 const calculateInstallmentPlan = (totalAmount, frequency, duration) => {
@@ -506,6 +615,7 @@ const decorateOrderProductAvailability = async (order) => {
     isOutOfMarket: outOfMarketProductIds.has(item.productId?.toString()),
     requiresReplacement: outOfMarketProductIds.has(item.productId?.toString()) && !orderIsCompleted
   }));
+  attachOrderItemFinancialSummary(plainOrder);
 
   return plainOrder;
 };
