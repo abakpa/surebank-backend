@@ -307,6 +307,7 @@ const getBackofficeProductDeliverySummary = async (staff = {}, options = {}) => 
   const isManager = role === 'Manager';
   const isRepDashboardView = Boolean(options.staffId) && (isAdmin || isManager);
   let isRep = ['Agent', 'OnlineRep', 'Rep'].includes(role);
+  const shouldLimitDeliveredToLoggedInManager = isManager && !isRepDashboardView;
 
   if (isRepDashboardView) {
     const targetStaff = await Staff.findById(options.staffId).select('role branchId').lean();
@@ -341,7 +342,7 @@ const getBackofficeProductDeliverySummary = async (staff = {}, options = {}) => 
     items: { $exists: true, $ne: [] }
   };
 
-  if (isManager && staff?.branchId) {
+  if (isManager && staff?.branchId && !shouldLimitDeliveredToLoggedInManager) {
     query.branchId = String(staff.branchId);
     ecommerceQuery.branchId = String(staff.branchId);
   }
@@ -451,8 +452,10 @@ const getBackofficeProductDeliverySummary = async (staff = {}, options = {}) => 
       };
 
       if (isDelivered) {
-        deliveredItems.push(detail);
-      } else {
+        if (!shouldLimitDeliveredToLoggedInManager || String(item.fulfilledBy || '') === String(staff.staffId || '')) {
+          deliveredItems.push(detail);
+        }
+      } else if (!isManager || String(account.branchId || '') === String(staff.branchId || '')) {
         pendingItems.push(detail);
       }
     });
@@ -499,8 +502,10 @@ const getBackofficeProductDeliverySummary = async (staff = {}, options = {}) => 
       };
 
       if (isDelivered) {
-        deliveredItems.push(detail);
-      } else {
+        if (!shouldLimitDeliveredToLoggedInManager || String(item.fulfilledBy || '') === String(staff.staffId || '')) {
+          deliveredItems.push(detail);
+        }
+      } else if (!isManager || String(order.branchId || '') === String(staff.branchId || '')) {
         pendingItems.push(detail);
       }
     });
@@ -1261,7 +1266,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
     };
 
     const requestSBAccountItemFromWallet = async ({ SBAccountNumber, itemId, createdBy, requesterRole }) => {
-      if (!['Agent', 'OnlineRep'].includes(requesterRole)) {
+      if (!['Agent', 'OnlineRep', 'Rep'].includes(requesterRole)) {
         throw new Error('Only reps can submit customer requests');
       }
 

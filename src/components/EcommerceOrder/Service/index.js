@@ -453,12 +453,13 @@ const buildOrderFromSBAccount = async (sbAccount) => {
         price: sellingPrice,
         subtotal: sellingPrice
       }];
-  let remainingPaidForItems = totalPaid;
   const items = sbItems.map((item, index) => {
     const quantity = Math.max(1, Number(item.quantity || 1));
     const subtotal = Number(item.subtotal || item.price || 0);
-    const paidAmount = Math.min(subtotal, Math.max(0, remainingPaidForItems));
-    remainingPaidForItems -= paidAmount;
+    const itemPaidAmount = ['delivered', 'completed'].includes(item.fulfillmentStatus)
+      ? subtotal
+      : Number(item.paidAmount || 0);
+    const paidAmount = Math.min(subtotal, Math.max(0, itemPaidAmount));
 
 	    return {
 	      _id: `${sbAccount._id}-item-${item.productId || index}`,
@@ -635,7 +636,7 @@ const canStaffViewOrder = (order, staff) => {
   if (!staff) return false;
   if (staff.role === 'Admin') return true;
   if (staff.role === 'Manager') {
-    return String(order.branchId || '') === String(staff.branchId || '');
+    return true;
   }
   if (isRepRole(staff.role)) {
     return String(order.accountManagerId || '') === String(staff.staffId || '');
@@ -1646,6 +1647,102 @@ const getCustomerOrders = async (customerId) => {
   return decoratedOrders;
 };
 
+const findSBAccountReplacementItemIndex = (sbAccount, itemId) => {
+  const decodedItemId = decodeURIComponent(String(itemId || ''));
+  const numericItemIndex = Number(decodedItemId);
+  if (Number.isInteger(numericItemIndex) && numericItemIndex >= 0 && numericItemIndex < (sbAccount.items || []).length) {
+    return numericItemIndex;
+  }
+
+  return (sbAccount.items || []).findIndex((item, index) => (
+    String(item._id || '') === decodedItemId ||
+    String(item.productId || '') === decodedItemId ||
+    `${sbAccount._id}-item-${item.productId || index}` === decodedItemId
+  ));
+};
+
+const replaceSBAccountOrderItem = async ({
+  orderNumber,
+  customerId,
+  itemId,
+  productId,
+  variationId = ''
+}) => {
+  const sbAccount = await SBAccount.findOne({
+    SBAccountNumber: orderNumber,
+    customerId: customerId.toString()
+  });
+  if (!sbAccount) {
+    throw new Error('Order not found');
+  }
+
+  if (['sold', 'cancelled'].includes(sbAccount.status)) {
+    throw new Error('This order can no longer be edited');
+  }
+  if (!Array.isArray(sbAccount.items) || sbAccount.items.length === 0) {
+    throw new Error('Order item not found');
+  }
+
+  const itemIndex = findSBAccountReplacementItemIndex(sbAccount, itemId);
+  if (itemIndex === -1) {
+    throw new Error('Order item not found');
+  }
+
+  const existingItem = sbAccount.items[itemIndex];
+  if (['delivered', 'completed'].includes(existingItem.fulfillmentStatus || 'pending')) {
+    throw new Error('This product has already been delivered and cannot be changed');
+  }
+
+  const replacementItem = await buildOrderItemFromProduct({
+    productId,
+    variationId,
+    quantity: existingItem.quantity
+  });
+  const carriedPaidAmount = Math.min(
+    Number(existingItem.paidAmount || 0),
+    Number(replacementItem.subtotal || 0)
+  );
+
+  sbAccount.items[itemIndex].productId = replacementItem.productId;
+  sbAccount.items[itemIndex].variationId = replacementItem.variationId || '';
+  sbAccount.items[itemIndex].productName = replacementItem.variationName
+    ? `${replacementItem.productName} - ${replacementItem.variationName}`
+    : replacementItem.productName;
+  sbAccount.items[itemIndex].productDescription = '';
+  sbAccount.items[itemIndex].quantity = Number(replacementItem.quantity || 1);
+  sbAccount.items[itemIndex].price = Number(replacementItem.price || 0);
+  sbAccount.items[itemIndex].subtotal = Number(replacementItem.subtotal || 0);
+  sbAccount.items[itemIndex].addedAt = existingItem.addedAt || sbAccount.createdAt || new Date();
+  sbAccount.items[itemIndex].paidAmount = carriedPaidAmount;
+  sbAccount.items[itemIndex].fulfillmentStatus = 'pending';
+  sbAccount.items[itemIndex].fulfilledAt = undefined;
+  sbAccount.items[itemIndex].fulfilledBy = undefined;
+  sbAccount.items[itemIndex].costPrice = 0;
+  sbAccount.items[itemIndex].costSubtotal = 0;
+  sbAccount.items[itemIndex].profitAmount = 0;
+  sbAccount.items[itemIndex].profitReported = false;
+  sbAccount.items[itemIndex].profitReportedAt = undefined;
+  sbAccount.items[itemIndex].requiresCostApproval = true;
+  sbAccount.items[itemIndex].costApprovedBy = undefined;
+  sbAccount.items[itemIndex].costApprovedAt = undefined;
+
+  sbAccount.accountMode = 'multi_item';
+  sbAccount.productName = buildOrderProductSummary(sbAccount.items, sbAccount.SBAccountNumber);
+  sbAccount.productDescription = sbAccount.items
+    .map((item) => item.productDescription)
+    .filter(Boolean)
+    .join(' | ') || sbAccount.productName;
+  sbAccount.sellingPrice = sbAccount.items.reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
+  sbAccount.costPrice = sbAccount.items.reduce((sum, item) => sum + Number(item.costSubtotal || 0), 0);
+  sbAccount.profit = sbAccount.items.reduce((sum, item) => sum + Number(item.profitAmount || 0), 0);
+  if (sbAccount.status === 'sold') {
+    sbAccount.status = 'booked';
+  }
+
+  const savedSBAccount = await sbAccount.save();
+  return await buildOrderFromSBAccount(savedSBAccount);
+};
+
 const replaceInstallmentOrderItem = async ({
   orderNumber,
   customerId,
@@ -1655,7 +1752,13 @@ const replaceInstallmentOrderItem = async ({
 }) => {
   const order = await EcommerceOrder.findOne({ orderNumber, customerId });
   if (!order) {
-    throw new Error('Order not found');
+    return await replaceSBAccountOrderItem({
+      orderNumber,
+      customerId,
+      itemId,
+      productId,
+      variationId
+    });
   }
 
   if (['delivered', 'completed', 'shipped', 'cancelled'].includes(order.status)) {
@@ -1875,7 +1978,7 @@ const updateOrderStatus = async (orderId, status, staff) => {
       previousStatus !== 'delivered' && previousStatus !== 'completed') {
     for (const item of order.items) {
       if (!['delivered', 'completed'].includes(item.fulfillmentStatus)) {
-        await assertOrderItemBranchStockAvailable(order, item);
+        await assertOrderItemBranchStockAvailable(order, item, staff);
       }
     }
     for (const item of order.items) {
@@ -1901,7 +2004,7 @@ const canStaffFulfillOrderItem = (order, staff) => {
   if (!staff) return false;
   if (staff.role === 'Admin') return true;
   if (staff.role === 'Manager') {
-    return String(order.branchId || '') === String(staff.branchId || '');
+    return true;
   }
   return false;
 };
@@ -2347,14 +2450,22 @@ const creditSBAccountWithoutLedgerImpact = async (order, amount, transactionRef,
   );
 };
 
-const assertOrderItemBranchStockAvailable = async (order, item) => {
-  if (!order.branchId) {
+const getOrderFulfillmentBranchId = (order, staff) => {
+  if (staff?.role === 'Manager' && staff.branchId) {
+    return staff.branchId.toString();
+  }
+  return order.branchId?.toString() || '';
+};
+
+const assertOrderItemBranchStockAvailable = async (order, item, staff = null) => {
+  const fulfillmentBranchId = getOrderFulfillmentBranchId(order, staff);
+  if (!fulfillmentBranchId) {
     throw new Error('Branch is required for product stock update');
   }
 
   const stockRow = await ProductBranchStock.findOne({
     productId: item.productId?.toString(),
-    branchId: order.branchId?.toString(),
+    branchId: fulfillmentBranchId,
     variationId: item.variationId || ''
   }).lean();
   const availableQuantity = Number(stockRow?.quantity || 0);
@@ -2479,7 +2590,8 @@ const settleOrderItemPaymentFromSBAccount = async (order, item, staff) => {
 };
 
 const decreaseStockThenSettleOrderItem = async (order, item, staff) => {
-  await assertOrderItemBranchStockAvailable(order, item);
+  const fulfillmentBranchId = getOrderFulfillmentBranchId(order, staff);
+  await assertOrderItemBranchStockAvailable(order, item, staff);
   if (item.paymentStatus !== 'paid') {
     await assertOrderItemFundingAvailable(order, item);
   }
@@ -2489,7 +2601,7 @@ const decreaseStockThenSettleOrderItem = async (order, item, staff) => {
     item.quantity,
     'decrease',
     item.variationId || '',
-    order.branchId,
+    fulfillmentBranchId,
     staff?.staffId || ''
   );
 
@@ -2504,7 +2616,7 @@ const decreaseStockThenSettleOrderItem = async (order, item, staff) => {
         item.quantity,
         'increase',
         item.variationId || '',
-        order.branchId,
+        fulfillmentBranchId,
         staff?.staffId || ''
       );
     } catch (restoreErr) {
@@ -2665,10 +2777,30 @@ const getCustomerDisplayName = (customer) => {
   return [customer?.firstName, customer?.lastName].filter(Boolean).join(' ').trim() || 'Unknown Customer';
 };
 
+const normalizeProductActionKeyPart = (value) => String(value || '').trim().toLowerCase();
+
+const buildProductActionDedupeKey = ({
+  SBAccountNumber,
+  customerId,
+  productId,
+  productName,
+  variationId,
+  quantity,
+  amount
+}) => [
+  normalizeProductActionKeyPart(SBAccountNumber),
+  normalizeProductActionKeyPart(customerId),
+  normalizeProductActionKeyPart(productId) || normalizeProductActionKeyPart(productName),
+  normalizeProductActionKeyPart(variationId),
+  Number(quantity || 1),
+  Number(amount || 0)
+].join('|');
+
 const getProductActionRequests = async (staff) => {
   const role = staff?.role;
   const staffId = String(staff?.staffId || '');
   const isRep = ['Agent', 'OnlineRep', 'Rep'].includes(role);
+  const isManager = role === 'Manager';
 
   const [ecommerceOrders, sbAccounts] = await Promise.all([
     EcommerceOrder.find({
@@ -2692,6 +2824,7 @@ const getProductActionRequests = async (staff) => {
   const customerById = new Map(customers.map((customer) => [String(customer._id), customer]));
 
   const actionItems = [];
+  const ecommerceActionKeys = new Set();
 
   ecommerceOrders.forEach((order) => {
     const customer = customerById.get(String(order.customerId || ''));
@@ -2723,6 +2856,16 @@ const getProductActionRequests = async (staff) => {
         return;
       }
 
+      ecommerceActionKeys.add(buildProductActionDedupeKey({
+        SBAccountNumber: order.SBAccountNumber || '',
+        customerId: order.customerId || '',
+        productId: item.productId || '',
+        productName: item.productName || '',
+        variationId: item.variationId || '',
+        quantity: item.quantity || 1,
+        amount: item.subtotal || 0
+      }));
+
       actionItems.push({
         id: `ecommerce-${order._id}-${itemId}`,
         source: 'ecommerce',
@@ -2753,6 +2896,10 @@ const getProductActionRequests = async (staff) => {
 
   sbAccounts.forEach((account) => {
     const customer = customerById.get(String(account.customerId || ''));
+    const accountBranchId = String(account.branchId || customer?.branchId || '');
+    if (isManager && accountBranchId !== String(staff?.branchId || '')) {
+      return;
+    }
     if (isRep && !hasRepAccessToCustomer(staffId, customer, account.accountManagerId || account.createdBy)) {
       return;
     }
@@ -2764,6 +2911,19 @@ const getProductActionRequests = async (staff) => {
       const itemIsPaid = paidAmount >= itemAmount;
 
       if (!itemIsPaid || ['delivered', 'completed'].includes(item.fulfillmentStatus)) {
+        return;
+      }
+
+      const duplicateEcommerceActionKey = buildProductActionDedupeKey({
+        SBAccountNumber: account.SBAccountNumber || '',
+        customerId: account.customerId || '',
+        productId: item.productId || '',
+        productName: item.productName || '',
+        variationId: item.variationId || '',
+        quantity: item.quantity || 1,
+        amount: itemAmount
+      });
+      if (ecommerceActionKeys.has(duplicateEcommerceActionKey)) {
         return;
       }
 
