@@ -15,7 +15,7 @@ const customerAuth = async(req, res, next) => {
 
         next();
     } catch (error) {
-        return res.status(401).json({ message: 'Token expired or invalid' });
+        return res.status(401).json({ message: 'Your login session has expired. Please login again to continue.' });
 
         // res.send("invalid authentication");
     }
@@ -23,7 +23,7 @@ const customerAuth = async(req, res, next) => {
 const staffAuth = async(req, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-        res.send("Authentication invalid");
+        return res.status(401).json({ message: "Authorization token missing or malformed" });
     }
     const token = authHeader.split(" ")[1];
 
@@ -39,7 +39,7 @@ const staffAuth = async(req, res, next) => {
 
         next();
     } catch (error) {
-        if (error) return res.status(401).json({ message: 'Token expired or invalid' });
+        if (error) return res.status(401).json({ message: 'Your login session has expired. Please login again to continue.' });
 
         console.log(error);
         // res.send("invalid authentication");
