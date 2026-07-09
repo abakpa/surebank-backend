@@ -1669,10 +1669,11 @@ const replaceSBAccountOrderItem = async ({
   productId,
   variationId = ''
 }) => {
-  const sbAccount = await SBAccount.findOne({
-    SBAccountNumber: orderNumber,
-    customerId: customerId.toString()
-  });
+  const sbAccountQuery = { SBAccountNumber: orderNumber };
+  if (customerId) {
+    sbAccountQuery.customerId = customerId.toString();
+  }
+  const sbAccount = await SBAccount.findOne(sbAccountQuery);
   if (!sbAccount) {
     throw new Error('Order not found');
   }
@@ -1751,7 +1752,11 @@ const replaceInstallmentOrderItem = async ({
   productId,
   variationId = ''
 }) => {
-  const order = await EcommerceOrder.findOne({ orderNumber, customerId });
+  const orderQuery = { orderNumber };
+  if (customerId) {
+    orderQuery.customerId = customerId.toString();
+  }
+  const order = await EcommerceOrder.findOne(orderQuery);
   if (!order) {
     return await replaceSBAccountOrderItem({
       orderNumber,
@@ -1766,7 +1771,11 @@ const replaceInstallmentOrderItem = async ({
     throw new Error('This order can no longer be edited');
   }
 
-  const itemIndex = order.items.findIndex((item) => item._id.toString() === itemId);
+  const decodedItemId = decodeURIComponent(String(itemId || ''));
+  const numericItemIndex = Number(decodedItemId);
+  const itemIndex = Number.isInteger(numericItemIndex) && numericItemIndex >= 0 && numericItemIndex < (order.items || []).length
+    ? numericItemIndex
+    : order.items.findIndex((item) => String(item._id || '') === decodedItemId);
   if (itemIndex === -1) {
     throw new Error('Order item not found');
   }
@@ -1824,6 +1833,34 @@ const replaceInstallmentOrderItem = async ({
   await syncSBAccountItemsFromOrder(savedOrder);
 
   return savedOrder;
+};
+
+const replaceInstallmentOrderItemBySBAccount = async ({
+  SBAccountNumber,
+  itemId,
+  productId,
+  variationId = ''
+}) => {
+  if (!SBAccountNumber) {
+    throw new Error('SB account number is required');
+  }
+
+  const linkedOrder = await EcommerceOrder.findOne({ SBAccountNumber });
+  if (linkedOrder) {
+    return await replaceInstallmentOrderItem({
+      orderNumber: linkedOrder.orderNumber,
+      itemId,
+      productId,
+      variationId
+    });
+  }
+
+  return await replaceSBAccountOrderItem({
+    orderNumber: SBAccountNumber,
+    itemId,
+    productId,
+    variationId
+  });
 };
 
 const getAllOrders = async (filters = {}, staff = null) => {
@@ -3566,5 +3603,6 @@ module.exports = {
   payoffRemainingBalanceFromWallet,
   createOrderAndPayFromWallet,
   replaceInstallmentOrderItem,
+  replaceInstallmentOrderItemBySBAccount,
   payOrderItemFromWallet
 };
