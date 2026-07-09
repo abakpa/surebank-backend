@@ -209,9 +209,10 @@ const markAllOrderItemsPaid = (order) => {
 };
 
 const isDeliveredOrderItem = (item = {}) => ['delivered', 'completed'].includes(item.fulfillmentStatus);
+const PRODUCT_DEBIT_DIRECTIONS = ['Debit', 'Purchased', 'Bought', 'Delivered'];
 
 const isDebitPaymentRecord = (payment = {}) => (
-  payment.type === 'debit' || ['Debit', 'Purchased'].includes(payment.direction)
+  payment.type === 'debit' || PRODUCT_DEBIT_DIRECTIONS.includes(payment.direction)
 );
 
 const getInstallmentPaymentSummary = (payments = []) => {
@@ -304,7 +305,7 @@ const getSBAccountPaymentRecords = async (sbAccountId) => {
   const transactions = await AccountTransactionModel.find({
     accountTypeId: sbAccountId.toString(),
     package: 'SB',
-    direction: { $in: ['Credit', 'Debit', 'Purchased'] }
+    direction: { $in: ['Credit', ...PRODUCT_DEBIT_DIRECTIONS] }
   }).sort({ createdAt: 1 }).lean();
 
   return transactions.map((transaction) => ({
@@ -313,7 +314,7 @@ const getSBAccountPaymentRecords = async (sbAccountId) => {
     amount: Number(transaction.amount || 0),
     status: 'paid',
     direction: transaction.direction,
-    type: ['Debit', 'Purchased'].includes(transaction.direction) ? 'debit' : 'credit',
+    type: PRODUCT_DEBIT_DIRECTIONS.includes(transaction.direction) ? 'debit' : 'credit',
     paidAt: transaction.createdAt || new Date(),
     transactionRef: transaction.transactionRef || transaction.narration || transaction._id?.toString(),
     narration: transaction.narration,
@@ -326,7 +327,7 @@ const getSBOrderWalletStatementRecords = async (walletAccountId) => {
   const transactions = await AccountTransactionModel.find({
     accountTypeId: walletAccountId.toString(),
     package: 'Wallet',
-    direction: { $in: ['Credit', 'Debit'] }
+    direction: { $in: ['Credit', 'Debit', 'Bought', 'Delivered'] }
   }).sort({ createdAt: -1 }).lean();
 
   return transactions.map((transaction) => ({
@@ -335,7 +336,7 @@ const getSBOrderWalletStatementRecords = async (walletAccountId) => {
     amount: Number(transaction.amount || 0),
     status: 'paid',
     direction: transaction.direction,
-    type: transaction.direction === 'Debit' ? 'debit' : 'credit',
+    type: PRODUCT_DEBIT_DIRECTIONS.includes(transaction.direction) ? 'debit' : 'credit',
     paidAt: transaction.createdAt || new Date(),
     transactionRef: transaction.transactionRef || transaction.narration || transaction._id?.toString(),
     narration: transaction.narration,
@@ -2040,6 +2041,7 @@ const updateOrderItemFulfillment = async (orderId, itemId, status, staff) => {
   item.fulfillmentStatus = status;
   item.fulfilledAt = new Date();
   item.fulfilledBy = staff?.staffId || '';
+  await markOrderItemWalletPurchaseDelivered(order, item);
   await recordEcommerceOrderItemIncome(order, item, staff);
 
   if (order.items.every((orderItem) => orderItem.fulfillmentStatus === 'completed')) {
@@ -2288,7 +2290,7 @@ const debitWalletForOrderPayment = async (order, amount, transactionRef, options
     narration: debitNarration,
     transactionRef,
     package: "Wallet",
-    direction: "Debit",
+    direction: productName ? "Bought" : "Debit",
   });
 
   await Account.findByIdAndUpdate(
@@ -2516,6 +2518,24 @@ const findExistingItemDeliverySettlement = async (order, item) => {
     direction: { $in: ['Debit', 'Purchased'] },
     narration: { $regex: escapedPrefix }
   }).lean();
+};
+
+const markOrderItemWalletPurchaseDelivered = async (order, item) => {
+  const itemId = String(item?._id || '');
+  if (!order?.orderNumber || !itemId) {
+    return;
+  }
+
+  const transactionRefPattern = `^(ITEM_PAYMENT|ITEM_DELIVERY)_${escapeRegex(order.orderNumber)}_${escapeRegex(itemId)}_`;
+  await AccountTransactionModel.updateMany(
+    {
+      package: 'Wallet',
+      customerId: order.customerId?.toString(),
+      direction: 'Bought',
+      transactionRef: { $regex: transactionRefPattern }
+    },
+    { $set: { direction: 'Delivered' } }
+  );
 };
 
 const settleOrderItemPaymentFromSBAccount = async (order, item, staff) => {
