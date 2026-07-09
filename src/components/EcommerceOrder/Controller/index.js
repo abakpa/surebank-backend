@@ -178,6 +178,31 @@ const replaceInstallmentOrderItem = async (req, res) => {
   }
 };
 
+const replaceInstallmentOrderItemByStaff = async (req, res) => {
+  try {
+    const { SBAccountNumber, itemId } = req.params;
+    const { productId, variationId } = req.body;
+
+    if (!productId) {
+      return res.status(400).json({ message: 'Product is required' });
+    }
+
+    const order = await EcommerceOrderService.replaceInstallmentOrderItemBySBAccount({
+      SBAccountNumber,
+      itemId,
+      productId,
+      variationId: variationId || ''
+    });
+
+    res.status(200).json({
+      message: 'Order item replaced successfully',
+      order
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
 const payoffRemainingBalance = async (req, res) => {
   try {
     const customerId = req.customer.customerId;
@@ -876,6 +901,7 @@ module.exports = {
   getActiveOrder,
   addItemsToActiveOrder,
   replaceInstallmentOrderItem,
+  replaceInstallmentOrderItemByStaff,
   payOrderItemFromWallet,
   payoffRemainingBalance,
   initializeOrderDepositPayment,

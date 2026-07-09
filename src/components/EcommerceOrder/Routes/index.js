@@ -25,6 +25,7 @@ router.get('/overdue', staffAuth, staffExceptProductManager, EcommerceOrderContr
 router.get('/branch/:branchId', staffAuth, staffExceptProductManager, EcommerceOrderController.getOrdersByBranch);
 router.get('/product-demand', staffAuth, adminOnly, EcommerceOrderController.getProductDemandSummary);
 router.get('/product-demand/:productId', staffAuth, adminOnly, EcommerceOrderController.getProductDemandDetail);
+router.put('/staff/sb/:SBAccountNumber/items/:itemId/replace', staffAuth, staffExceptProductManager, EcommerceOrderController.replaceInstallmentOrderItemByStaff);
 
 // Process automatic payments (can be called by cron job or manually)
 router.post('/process-automatic-payments', staffAuth, adminOnly, EcommerceOrderController.processAutomaticPayments);
