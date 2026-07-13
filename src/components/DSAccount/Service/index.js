@@ -19,7 +19,13 @@ const createDSAccount = async (DSAccountData) => {
             throw new Error(`Customer has an active ${DSAccountData.accountType} DS account running`);
           }
           const DSAccountNumber = await generateUniqueAccountNumber('DSA')
-  const dsaccount = new DSAccount({...DSAccountData,customerId:existingDSAccountNumber.customerId,branchId:existingDSAccountNumber.branchId,DSAccountNumber});
+  const dsaccount = new DSAccount({
+    ...DSAccountData,
+    accountManagerId: DSAccountData.accountManagerId || existingDSAccountNumber.accountManagerId || DSAccountData.createdBy,
+    customerId: existingDSAccountNumber.customerId,
+    branchId: existingDSAccountNumber.branchId,
+    DSAccountNumber
+  });
   const newDSAccount = await dsaccount.save();
   return ({message:"Account created successfilly", newDSAccount})
 };
@@ -57,8 +63,39 @@ const updateDSAccountAmount = async (details) => {
   // }
 };
 const getAccountByAccountNumber = async (accountNumber) => {
-    return await Account.findOne({ accountNumber });
+    return await Account.findOne({
+      accountNumber,
+      walletType: { $ne: 'sb_order_wallet' }
+    });
   };
+
+const getOrCreateSBOrderWallet = async ({ customerId, accountNumber, createdBy }) => {
+  let wallet = await Account.findOne({
+    customerId: customerId.toString(),
+    walletType: 'sb_order_wallet'
+  });
+
+  if (wallet) return wallet;
+
+  const sourceAccount = await getAccountByAccountNumber(accountNumber);
+  if (!sourceAccount) {
+    throw new Error('Free to withdraw account does not exist');
+  }
+
+  wallet = await Account.create({
+    customerId: sourceAccount.customerId,
+    accountNumber: sourceAccount.accountNumber,
+    walletType: 'sb_order_wallet',
+    availableBalance: 0,
+    ledgerBalance: 0,
+    createdBy: createdBy || sourceAccount.createdBy,
+    accountManagerId: sourceAccount.accountManagerId,
+    branchId: sourceAccount.branchId,
+    status: 'active',
+  });
+
+  return wallet;
+};
 
 const formatTransactionDate = (date = new Date()) => {
   return date.toLocaleString("en-GB", {
@@ -1173,6 +1210,7 @@ const freeToWithdrawReversal = async (contributionInput) => {
   }
 
   const transferWalletToPackageAccount = async (contributionInput) => {
+    const transferType = contributionInput.transferType || 'free_to_sb_wallet';
     const sourceAccountNumber = contributionInput.accountNumber;
     const targetAccountNumber = String(
       contributionInput.targetAccountNumber
@@ -1186,121 +1224,138 @@ const freeToWithdrawReversal = async (contributionInput) => {
       throw new Error('Wallet account number is required');
     }
 
-    if (!targetAccountNumber) {
-      throw new Error('Target account number is required');
-    }
-
     if (!Number.isFinite(amount) || amount <= 0) {
       throw new Error('Please provide a valid amount');
     }
 
-    const account = await Account.findOne({ accountNumber: sourceAccountNumber });
+    const account = await getAccountByAccountNumber(sourceAccountNumber);
     if (!account) {
       throw new Error('Wallet account does not exist');
     }
 
-    if (amount > Number(account.availableBalance || 0)) {
+    if (transferType === 'free_to_sb_wallet' && amount > Number(account.availableBalance || 0)) {
       throw new Error('Insufficient wallet balance');
     }
 
     const formattedDate = formatTransactionDate();
-    const newWalletAvailableBalance = Number(account.availableBalance || 0) - amount;
-    const newWalletLedgerBalance = Number(account.ledgerBalance || 0) - amount;
 
-    const sbAccount = await SBAccount.findOne({ SBAccountNumber: targetAccountNumber });
-    if (sbAccount) {
-      if (String(sbAccount.customerId) !== String(account.customerId)) {
-        throw new Error('The selected SB account does not belong to this customer');
-      }
+    if (transferType === 'free_to_sb_wallet') {
+      const sbWallet = await getOrCreateSBOrderWallet({
+        customerId: account.customerId,
+        accountNumber: account.accountNumber,
+        createdBy: contributionInput.createdBy
+      });
 
-      const newSBBalance = Number(sbAccount.balance || 0) + amount;
+      const newFreeAvailableBalance = Number(account.availableBalance || 0) - amount;
+      const newFreeLedgerBalance = Number(account.ledgerBalance || 0) - amount;
+      const newSBWalletAvailableBalance = Number(sbWallet.availableBalance || 0) + amount;
+      const newSBWalletLedgerBalance = Number(sbWallet.ledgerBalance || 0) + amount;
+
       const walletTransaction = await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
         transactionOwnerId: contributionInput.createdBy,
         customerId: account.customerId,
         amount,
-        balance: newWalletAvailableBalance,
+        balance: newFreeAvailableBalance,
         branchId: account.branchId,
         accountManagerId: account.accountManagerId,
         accountNumber: account.accountNumber,
         accountTypeId: account._id,
         date: formattedDate,
-        narration: `From wallet for SB account ${targetAccountNumber}`,
-        package: "Wallet",
-        direction: "Debit",
-      });
-
-      const sbTransaction = await AccountTransaction.DepositTransactionAccount({
-        createdBy: contributionInput.createdBy,
-        transactionOwnerId: contributionInput.createdBy,
-        customerId: sbAccount.customerId,
-        amount,
-        balance: newSBBalance,
-        branchId: sbAccount.branchId,
-        accountManagerId: sbAccount.accountManagerId,
-        accountNumber: sbAccount.accountNumber,
-        accountTypeId: sbAccount._id,
-        date: formattedDate,
-        narration: `To SB account ${targetAccountNumber} from wallet`,
-        package: "SB",
-        direction: "Credit",
+        narration: 'Transferred from Free To Withdraw to SB Order Wallet',
+        package: 'Wallet',
+        direction: 'Debit',
         excludeFromStaffStats: true,
       });
 
-      await Account.findByIdAndUpdate(
-        account._id,
-        {
-          $set: {
-            availableBalance: newWalletAvailableBalance,
-            ledgerBalance: newWalletLedgerBalance,
-          },
-        }
-      );
+      const sbWalletTransaction = await AccountTransaction.DepositTransactionAccount({
+        createdBy: contributionInput.createdBy,
+        transactionOwnerId: contributionInput.createdBy,
+        customerId: sbWallet.customerId,
+        amount,
+        balance: newSBWalletAvailableBalance,
+        branchId: sbWallet.branchId || account.branchId,
+        accountManagerId: sbWallet.accountManagerId || account.accountManagerId,
+        accountNumber: sbWallet.accountNumber,
+        accountTypeId: sbWallet._id,
+        date: formattedDate,
+        narration: 'Transferred to SB Order Wallet from Free To Withdraw',
+        package: 'SB_ORDER_WALLET',
+        direction: 'Credit',
+        excludeFromStaffStats: true,
+      });
 
-      await SBAccount.findByIdAndUpdate(
-        sbAccount._id,
-        {
-          $set: {
-            balance: newSBBalance,
-          },
-        }
-      );
+      await Account.findByIdAndUpdate(account._id, {
+        $set: {
+          availableBalance: newFreeAvailableBalance,
+          ledgerBalance: newFreeLedgerBalance,
+        },
+      });
+
+      await Account.findByIdAndUpdate(sbWallet._id, {
+        $set: {
+          availableBalance: newSBWalletAvailableBalance,
+          ledgerBalance: newSBWalletLedgerBalance,
+        },
+      });
 
       return {
         walletTransaction,
-        targetTransaction: sbTransaction,
-        targetType: 'SB',
+        targetTransaction: sbWalletTransaction,
+        targetType: 'SB_ORDER_WALLET',
       };
     }
 
-    const dsAccount = await DSAccount.findOne({ DSAccountNumber: targetAccountNumber });
-    if (dsAccount) {
+    if (transferType === 'sb_wallet_to_ds') {
+      if (!targetAccountNumber) {
+        throw new Error('Target DS account is required');
+      }
+
+      const sbWallet = await Account.findOne({
+        customerId: account.customerId.toString(),
+        walletType: 'sb_order_wallet'
+      });
+
+      if (!sbWallet) {
+        throw new Error('SB Order Wallet does not exist');
+      }
+      if (amount > Number(sbWallet.availableBalance || 0)) {
+        throw new Error('Insufficient SB Order Wallet balance');
+      }
+
+      const dsAccount = await DSAccount.findOne({ DSAccountNumber: targetAccountNumber });
+      if (!dsAccount) {
+        throw new Error('Target DS account does not exist');
+      }
       if (String(dsAccount.customerId) !== String(account.customerId)) {
         throw new Error('The selected DS account does not belong to this customer');
       }
 
+      const newSBWalletAvailableBalance = Number(sbWallet.availableBalance || 0) - amount;
+      const newSBWalletLedgerBalance = Number(sbWallet.ledgerBalance || 0) - amount;
       const walletTransaction = await AccountTransaction.DepositTransactionAccount({
         createdBy: contributionInput.createdBy,
         transactionOwnerId: contributionInput.createdBy,
-        customerId: account.customerId,
+        customerId: sbWallet.customerId,
         amount,
-        balance: newWalletAvailableBalance,
-        branchId: account.branchId,
-        accountManagerId: account.accountManagerId,
-        accountNumber: account.accountNumber,
-        accountTypeId: account._id,
+        balance: newSBWalletAvailableBalance,
+        branchId: sbWallet.branchId,
+        accountManagerId: sbWallet.accountManagerId,
+        accountNumber: sbWallet.accountNumber,
+        accountTypeId: sbWallet._id,
         date: formattedDate,
-        narration: `From wallet for DS account ${targetAccountNumber}`,
-        package: "Wallet",
+        narration: `Transferred from SB Order Wallet to DS account ${targetAccountNumber}`,
+        package: 'SB_ORDER_WALLET',
         direction: "Debit",
+        excludeFromStaffStats: true,
       });
 
       await Account.findByIdAndUpdate(
-        account._id,
+        sbWallet._id,
         {
           $set: {
-            availableBalance: newWalletAvailableBalance,
-            ledgerBalance: newWalletLedgerBalance,
+            availableBalance: newSBWalletAvailableBalance,
+            ledgerBalance: newSBWalletLedgerBalance,
           },
         }
       );
@@ -1320,7 +1375,7 @@ const freeToWithdrawReversal = async (contributionInput) => {
       };
     }
 
-    throw new Error('Target account does not exist as an SB or DS account');
+    throw new Error('Unsupported wallet transfer type');
   }
  
 
