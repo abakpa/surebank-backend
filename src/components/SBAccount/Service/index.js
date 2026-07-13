@@ -229,6 +229,9 @@ const hydrateSBItemCostFromProduct = async (sbaccount, itemIndex, approvedBy = '
     sbaccount.items[itemIndex].variationId = resolvedVariationId;
   }
   if (Number(item.costSubtotal || 0) > 0) {
+    sbaccount.items[itemIndex].requiresCostApproval = false;
+    sbaccount.items[itemIndex].costApprovedBy = sbaccount.items[itemIndex].costApprovedBy || approvedBy;
+    sbaccount.items[itemIndex].costApprovedAt = sbaccount.items[itemIndex].costApprovedAt || new Date();
     return sbaccount.items[itemIndex];
   }
   const costPrice = getProductCostPrice(product, resolvedVariationId);
@@ -817,6 +820,14 @@ const getAccountByAccountNumber = async (accountNumber) => {
   const getCustomerSBAccountById = async (customerId, requesterRole = '') =>{
     try {
         const accounts = await SBAccount.find({customerId:customerId});
+        for (const account of accounts) {
+          const isNewSBOrderAccount = account.accountMode === 'multi_item' ||
+            (Array.isArray(account.items) && account.items.length > 0);
+          if (isNewSBOrderAccount) {
+            await hydrateSBAccountCostFromProducts(account, 'ECOMMERCE_SYSTEM');
+            await account.save();
+          }
+        }
         return filterClosedLegacySBAccountsForRole(accounts, requesterRole);
     } catch (error) {
         throw error;

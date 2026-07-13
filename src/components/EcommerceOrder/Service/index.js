@@ -1191,6 +1191,59 @@ const addItemsToActiveOrder = async (orderData) => {
 const syncSBAccountItemsFromOrder = async (order) => {
   if (!order?.SBAccountNumber) return null;
 
+  const existingSBAccount = await SBAccount.findOne({ SBAccountNumber: order.SBAccountNumber }).lean();
+  const existingItems = Array.isArray(existingSBAccount?.items) ? existingSBAccount.items : [];
+  const syncedItems = await Promise.all((order.items || []).map(async (item) => {
+    const existingItem = existingItems.find((sbItem) => (
+      String(sbItem._id || '') === String(item._id || '') ||
+      (
+        String(sbItem.productId || '') === String(item.productId || '') &&
+        String(sbItem.variationId || '') === String(item.variationId || '')
+      )
+    ));
+    const existingCostSubtotal = Number(existingItem?.costSubtotal || 0);
+    const existingCostPrice = Number(existingItem?.costPrice || 0);
+    let costPrice = existingCostPrice;
+    let costSubtotal = existingCostSubtotal;
+    let profitAmount = Number(existingItem?.profitAmount || 0);
+    let requiresCostApproval = existingItem?.requiresCostApproval;
+    let costApprovedBy = existingItem?.costApprovedBy;
+    let costApprovedAt = existingItem?.costApprovedAt;
+
+    if (costSubtotal <= 0) {
+      const product = item.productId ? await Product.findById(item.productId) : null;
+      const calculated = calculateOrderItemProfit(product, item);
+      costPrice = Number(calculated.costPrice || 0);
+      costSubtotal = Number(calculated.costSubtotal || 0);
+      profitAmount = Number(calculated.profitAmount || 0);
+      requiresCostApproval = costPrice <= 0;
+      costApprovedBy = costPrice > 0 ? (costApprovedBy || order.processedBy || 'ECOMMERCE_SYSTEM') : undefined;
+      costApprovedAt = costPrice > 0 ? (costApprovedAt || new Date()) : undefined;
+    }
+
+    return {
+      _id: item._id,
+      productId: item.productId,
+      variationId: item.variationId || '',
+      productName: item.productName,
+      productDescription: '',
+      quantity: Number(item.quantity || 1),
+      price: Number(item.price || 0),
+      subtotal: Number(item.subtotal || 0),
+      addedAt: resolveOrderItemAddedAt(item, order.createdAt),
+      paidAmount: Number(item.paidAmount || 0),
+      fulfillmentStatus: item.fulfillmentStatus || 'pending',
+      costPrice,
+      costSubtotal,
+      profitAmount,
+      requiresCostApproval: costSubtotal > 0 ? false : (requiresCostApproval !== undefined ? requiresCostApproval : costPrice <= 0),
+      costApprovedBy,
+      costApprovedAt,
+      profitReported: Boolean(existingItem?.profitReported),
+      profitReportedAt: existingItem?.profitReportedAt
+    };
+  }));
+
   return await SBAccount.findOneAndUpdate(
     { SBAccountNumber: order.SBAccountNumber },
     {
@@ -1200,19 +1253,9 @@ const syncSBAccountItemsFromOrder = async (order) => {
         sellingPrice: Number(order.totalAmount || 0),
         accountMode: 'multi_item',
         status: order.status === 'completed' ? 'sold' : 'booked',
-        items: (order.items || []).map((item) => ({
-          _id: item._id,
-          productId: item.productId,
-          variationId: item.variationId || '',
-          productName: item.productName,
-          productDescription: '',
-          quantity: Number(item.quantity || 1),
-          price: Number(item.price || 0),
-          subtotal: Number(item.subtotal || 0),
-          addedAt: resolveOrderItemAddedAt(item, order.createdAt),
-          paidAmount: Number(item.paidAmount || 0),
-          fulfillmentStatus: item.fulfillmentStatus || 'pending'
-        }))
+        items: syncedItems,
+        costPrice: syncedItems.reduce((sum, item) => sum + Number(item.costSubtotal || 0), 0),
+        profit: syncedItems.reduce((sum, item) => sum + Number(item.profitAmount || 0), 0)
       }
     },
     { new: true }
