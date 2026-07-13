@@ -1,4 +1,3 @@
-// controllers/smsController.js
 
 const smsService = require('../Service/index');
 
