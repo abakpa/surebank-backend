@@ -191,7 +191,8 @@ const replaceInstallmentOrderItemByStaff = async (req, res) => {
       SBAccountNumber,
       itemId,
       productId,
-      variationId: variationId || ''
+      variationId: variationId || '',
+      actorId: req.staff?.staffId
     });
 
     res.status(200).json({

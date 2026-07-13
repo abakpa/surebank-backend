@@ -5,8 +5,13 @@ const Staff = require('../../Staff/Model');
 const Customer = require('../../Customer/Model');
 
 const DepositTransactionAccount = async (DSAccountDepositData) => {
-    
-  const transaction = new AccountTransaction({...DSAccountDepositData});
+  const transactionData = {
+    ...DSAccountDepositData,
+    accountManagerId: DSAccountDepositData.accountManagerId
+      || DSAccountDepositData.transactionOwnerId
+      || DSAccountDepositData.createdBy,
+  };
+  const transaction = new AccountTransaction(transactionData);
   const newTransaction = await transaction.save();
   return ({newTransaction})
 };

@@ -1667,7 +1667,8 @@ const replaceSBAccountOrderItem = async ({
   customerId,
   itemId,
   productId,
-  variationId = ''
+  variationId = '',
+  actorId = ''
 }) => {
   const sbAccountQuery = { SBAccountNumber: orderNumber };
   if (customerId) {
@@ -1700,10 +1701,9 @@ const replaceSBAccountOrderItem = async ({
     variationId,
     quantity: existingItem.quantity
   });
-  const carriedPaidAmount = Math.min(
-    Number(existingItem.paidAmount || 0),
-    Number(replacementItem.subtotal || 0)
-  );
+  const actor = actorId || customerId?.toString() || sbAccount.customerId?.toString() || 'ECOMMERCE_SYSTEM';
+  const orderLike = buildOrderLikeFromSBAccount(sbAccount);
+  const reversedAmount = await reverseChangedOrderItemPayment(orderLike, existingItem, actor);
 
   sbAccount.items[itemIndex].productId = replacementItem.productId;
   sbAccount.items[itemIndex].variationId = replacementItem.variationId || '';
@@ -1715,7 +1715,7 @@ const replaceSBAccountOrderItem = async ({
   sbAccount.items[itemIndex].price = Number(replacementItem.price || 0);
   sbAccount.items[itemIndex].subtotal = Number(replacementItem.subtotal || 0);
   sbAccount.items[itemIndex].addedAt = existingItem.addedAt || sbAccount.createdAt || new Date();
-  sbAccount.items[itemIndex].paidAmount = carriedPaidAmount;
+  sbAccount.items[itemIndex].paidAmount = 0;
   sbAccount.items[itemIndex].fulfillmentStatus = 'pending';
   sbAccount.items[itemIndex].fulfilledAt = undefined;
   sbAccount.items[itemIndex].fulfilledBy = undefined;
@@ -1741,8 +1741,19 @@ const replaceSBAccountOrderItem = async ({
     sbAccount.status = 'booked';
   }
 
+  const autoPayment = await payReplacementItemFromWalletIfFullyFunded(orderLike, sbAccount.items[itemIndex], actor);
+  if (autoPayment.paid) {
+    sbAccount.items[itemIndex].paidAmount = Number(sbAccount.items[itemIndex].subtotal || 0);
+  }
+
   const savedSBAccount = await sbAccount.save();
-  return await buildOrderFromSBAccount(savedSBAccount);
+  const responseOrder = await buildOrderFromSBAccount(savedSBAccount);
+  responseOrder.productChangePayment = {
+    reversedAmount,
+    paidAmount: autoPayment.paid ? autoPayment.amount : 0,
+    paymentStatus: autoPayment.paid ? 'paid' : 'unpaid'
+  };
+  return responseOrder;
 };
 
 const replaceInstallmentOrderItem = async ({
@@ -1750,7 +1761,8 @@ const replaceInstallmentOrderItem = async ({
   customerId,
   itemId,
   productId,
-  variationId = ''
+  variationId = '',
+  actorId = ''
 }) => {
   const orderQuery = { orderNumber };
   if (customerId) {
@@ -1763,7 +1775,8 @@ const replaceInstallmentOrderItem = async ({
       customerId,
       itemId,
       productId,
-      variationId
+      variationId,
+      actorId
     });
   }
 
@@ -1790,15 +1803,12 @@ const replaceInstallmentOrderItem = async ({
     variationId,
     quantity: existingItem.quantity
   });
-  const carriedPaidAmount = Math.min(
-    Number(existingItem.paidAmount || 0),
-    Number(replacementItem.subtotal || 0)
-  );
+  const actor = actorId || customerId?.toString() || order.customerId?.toString() || 'ECOMMERCE_SYSTEM';
+  const reversedAmount = await reverseChangedOrderItemPayment(order, existingItem, actor);
+  const autoPayment = await payReplacementItemFromWalletIfFullyFunded(order, replacementItem, actor);
   replacementItem.addedAt = existingItem.addedAt || order.createdAt || new Date();
-  replacementItem.paidAmount = carriedPaidAmount;
-  replacementItem.paymentStatus = carriedPaidAmount >= Number(replacementItem.subtotal || 0)
-    ? 'paid'
-    : carriedPaidAmount > 0 ? 'partial' : 'unpaid';
+  replacementItem.paidAmount = autoPayment.paid ? Number(replacementItem.subtotal || 0) : 0;
+  replacementItem.paymentStatus = autoPayment.paid ? 'paid' : 'unpaid';
   replacementItem.fulfillmentStatus = 'pending';
 
   order.items.set(itemIndex, replacementItem);
@@ -1806,16 +1816,14 @@ const replaceInstallmentOrderItem = async ({
   if (!order.installmentPlan) {
     order.installmentPlan = {};
   }
-  const paymentReferenceTotal = Array.isArray(order.paymentReferences)
-    ? order.paymentReferences.reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
-    : 0;
-  const totalPaid = Number(order.installmentPlan.totalPaid || paymentReferenceTotal || (order.paymentStatus === 'paid' ? order.totalAmount : 0) || 0);
+  const totalPaid = order.items.reduce((sum, item) => sum + Number(item.paidAmount || 0), 0);
 
   const nextRemainingBalance = Math.max(0, nextTotalAmount - totalPaid);
 
   order.totalAmount = nextTotalAmount;
   order.installmentPlan.totalPaid = totalPaid;
   order.installmentPlan.remainingBalance = nextRemainingBalance;
+  order.installmentPlan.creditBalance = Math.max(0, totalPaid - nextTotalAmount);
   order.installmentPlan.amountPerPeriod = 0;
   order.installmentPlan.duration = 0;
   order.installmentPlan.frequency = 'flexible';
@@ -1831,7 +1839,11 @@ const replaceInstallmentOrderItem = async ({
 
   const savedOrder = await order.save();
   await syncSBAccountItemsFromOrder(savedOrder);
-
+  savedOrder.productChangePayment = {
+    reversedAmount,
+    paidAmount: autoPayment.paid ? autoPayment.amount : 0,
+    paymentStatus: autoPayment.paid ? 'paid' : 'unpaid'
+  };
   return savedOrder;
 };
 
@@ -1839,7 +1851,8 @@ const replaceInstallmentOrderItemBySBAccount = async ({
   SBAccountNumber,
   itemId,
   productId,
-  variationId = ''
+  variationId = '',
+  actorId = ''
 }) => {
   if (!SBAccountNumber) {
     throw new Error('SB account number is required');
@@ -1851,7 +1864,8 @@ const replaceInstallmentOrderItemBySBAccount = async ({
       orderNumber: linkedOrder.orderNumber,
       itemId,
       productId,
-      variationId
+      variationId,
+      actorId
     });
   }
 
@@ -1859,7 +1873,8 @@ const replaceInstallmentOrderItemBySBAccount = async ({
     orderNumber: SBAccountNumber,
     itemId,
     productId,
-    variationId
+    variationId,
+    actorId
   });
 };
 
@@ -2258,17 +2273,23 @@ const debitSBAccountForPayment = async (sbAccount, amount, order, staffId, optio
   return transaction;
 };
 
-const creditWalletForOrderPayment = async (order, amount, transactionRef) => {
+const creditWalletForOrderPayment = async (order, amount, transactionRef, options = {}) => {
   const account = await getCustomerWalletAccount(order);
   const formattedDate = formatTransactionDate();
   const newAvailableBalance = Number(account.availableBalance || 0) + amount;
   const newLedgerBalance = Number(account.ledgerBalance || 0) + amount;
   const customerActor = order.customerId?.toString() || account.customerId;
-  const reportingActor = getReportingStaffId(account.accountManagerId, customerActor);
+  const transactionOwner = options.transactionOwnerId || customerActor;
+  const reportingActor = getReportingStaffId(account.accountManagerId, options.createdBy || transactionOwner);
+  const productName = String(options.productName || '').trim();
+  const creditNarration = options.narration ||
+    (productName
+      ? `Reversed payment for changed product: ${productName}`
+      : `Order Payment to Wallet - Order: ${order.orderNumber} - Ref: ${transactionRef}`);
 
   await AccountTransaction.DepositTransactionAccount({
     createdBy: reportingActor,
-    transactionOwnerId: customerActor,
+    transactionOwnerId: transactionOwner,
     customerId: account.customerId,
     amount,
     balance: newAvailableBalance,
@@ -2277,7 +2298,7 @@ const creditWalletForOrderPayment = async (order, amount, transactionRef) => {
     accountNumber: account.accountNumber,
     accountTypeId: account._id,
     date: formattedDate,
-    narration: `Order Payment to Wallet - Order: ${order.orderNumber} - Ref: ${transactionRef}`,
+    narration: creditNarration,
     transactionRef,
     package: "Wallet",
     direction: "Credit",
@@ -2487,6 +2508,96 @@ const creditSBAccountWithoutLedgerImpact = async (order, amount, transactionRef,
     { balance: nextSBBalance },
     { new: true }
   );
+};
+
+const buildOrderLikeFromSBAccount = (sbAccount) => ({
+  _id: sbAccount._id,
+  orderNumber: sbAccount.SBAccountNumber,
+  customerId: sbAccount.customerId,
+  accountNumber: sbAccount.accountNumber,
+  SBAccountNumber: sbAccount.SBAccountNumber,
+  branchId: sbAccount.branchId,
+  accountManagerId: sbAccount.accountManagerId,
+  paymentType: 'installment'
+});
+
+const reverseSBAccountReservationForChangedItem = async (order, amount, transactionRef, source, productName = '') => {
+  if (!order?.SBAccountNumber || amount <= 0) {
+    return null;
+  }
+
+  const sbAccount = await SBAccount.findOne({ SBAccountNumber: order.SBAccountNumber });
+  if (!sbAccount) {
+    return null;
+  }
+
+  const formattedDate = formatTransactionDate();
+  const effectiveAccountManagerId = sbAccount.accountManagerId || order.accountManagerId || 'ECOMMERCE_SYSTEM';
+  const reportingActor = getReportingStaffId(effectiveAccountManagerId, source);
+  const shouldUseSBOrderWalletOnly = sbAccount.accountMode === 'multi_item';
+  const nextSBBalance = shouldUseSBOrderWalletOnly
+    ? Number(sbAccount.balance || 0)
+    : Math.max(0, Number(sbAccount.balance || 0) - amount);
+
+  await AccountTransaction.DepositTransactionAccount({
+    createdBy: reportingActor,
+    transactionOwnerId: source,
+    customerId: sbAccount.customerId,
+    amount,
+    balance: nextSBBalance,
+    branchId: sbAccount.branchId || order.branchId || 'ECOMMERCE',
+    accountManagerId: effectiveAccountManagerId,
+    accountNumber: sbAccount.accountNumber,
+    accountTypeId: sbAccount._id,
+    date: formattedDate,
+    narration: `Reversed payment reservation for changed product: ${productName || 'Product'} - Ref: ${transactionRef}`,
+    transactionRef,
+    package: "SB",
+    direction: "Debit",
+    excludeFromStaffStats: true,
+  });
+
+  return await SBAccount.findByIdAndUpdate(
+    sbAccount._id,
+    { balance: nextSBBalance },
+    { new: true }
+  );
+};
+
+const reverseChangedOrderItemPayment = async (order, item, actor) => {
+  const paidAmount = Math.max(0, Number(item?.paidAmount || 0));
+  if (paidAmount <= 0) {
+    return 0;
+  }
+
+  const productName = item.productName || 'Product';
+  const transactionRef = `ITEM_CHANGE_REVERSAL_${order.orderNumber}_${item._id || item.productId}_${Date.now()}`;
+  await creditWalletForOrderPayment(order, paidAmount, transactionRef, {
+    createdBy: actor,
+    transactionOwnerId: order.customerId?.toString(),
+    productName,
+  });
+  await reverseSBAccountReservationForChangedItem(order, paidAmount, transactionRef, actor, productName);
+
+  return paidAmount;
+};
+
+const payReplacementItemFromWalletIfFullyFunded = async (order, item, actor) => {
+  const amount = Math.max(0, Number(item?.subtotal || item?.price || 0));
+  if (amount <= 0) {
+    return { paid: false, amount: 0 };
+  }
+
+  const walletAccount = await getCustomerWalletAccount(order);
+  if (Number(walletAccount.availableBalance || 0) < amount) {
+    return { paid: false, amount: 0 };
+  }
+
+  const transactionRef = `ITEM_REPLACEMENT_PAYMENT_${order.orderNumber}_${item._id || item.productId}_${Date.now()}`;
+  await debitWalletForOrderPayment(order, amount, transactionRef, { productName: item.productName });
+  await creditSBAccountWithoutLedgerImpact(order, amount, transactionRef, actor);
+
+  return { paid: true, amount };
 };
 
 const getOrderFulfillmentBranchId = (order, staff) => {

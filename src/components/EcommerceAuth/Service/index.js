@@ -159,7 +159,8 @@ const getWalletTransactions = async (accountId, customerId = '') => {
       transactionQueries.push({
         accountTypeId: { $in: ecommerceSBAccountIds },
         package: 'SB',
-        direction: { $in: ['Debit', 'Purchased'] }
+        direction: { $in: ['Debit', 'Purchased'] },
+        narration: { $not: /^Reversed payment reservation for changed product:/i }
       });
     }
   }
