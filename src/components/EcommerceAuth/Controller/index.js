@@ -133,6 +133,27 @@ const initializeWalletFunding = async (req, res) => {
   }
 };
 
+const initializeDSAccountFunding = async (req, res) => {
+  try {
+    const customerId = req.customer.customerId;
+    const { amount, customerEmail, callbackUrl, dsAccountId } = req.body;
+
+    const result = await EcommerceAuthService.initializeDSAccountFunding(customerId, {
+      amount,
+      customerEmail,
+      callbackUrl,
+      dsAccountId
+    });
+
+    res.status(200).json({
+      message: 'DS package funding initialized',
+      data: result
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const verifyWalletFunding = async (req, res) => {
   try {
     const customerId = req.customer.customerId;
@@ -213,5 +234,6 @@ module.exports = {
   changePassword,
   getWallet,
   initializeWalletFunding,
+  initializeDSAccountFunding,
   verifyWalletFunding
 };

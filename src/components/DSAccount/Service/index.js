@@ -180,6 +180,8 @@ const getCustomerDSAccountById = async (customerId) =>{
   
     // Calculate the new total count
     const totalCount = dsaccount.totalCount + contributionDaysCount;
+    const depositNarration = contributionInput.narration || "DS Deposit";
+    const depositTransactionRef = contributionInput.transactionRef || undefined;
   
     if (totalCount > 31) {
       const circle = dsaccount.totalContribution + contributionInput.amountPerDay;
@@ -230,9 +232,10 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountNumber: dsaccount.accountNumber,
         accountTypeId: DSAccountId,
         date: formattedDate,
-        narration: "DS Deposit",
+        narration: depositNarration,
         package:"DS",
         direction: "Credit",
+        transactionRef: depositTransactionRef,
         excludeFromStaffStats: contributionInput.excludeFromStaffStats === true,
       });
     
@@ -336,9 +339,10 @@ const getCustomerDSAccountById = async (customerId) =>{
        accountNumber: dsaccount.accountNumber,
        accountTypeId: DSAccountId,
        date: formattedDate,
-       narration: "DS Deposit",
+       narration: depositNarration,
        package:"DS",
        direction: "Credit",
+       transactionRef: depositTransactionRef,
        excludeFromStaffStats: contributionInput.excludeFromStaffStats === true,
      });
       const finalContribution = await AccountTransaction.DepositTransactionAccount({
@@ -405,9 +409,10 @@ const getCustomerDSAccountById = async (customerId) =>{
        accountNumber: dsaccount.accountNumber,
        accountTypeId: DSAccountId,
        date: formattedDate,
-       narration: "DS Deposit",
+       narration: depositNarration,
        package:"DS",
        direction: "Credit",
+       transactionRef: depositTransactionRef,
        excludeFromStaffStats: contributionInput.excludeFromStaffStats === true,
      });
  
@@ -525,9 +530,10 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountNumber: dsaccount.accountNumber,
         accountTypeId: DSAccountId,
         date: formattedDate,
-        narration: "DS Deposit",
+        narration: depositNarration,
         package:"DS",
         direction: "Credit",
+        transactionRef: depositTransactionRef,
         excludeFromStaffStats: contributionInput.excludeFromStaffStats === true,
       });
       // Update total contribution count
@@ -552,9 +558,10 @@ const getCustomerDSAccountById = async (customerId) =>{
         accountNumber: dsaccount.accountNumber,
         accountTypeId: DSAccountId,
         date: formattedDate,
-        narration: "DS Deposit",
+        narration: depositNarration,
         package:"DS",
         direction: "Credit",
+        transactionRef: depositTransactionRef,
         excludeFromStaffStats: contributionInput.excludeFromStaffStats === true,
       });
   

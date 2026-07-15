@@ -327,6 +327,15 @@ const getProductDemandSummary = async (req, res) => {
   }
 };
 
+const getProductSalesSummary = async (req, res) => {
+  try {
+    const sales = await EcommerceOrderService.getProductSalesSummary();
+    res.status(200).json(sales);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const getProductDemandDetail = async (req, res) => {
   try {
     const demand = await EcommerceOrderService.getProductDemandDetail(req.params.productId);
@@ -909,6 +918,7 @@ module.exports = {
   getAllOrders,
   getOrdersByBranch,
   getProductDemandSummary,
+  getProductSalesSummary,
   getProductDemandDetail,
   updateOrderStatus,
   updateOrderItemFulfillment,

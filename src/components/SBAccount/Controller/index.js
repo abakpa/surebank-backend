@@ -187,7 +187,9 @@ const formatSBAccountResponse = (data, requesterRole) => {
       const getBackofficeProductDeliverySummary = async (req, res) => {
         try {
           const result = await SBAccountService.getBackofficeProductDeliverySummary(req.staff, {
-            staffId: req.query.staffId
+            staffId: req.query.staffId,
+            dateFrom: req.query.dateFrom,
+            dateTo: req.query.dateTo
           });
           res.status(200).json(result);
         } catch (error) {

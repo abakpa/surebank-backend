@@ -1,6 +1,8 @@
 const Customer = require('../../Customer/Model/index');
 const Account = require('../../Account/Model/index');
 const SBAccount = require('../../SBAccount/Model/index');
+const DSAccount = require('../../DSAccount/Model/index');
+const DSAccountService = require('../../DSAccount/Service/index');
 const Branch = require('../../Branch/Model/index');
 const AccountTransactionModel = require('../../AccountTransaction/Model/index');
 const AccountTransactionService = require('../../AccountTransaction/Service/index');
@@ -168,6 +170,35 @@ const getWalletTransactions = async (accountId, customerId = '') => {
   return await AccountTransactionModel.find({
     $or: transactionQueries
   }).sort({ createdAt: -1 }).limit(50);
+};
+
+const getDSTransactions = async (customerId = '') => {
+  if (!customerId) return [];
+
+  const dsAccounts = await DSAccount.find({
+    customerId: customerId.toString()
+  }).select('_id DSAccountNumber accountType').lean();
+  const dsAccountIds = dsAccounts.map((account) => account._id.toString());
+
+  if (dsAccountIds.length === 0) return [];
+
+  const dsAccountMap = new Map(
+    dsAccounts.map((account) => [account._id.toString(), account])
+  );
+
+  const transactions = await AccountTransactionModel.find({
+    accountTypeId: { $in: dsAccountIds },
+    package: 'DS'
+  }).sort({ createdAt: -1 }).limit(100).lean();
+
+  return transactions.map((transaction) => {
+    const dsAccount = dsAccountMap.get(transaction.accountTypeId?.toString());
+    return {
+      ...transaction,
+      DSAccountNumber: dsAccount?.DSAccountNumber || '',
+      accountType: dsAccount?.accountType || '',
+    };
+  });
 };
 
 const registerEcommerceCustomer = async (customerData) => {
@@ -350,6 +381,14 @@ const getCustomerWallet = async (customerId) => {
 
   const account = await ensureCustomerSBOrderWallet(customer);
   const transactions = await getWalletTransactions(account._id, customer._id);
+  const dsTransactions = await getDSTransactions(customer._id);
+  const dsAccounts = await DSAccount.find({
+    customerId: customer._id.toString(),
+    status: { $ne: 'closed' }
+  })
+    .select('_id DSAccountNumber accountNumber accountType amountPerDay totalContribution totalCount status')
+    .sort({ createdAt: -1 })
+    .lean();
 
   return {
     customer: {
@@ -361,7 +400,9 @@ const getCustomerWallet = async (customerId) => {
       address: customer.address
     },
     account,
-    transactions
+    transactions,
+    dsTransactions,
+    dsAccounts
   };
 };
 
@@ -420,6 +461,81 @@ const initializeWalletFunding = async (customerId, fundingData) => {
   };
 };
 
+const initializeDSAccountFunding = async (customerId, fundingData) => {
+  const customer = await Customer.findById(customerId);
+  if (!customer) {
+    throw new Error('Customer not found');
+  }
+
+  const amount = Number(fundingData.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error('Please provide a valid amount');
+  }
+
+  if (!fundingData.dsAccountId) {
+    throw new Error('Select a DS package to fund');
+  }
+
+  const dsAccount = await DSAccount.findOne({
+    _id: fundingData.dsAccountId,
+    customerId: customer._id.toString(),
+    status: { $ne: 'closed' }
+  });
+
+  if (!dsAccount) {
+    throw new Error('Selected DS package was not found');
+  }
+
+  if (amount < Number(dsAccount.amountPerDay || 0)) {
+    throw new Error(`Amount cannot be less than ${Number(dsAccount.amountPerDay || 0).toLocaleString()}`);
+  }
+
+  if (amount % Number(dsAccount.amountPerDay || 0) !== 0) {
+    throw new Error(`Amount must be a multiple of ${Number(dsAccount.amountPerDay || 0).toLocaleString()}`);
+  }
+
+  const providedEmail = (fundingData.customerEmail || customer.email || '').trim();
+  const customerEmail = providedEmail && providedEmail.includes('@')
+    ? providedEmail
+    : buildFallbackEmail(customer);
+
+  const callbackUrl = fundingData.callbackUrl;
+  if (!callbackUrl) {
+    throw new Error('Callback URL is required');
+  }
+
+  const reference = PaystackService.generateReference('DS');
+  const paymentResult = await PaystackService.initializeTransaction({
+    email: customerEmail,
+    amount: Math.round(amount * 100),
+    reference,
+    callback_url: callbackUrl,
+    channels: ['card', 'bank', 'ussd', 'qr', 'mobile_money', 'bank_transfer'],
+    metadata: {
+      wallet_data: {
+        fundingType: 'ds_package',
+        customerId: customer._id.toString(),
+        dsAccountId: dsAccount._id.toString(),
+        DSAccountNumber: dsAccount.DSAccountNumber,
+        accountType: dsAccount.accountType,
+        accountNumber: dsAccount.accountNumber,
+        amount,
+      }
+    }
+  });
+
+  if (!paymentResult || !paymentResult.data || !paymentResult.data.authorization_url) {
+    throw new Error('Failed to get payment URL from Paystack');
+  }
+
+  return {
+    authorization_url: paymentResult.data.authorization_url,
+    access_code: paymentResult.data.access_code,
+    reference,
+    amount
+  };
+};
+
 const verifyWalletFunding = async (customerId, reference) => {
   const verificationResult = await PaystackService.verifyTransaction(reference);
 
@@ -428,7 +544,7 @@ const verifyWalletFunding = async (customerId, reference) => {
   }
 
   const walletData = verificationResult.data.metadata?.wallet_data;
-  if (!walletData || walletData.fundingType !== 'wallet') {
+  if (!walletData || !['wallet', 'ds_package'].includes(walletData.fundingType)) {
     throw new Error('Invalid wallet payment metadata');
   }
 
@@ -439,6 +555,66 @@ const verifyWalletFunding = async (customerId, reference) => {
   const customer = await Customer.findById(customerId);
   if (!customer) {
     throw new Error('Customer not found');
+  }
+
+  if (walletData.fundingType === 'ds_package') {
+    const dsAccount = await DSAccount.findOne({
+      _id: walletData.dsAccountId,
+      customerId: customer._id.toString(),
+      status: { $ne: 'closed' }
+    });
+
+    if (!dsAccount) {
+      throw new Error('Selected DS package was not found');
+    }
+
+    const existingTransaction = await AccountTransactionModel.findOne({
+      package: 'DS',
+      direction: 'Credit',
+      transactionRef: reference,
+      accountTypeId: dsAccount._id.toString()
+    });
+
+    if (!existingTransaction) {
+      const amount = Number(walletData.amount || (verificationResult.data.amount / 100));
+      await DSAccountService.saveDailyContribution({
+        DSAccountNumber: dsAccount.DSAccountNumber,
+        accountType: dsAccount.accountType,
+        amountPerDay: amount,
+        createdBy: dsAccount.createdBy,
+        transactionRef: reference,
+        narration: `DS Deposit via Ecommerce - Ref: ${reference}`,
+      });
+    }
+
+    const refreshedAccount = await ensureCustomerSBOrderWallet(customer);
+    const transactions = await getWalletTransactions(refreshedAccount._id, customer._id);
+    const dsTransactions = await getDSTransactions(customer._id);
+    const dsAccounts = await DSAccount.find({
+      customerId: customer._id.toString(),
+      status: { $ne: 'closed' }
+    })
+      .select('_id DSAccountNumber accountNumber accountType amountPerDay totalContribution totalCount status')
+      .sort({ createdAt: -1 })
+      .lean();
+    const refreshedDSAccount = dsAccounts.find((accountItem) => (
+      accountItem._id.toString() === dsAccount._id.toString()
+    ));
+
+    return {
+      account: refreshedAccount,
+      transactions,
+      dsTransactions,
+      dsAccounts,
+      dsAccount: refreshedDSAccount || dsAccount,
+      alreadyProcessed: Boolean(existingTransaction),
+      paymentType: 'ds_package',
+      paymentDetails: {
+        amount: Number(walletData.amount || (verificationResult.data.amount / 100)),
+        reference,
+        paidAt: verificationResult.data.paid_at
+      }
+    };
   }
 
   const account = await ensureCustomerSBOrderWallet(customer);
@@ -710,5 +886,6 @@ module.exports = {
   resetAdminForcedPassword,
   getCustomerWallet,
   initializeWalletFunding,
+  initializeDSAccountFunding,
   verifyWalletFunding
 };

@@ -1233,6 +1233,8 @@ const syncSBAccountItemsFromOrder = async (order) => {
       addedAt: resolveOrderItemAddedAt(item, order.createdAt),
       paidAmount: Number(item.paidAmount || 0),
       fulfillmentStatus: item.fulfillmentStatus || 'pending',
+      fulfilledAt: item.fulfilledAt || existingItem?.fulfilledAt,
+      fulfilledBy: item.fulfilledBy || existingItem?.fulfilledBy || '',
       costPrice,
       costSubtotal,
       profitAmount,
@@ -1989,6 +1991,50 @@ const getProductDemandSummary = async () => {
     partialCount: item.partialCount,
     paidCount: item.paidCount
   }));
+};
+
+const getProductSalesSummary = async () => {
+  const soldByProduct = new Map();
+  const addSoldQuantity = (productId, quantity) => {
+    if (!productId) return;
+    const key = productId.toString();
+    const current = soldByProduct.get(key) || {
+      productId: key,
+      totalSoldQuantity: 0
+    };
+    current.totalSoldQuantity += Number(quantity || 0);
+    soldByProduct.set(key, current);
+  };
+
+  const deliveredOrders = await EcommerceOrder.find({
+    'items.fulfillmentStatus': { $in: ['delivered', 'completed'] }
+  }).select('items').lean();
+
+  deliveredOrders.forEach((order) => {
+    (order.items || []).forEach((item) => {
+      if (['delivered', 'completed'].includes(item.fulfillmentStatus)) {
+        addSoldQuantity(item.productId, item.quantity);
+      }
+    });
+  });
+
+  const ecommerceSBAccountNumbers = await EcommerceOrder.distinct('SBAccountNumber', {
+    SBAccountNumber: { $nin: [null, ''] }
+  });
+  const deliveredSBAccounts = await SBAccount.find({
+    SBAccountNumber: { $nin: ecommerceSBAccountNumbers },
+    'items.fulfillmentStatus': { $in: ['delivered', 'completed'] }
+  }).select('items').lean();
+
+  deliveredSBAccounts.forEach((account) => {
+    (account.items || []).forEach((item) => {
+      if (['delivered', 'completed'].includes(item.fulfillmentStatus)) {
+        addSoldQuantity(item.productId, item.quantity);
+      }
+    });
+  });
+
+  return Array.from(soldByProduct.values());
 };
 
 const getProductDemandDetail = async (productId) => {
@@ -3744,6 +3790,7 @@ module.exports = {
   getOrderSBAccount,
   getOrderWalletAccount,
   getProductDemandSummary,
+  getProductSalesSummary,
   getProductDemandDetail,
   creditSBAccountForOrder,
   processAutomaticPayments,
