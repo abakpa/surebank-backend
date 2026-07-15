@@ -7,6 +7,7 @@ const {staffAuth} = require('../../../Middleware/index')
 router.post('/ds',staffAuth, AcountTransactionController.getAllDSAccount);
 router.post('/availablebalance',staffAuth, AcountTransactionController.getAllAvailableBalance);
 router.post('/dswithdrawal',staffAuth, AcountTransactionController.getAllDSAccountWithdrawal);
+router.post('/dswithdrawalreport',staffAuth, AcountTransactionController.getDSAccountWithdrawalReport);
 router.post('/fwwithdrawal',staffAuth, AcountTransactionController.getAllFreeToWithdrawWithdrawal);
 router.post('/fwwithdrawalreport',staffAuth, AcountTransactionController.getFreeToWithdrawWithdrawalReport);
 router.get('/dscharge',staffAuth, AcountTransactionController.getAllDSAccountCharge);

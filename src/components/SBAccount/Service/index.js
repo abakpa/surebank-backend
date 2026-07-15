@@ -303,6 +303,35 @@ const hasRepAccessToCustomer = (staffId, customer, fallbackManagerId = '') => {
   ].some((value) => String(value || '') === id);
 };
 
+const buildDateRangeFilter = (dateFrom, dateTo) => {
+  const range = {};
+  if (dateFrom) {
+    const from = new Date(dateFrom);
+    if (!Number.isNaN(from.getTime())) {
+      from.setHours(0, 0, 0, 0);
+      range.from = from;
+    }
+  }
+  if (dateTo) {
+    const to = new Date(dateTo);
+    if (!Number.isNaN(to.getTime())) {
+      to.setHours(23, 59, 59, 999);
+      range.to = to;
+    }
+  }
+  return range;
+};
+
+const isWithinDateRange = (value, range = {}) => {
+  if (!range.from && !range.to) return true;
+  if (!value) return false;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return false;
+  if (range.from && date < range.from) return false;
+  if (range.to && date > range.to) return false;
+  return true;
+};
+
 const getBackofficeProductDeliverySummary = async (staff = {}, options = {}) => {
   const role = staff?.role;
   let staffId = String(staff?.staffId || '');
@@ -311,6 +340,7 @@ const getBackofficeProductDeliverySummary = async (staff = {}, options = {}) => 
   const isRepDashboardView = Boolean(options.staffId) && (isAdmin || isManager);
   let isRep = ['Agent', 'OnlineRep', 'Rep'].includes(role);
   const shouldLimitDeliveredToLoggedInManager = isManager && !isRepDashboardView;
+  const deliveredDateRange = buildDateRangeFilter(options.dateFrom, options.dateTo);
 
   if (isRepDashboardView) {
     const targetStaff = await Staff.findById(options.staffId).select('role branchId').lean();
@@ -432,6 +462,7 @@ const getBackofficeProductDeliverySummary = async (staff = {}, options = {}) => 
       const branch = branchById.get(String(account.branchId || ''));
       const createdBy = staffById.get(String(account.createdBy || ''));
       const fulfilledBy = staffById.get(String(item.fulfilledBy || ''));
+      const effectiveFulfilledAt = item.fulfilledAt || (isDelivered ? account.updatedAt : null);
 
       const detail = {
         id: `${account._id}-${itemId}`,
@@ -450,12 +481,15 @@ const getBackofficeProductDeliverySummary = async (staff = {}, options = {}) => 
         createdBy: getStaffDisplayName(createdBy),
         fulfilledBy: item.fulfilledBy ? getStaffDisplayName(fulfilledBy) : 'N/A',
         addedAt: item.addedAt || account.createdAt,
-        fulfilledAt: item.fulfilledAt || null,
+        fulfilledAt: effectiveFulfilledAt,
         actionUrl: `/customeraccountdashboard/${account.customerId}`
       };
 
       if (isDelivered) {
-        if (!shouldLimitDeliveredToLoggedInManager || String(item.fulfilledBy || '') === String(staff.staffId || '')) {
+        if (
+          isWithinDateRange(effectiveFulfilledAt, deliveredDateRange) &&
+          (!shouldLimitDeliveredToLoggedInManager || String(item.fulfilledBy || '') === String(staff.staffId || ''))
+        ) {
           deliveredItems.push(detail);
         }
       } else if (!isManager || String(account.branchId || '') === String(staff.branchId || '')) {
@@ -481,6 +515,7 @@ const getBackofficeProductDeliverySummary = async (staff = {}, options = {}) => 
       const itemId = String(item._id || index);
       const branch = branchById.get(String(order.branchId || ''));
       const fulfilledBy = staffById.get(String(item.fulfilledBy || order.processedBy || ''));
+      const effectiveFulfilledAt = item.fulfilledAt || (isDelivered ? order.updatedAt : null);
 
       const detail = {
         id: `ecommerce-${order._id}-${itemId}`,
@@ -500,12 +535,15 @@ const getBackofficeProductDeliverySummary = async (staff = {}, options = {}) => 
         createdBy: 'Ecommerce',
         fulfilledBy: item.fulfilledBy ? getStaffDisplayName(fulfilledBy) : 'N/A',
         addedAt: item.addedAt || order.createdAt,
-        fulfilledAt: item.fulfilledAt || null,
+        fulfilledAt: effectiveFulfilledAt,
         actionUrl: `/ecommerce-order/${order._id}`
       };
 
       if (isDelivered) {
-        if (!shouldLimitDeliveredToLoggedInManager || String(item.fulfilledBy || '') === String(staff.staffId || '')) {
+        if (
+          isWithinDateRange(effectiveFulfilledAt, deliveredDateRange) &&
+          (!shouldLimitDeliveredToLoggedInManager || String(item.fulfilledBy || '') === String(staff.staffId || ''))
+        ) {
           deliveredItems.push(detail);
         }
       } else if (!isManager || String(order.branchId || '') === String(staff.branchId || '')) {

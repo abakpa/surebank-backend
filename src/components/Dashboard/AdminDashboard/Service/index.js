@@ -235,6 +235,77 @@ async function getAllDSAccountWithdrawal(date = null, branchId = null) {
     return totalBalance;
 }
 
+async function getDSAccountWithdrawalReport(date = null, branchId = null) {
+  const query = {
+    package: 'DS',
+    direction: 'Debit',
+    narration: 'Withdrawal',
+    excludeFromStaffStats: STAFF_STATS_QUERY_FILTER,
+    createdAt: buildDailyCreatedAtQuery(date)
+  };
+
+  if (branchId) {
+    query.branchId = branchId;
+  }
+
+  const transactions = await AccountTransaction.find(query)
+    .sort({ createdAt: -1 })
+    .lean();
+
+  const customerIds = [...new Set(
+    transactions
+      .map((transaction) => transaction.customerId?.toString())
+      .filter(isValidObjectId)
+  )];
+  const branchIds = [...new Set(
+    transactions
+      .map((transaction) => transaction.branchId?.toString())
+      .filter(isValidObjectId)
+  )];
+  const staffIds = [...new Set(
+    transactions
+      .map((transaction) => transaction.createdBy?.toString())
+      .filter(isValidObjectId)
+  )];
+  const accountTypeIds = [...new Set(
+    transactions
+      .map((transaction) => transaction.accountTypeId?.toString())
+      .filter(isValidObjectId)
+  )];
+
+  const [customers, branches, staffList, dsAccounts] = await Promise.all([
+    Customer.find({ _id: { $in: customerIds } }).select('_id firstName lastName phone').lean(),
+    Branch.find({ _id: { $in: branchIds } }).select('_id name').lean(),
+    Staff.find({ _id: { $in: staffIds } }).select('_id firstName lastName').lean(),
+    DSAccount.find({ _id: { $in: accountTypeIds } }).select('_id DSAccountNumber accountNumber accountType amountPerDay totalContribution').lean(),
+  ]);
+
+  const customerMap = new Map(customers.map((customer) => [customer._id.toString(), customer]));
+  const branchMap = new Map(branches.map((branch) => [branch._id.toString(), branch]));
+  const staffMap = new Map(staffList.map((staff) => [staff._id.toString(), staff]));
+  const dsAccountMap = new Map(dsAccounts.map((account) => [account._id.toString(), account]));
+
+  return transactions.map((transaction) => {
+    const dsAccount = dsAccountMap.get(transaction.accountTypeId?.toString()) || null;
+
+    return {
+      _id: transaction._id,
+      customerName: formatCustomerName(customerMap.get(transaction.customerId?.toString()) || null),
+      narration: transaction.narration,
+      amount: Number(transaction.amount || 0),
+      balance: Number(transaction.balance || 0),
+      date: transaction.createdAt,
+      branchName: branchMap.get(transaction.branchId?.toString())?.name || 'N/A',
+      staffName: formatStaffName(staffMap.get(transaction.createdBy?.toString()) || null),
+      packageName: 'DS',
+      dsAccountNumber: dsAccount?.DSAccountNumber || 'N/A',
+      accountNumber: transaction.accountNumber || dsAccount?.accountNumber || 'N/A',
+      accountType: dsAccount?.accountType || 'N/A',
+      amountPerDay: Number(dsAccount?.amountPerDay || 0),
+    };
+  });
+}
+
 async function getAllFreeToWithdrawWithdrawal(date = null, branchId = null) {
     const query = {
       package: 'Account',
@@ -1529,6 +1600,7 @@ async function getEcommerceDepositReport(date = null, branchId = null) {
     getAllAvailableBalance,
     getAllDSAccount,
     getAllDSAccountWithdrawal,
+    getDSAccountWithdrawalReport,
     getAllFreeToWithdrawWithdrawal,
     getFreeToWithdrawWithdrawalReport,
     getAllDSAccountCharge,

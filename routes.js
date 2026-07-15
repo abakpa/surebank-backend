@@ -26,6 +26,7 @@ const productReviewRoutes = require('./src/components/ProductReview/Routes/index
 const cartRoutes = require('./src/components/Cart/Routes/index');
 const ecommerceOrderRoutes = require('./src/components/EcommerceOrder/Routes/index');
 const ecommerceAuthRoutes = require('./src/components/EcommerceAuth/Routes/index');
+const stockTransferRoutes = require('./src/components/StockTransfer/Routes/index');
 
 router.use('/api/branch', branchRoutes);
 router.use('/api/staff', staffRoutes);
@@ -52,6 +53,7 @@ router.use('/api/product-reviews', productReviewRoutes);
 router.use('/api/cart', cartRoutes);
 router.use('/api/ecommerce/orders', ecommerceOrderRoutes);
 router.use('/api/ecommerce/auth', ecommerceAuthRoutes);
+router.use('/api/stock-transfers', stockTransferRoutes);
 
 
 module.exports = router;

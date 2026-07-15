@@ -24,6 +24,7 @@ router.get('/product-action-requests', staffAuth, staffExceptProductManager, Eco
 router.get('/overdue', staffAuth, staffExceptProductManager, EcommerceOrderController.getOverdueInstallments);
 router.get('/branch/:branchId', staffAuth, staffExceptProductManager, EcommerceOrderController.getOrdersByBranch);
 router.get('/product-demand', staffAuth, adminOnly, EcommerceOrderController.getProductDemandSummary);
+router.get('/product-sales', staffAuth, adminOnly, EcommerceOrderController.getProductSalesSummary);
 router.get('/product-demand/:productId', staffAuth, adminOnly, EcommerceOrderController.getProductDemandDetail);
 router.put('/staff/sb/:SBAccountNumber/items/:itemId/replace', staffAuth, staffExceptProductManager, EcommerceOrderController.replaceInstallmentOrderItemByStaff);
 
