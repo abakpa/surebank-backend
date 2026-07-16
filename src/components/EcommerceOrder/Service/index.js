@@ -656,7 +656,7 @@ const applyStaffOrderScope = (query, staff) => {
   return query;
 };
 
-const buildOrderItemFromProduct = async ({ productId, variationId = '', quantity = 1 }) => {
+const buildOrderItemFromProduct = async ({ productId, variationId = '', quantity = 1, paymentType = 'installment' }) => {
   const product = await Product.findById(productId);
   if (!product || product.isActive === false) {
     throw new Error('Product not found');
@@ -674,7 +674,8 @@ const buildOrderItemFromProduct = async ({ productId, variationId = '', quantity
     }
   }
 
-  const selectedPrice = variation ? Number(variation.price || 0) : Number(product.price || 0);
+  const basePrice = variation ? Number(variation.price || 0) : Number(product.price || 0);
+  const selectedPrice = CartService.calculateCustomerSellingPrice(basePrice, paymentType);
   const normalizedQuantity = Number(quantity || 1);
 
   return {
@@ -1150,7 +1151,7 @@ const addItemsToActiveOrder = async (orderData) => {
   let clearCustomerCart = false;
 
   if (productId) {
-    const item = await CartService.getProductForPayment(productId, Number(quantity || 1), variationId || '');
+    const item = await CartService.getProductForPayment(productId, Number(quantity || 1), variationId || '', paymentType);
     items = [item];
     totalAmount = Number(item.subtotal || 0);
   } else {
@@ -1162,8 +1163,9 @@ const addItemsToActiveOrder = async (orderData) => {
     if (outOfMarketProductIds.size > 0) {
       throw new Error('One or more products in your cart are out of market. Remove them and select another product from SureBank stores.');
     }
-    items = cart.items;
-    totalAmount = Number(cart.totalAmount || 0);
+    const pricedCart = await CartService.priceCartItemsForPaymentType(cart.items, paymentType);
+    items = pricedCart.items;
+    totalAmount = Number(pricedCart.totalAmount || 0);
     clearCustomerCart = true;
   }
 
@@ -1366,7 +1368,8 @@ const createOrder = async (orderData) => {
   // Note: Stock check removed - orders can be placed regardless of stock
   // Stock will be managed separately by admin
 
-  const newOrderItems = cart.items.map((item) => ({
+  const pricedCart = await CartService.priceCartItemsForPaymentType(cart.items, paymentType);
+  const newOrderItems = pricedCart.items.map((item) => ({
     ...(typeof item.toObject === 'function' ? item.toObject() : item),
     paymentType,
     addedAt: new Date(),
@@ -1379,7 +1382,7 @@ const createOrder = async (orderData) => {
   const activeOrder = await findOrCreateActiveCustomerEcommerceOrder({ customerId, accountNumber, branchId });
   if (activeOrder) {
     newOrderItems.forEach((item) => activeOrder.items.push(item));
-    activeOrder.totalAmount = Number(activeOrder.totalAmount || 0) + Number(cart.totalAmount || 0);
+    activeOrder.totalAmount = Number(activeOrder.totalAmount || 0) + Number(pricedCart.totalAmount || 0);
     activeOrder.shippingAddress = shippingAddress || activeOrder.shippingAddress;
     activeOrder.shippingCity = shippingCity || activeOrder.shippingCity;
     activeOrder.shippingState = shippingState || activeOrder.shippingState;
@@ -1453,7 +1456,7 @@ const createOrder = async (orderData) => {
     customerId,
     accountNumber,
     items: newOrderItems,
-    totalAmount: cart.totalAmount,
+    totalAmount: pricedCart.totalAmount,
     paymentType: 'installment',
     shippingAddress,
     shippingCity,
@@ -1482,12 +1485,12 @@ const createOrder = async (orderData) => {
       }
 
       order.installmentPlan = calculateInstallmentPlan(
-        cart.totalAmount,
+        pricedCart.totalAmount,
         installmentFrequency,
         installmentDuration
       );
     } else {
-      order.installmentPlan = calculateFlexibleInstallmentPlan(cart.totalAmount);
+      order.installmentPlan = calculateFlexibleInstallmentPlan(pricedCart.totalAmount);
     }
 
     // Create SB Account for installment tracking
@@ -1536,7 +1539,7 @@ const createOrder = async (orderData) => {
                 status: 'booked',
                 accountMode: 'multi_item',
                 startDate,
-                sellingPrice: cart.totalAmount,
+                sellingPrice: pricedCart.totalAmount,
                 items: newOrderItems.map((item) => ({
                   productId: item.productId,
                   variationId: item.variationId || '',
@@ -1580,7 +1583,7 @@ const createOrder = async (orderData) => {
           status: 'booked',
           accountMode: 'multi_item',
           startDate,
-          sellingPrice: cart.totalAmount,
+          sellingPrice: pricedCart.totalAmount,
           items: newOrderItems.map((item) => ({
             productId: item.productId,
             variationId: item.variationId || '',
