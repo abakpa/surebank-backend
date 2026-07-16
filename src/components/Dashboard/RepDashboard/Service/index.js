@@ -68,6 +68,7 @@ const Order = require('../../../SBAccount/Model/order');
 const EcommerceOrder = require('../../../EcommerceOrder/Model');
 
 const ECOMMERCE_DEPOSIT_NARRATION_PATTERN = /^(Wallet Funding|SB Order Wallet Funding|Order Payment to Wallet)/i;
+const ECOMMERCE_DS_DEPOSIT_NARRATION_PATTERN = /^DS Deposit via Ecommerce/i;
 const STAFF_SB_ORDER_WALLET_DEPOSIT_NARRATION_PATTERN = /^(Deposited by .* for Order|SB Order Wallet Deposit)/i;
 const STAFF_STATS_QUERY_FILTER = { $ne: true };
 const STAFF_TRANSACTION_EXCLUDED_NARRATION_QUERY = {
@@ -966,6 +967,55 @@ const getRepExpenditureReport = async (staff) => {
       date: transaction.createdAt,
     }));
   };
+  const getRepEcommerceDSDeposit = async (date = null, staff) => {
+    const query = {
+      package: 'DS',
+      direction: 'Credit',
+      createdBy: staff,
+      narration: { $regex: ECOMMERCE_DS_DEPOSIT_NARRATION_PATTERN },
+      createdAt: buildCumulativeCreatedAtQuery(date),
+    };
+
+    const transactions = await AccountTransaction.find(query).select('amount').lean();
+    return transactions.reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
+  };
+  const getRepEcommerceDSDepositReport = async (date = null, staff) => {
+    const query = {
+      package: 'DS',
+      direction: 'Credit',
+      createdBy: staff,
+      narration: { $regex: ECOMMERCE_DS_DEPOSIT_NARRATION_PATTERN },
+      createdAt: buildCumulativeCreatedAtQuery(date),
+    };
+
+    const transactions = await AccountTransaction.find(query)
+      .populate({
+        path: 'customerId',
+        model: 'Customer',
+        select: 'firstName lastName phone'
+      })
+      .populate({
+        path: 'accountTypeId',
+        model: 'DSAccount',
+        select: 'DSAccountNumber accountNumber accountType amountPerDay totalContribution'
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return transactions.map((transaction) => ({
+      _id: transaction._id,
+      customerName: formatCustomerName(transaction.customerId),
+      narration: transaction.narration,
+      amount: Number(transaction.amount || 0),
+      balance: Number(transaction.balance || 0),
+      date: transaction.createdAt,
+      packageName: 'DS',
+      dsAccountNumber: transaction.accountTypeId?.DSAccountNumber || 'N/A',
+      accountNumber: transaction.accountNumber || transaction.accountTypeId?.accountNumber || 'N/A',
+      accountType: transaction.accountTypeId?.accountType || 'N/A',
+      amountPerDay: Number(transaction.accountTypeId?.amountPerDay || 0),
+    }));
+  };
   async function getAllFDPackage(date = null, staff) {
     try {
       const query = {
@@ -1039,6 +1089,8 @@ module.exports = {
     getRepOrder,
     getRepEcommerceDeposit,
     getRepEcommerceDepositReport,
+    getRepEcommerceDSDeposit,
+    getRepEcommerceDSDepositReport,
     getAllFDPackage,
     getAllFDAccount,
     getDailyReversalTotal

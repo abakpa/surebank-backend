@@ -46,6 +46,8 @@ router.post('/dailyecommerceincome', staffAuth, AcountTransactionController.getD
 router.post('/ecommerceincomereport', staffAuth, AcountTransactionController.getEcommerceIncomeReport);
 router.post('/ecommercedeposit', staffAuth, AcountTransactionController.getEcommerceDeposit);
 router.post('/ecommercedepositreport', staffAuth, AcountTransactionController.getEcommerceDepositReport);
+router.post('/ecommercedsdeposit', staffAuth, AcountTransactionController.getEcommerceDSDeposit);
+router.post('/ecommercedsdepositreport', staffAuth, AcountTransactionController.getEcommerceDSDepositReport);
 
 
 module.exports = router;

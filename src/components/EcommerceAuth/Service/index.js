@@ -584,6 +584,7 @@ const verifyWalletFunding = async (customerId, reference) => {
         createdBy: dsAccount.createdBy,
         transactionRef: reference,
         narration: `DS Deposit via Ecommerce - Ref: ${reference}`,
+        excludeFromStaffStats: true,
       });
     }
 
