@@ -1,6 +1,22 @@
 const Cart = require('../Model/index');
 const Product = require('../../Product/Model/index');
 
+const CUSTOMER_PRICE_BLOCK_AMOUNT = 2500;
+const CUSTOMER_PRICE_BLOCK_FEE = 145;
+
+const normalizeMoney = (value) => Math.round(Number(value || 0) * 100) / 100;
+
+const calculateCustomerSellingPrice = (basePrice) => {
+  const normalizedBasePrice = Number(basePrice || 0);
+  if (normalizedBasePrice <= 0) return 0;
+
+  const feeBlocks = Math.ceil(normalizedBasePrice / CUSTOMER_PRICE_BLOCK_AMOUNT);
+  return normalizeMoney(normalizedBasePrice + (feeBlocks * CUSTOMER_PRICE_BLOCK_FEE));
+};
+
+const calculatePayOnceSellingPrice = calculateCustomerSellingPrice;
+const calculatePaySmallSmallSellingPrice = calculateCustomerSellingPrice;
+
 const getVariationSelection = (product, variationId) => {
   if (!product.hasVariations) {
     return null;
@@ -51,6 +67,32 @@ const getOrCreateCart = async (identifier) => {
   return cart;
 };
 
+const refreshCartVisiblePrices = async (cart) => {
+  if (!cart || !Array.isArray(cart.items) || cart.items.length === 0) {
+    return cart;
+  }
+
+  for (const item of cart.items) {
+    const product = await Product.findById(item.productId);
+    if (!product) continue;
+
+    const variation = item.variationId ? product.variations.id(item.variationId) : null;
+    const basePrice = variation ? variation.price : product.price;
+    const visiblePrice = calculateCustomerSellingPrice(basePrice);
+    const quantity = Number(item.quantity || 1);
+
+    item.price = visiblePrice;
+    item.subtotal = visiblePrice * quantity;
+    item.productName = product.name || item.productName;
+    item.variationName = variation?.name || item.variationName || '';
+    item.selectedOptions = variation ? getSelectedOptions(variation) : item.selectedOptions || {};
+  }
+
+  cart.totalAmount = cart.items.reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
+  cart.totalItems = cart.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+  return await cart.save();
+};
+
 const addToCart = async (identifier, productId, quantity = 1, skipStockCheck = false, variationId = '') => {
   const product = await Product.findById(productId);
   if (!product) {
@@ -63,7 +105,8 @@ const addToCart = async (identifier, productId, quantity = 1, skipStockCheck = f
 
   const variation = getVariationSelection(product, variationId);
   const selectedStock = variation ? variation.stock : product.stock;
-  const selectedPrice = variation ? variation.price : product.price;
+  const basePrice = variation ? variation.price : product.price;
+  const selectedPrice = calculateCustomerSellingPrice(basePrice);
   const selectedImage = variation?.image || (product.images && product.images.length > 0 ? product.images[0] : '');
   const normalizedVariationId = variation ? variation._id.toString() : '';
 
@@ -83,9 +126,9 @@ const addToCart = async (identifier, productId, quantity = 1, skipStockCheck = f
     if (!skipStockCheck && selectedStock < nextQuantity) {
       throw new Error('Insufficient stock');
     }
+    cart.items[existingItemIndex].price = selectedPrice;
     cart.items[existingItemIndex].quantity += quantity;
-    cart.items[existingItemIndex].subtotal =
-      cart.items[existingItemIndex].price * cart.items[existingItemIndex].quantity;
+    cart.items[existingItemIndex].subtotal = selectedPrice * cart.items[existingItemIndex].quantity;
   } else {
     cart.items.push({
       productId: product._id.toString(),
@@ -131,8 +174,11 @@ const updateCartItem = async (identifier, productId, quantity, skipStockCheck = 
     if (!skipStockCheck && selectedStock < quantity) {
       throw new Error('Insufficient stock');
     }
+    const basePrice = variation ? variation.price : product.price;
+    const visiblePrice = calculateCustomerSellingPrice(basePrice);
+    cart.items[itemIndex].price = visiblePrice;
     cart.items[itemIndex].quantity = quantity;
-    cart.items[itemIndex].subtotal = cart.items[itemIndex].price * quantity;
+    cart.items[itemIndex].subtotal = visiblePrice * quantity;
   }
 
   // Recalculate totals
@@ -157,7 +203,8 @@ const removeFromCart = async (identifier, productId, variationId = '') => {
 };
 
 const getCart = async (identifier) => {
-  return await getOrCreateCart(identifier);
+  const cart = await getOrCreateCart(identifier);
+  return await refreshCartVisiblePrices(cart);
 };
 
 const clearCart = async (identifier) => {
@@ -204,11 +251,11 @@ const mergeGuestCartToCustomer = async (sessionId, customerId) => {
   await customerCart.save();
   await Cart.deleteOne({ sessionId });
 
-  return customerCart;
+  return await refreshCartVisiblePrices(customerCart);
 };
 
 // Get product details for payment (no stock check)
-const getProductForPayment = async (productId, quantity = 1, variationId = '') => {
+const getProductForPayment = async (productId, quantity = 1, variationId = '', paymentType = 'pay_once') => {
   const product = await Product.findById(productId);
   if (!product) {
     throw new Error('Product not found');
@@ -218,7 +265,8 @@ const getProductForPayment = async (productId, quantity = 1, variationId = '') =
   }
 
   const variation = getVariationSelection(product, variationId);
-  const selectedPrice = variation ? variation.price : product.price;
+  const basePrice = variation ? variation.price : product.price;
+  const selectedPrice = calculateCustomerSellingPrice(basePrice);
   const selectedImage = variation?.image || (product.images && product.images.length > 0 ? product.images[0] : '');
 
   return {
@@ -234,13 +282,48 @@ const getProductForPayment = async (productId, quantity = 1, variationId = '') =
   };
 };
 
+const priceCartItemsForPaymentType = async (items = [], paymentType = 'pay_once') => {
+  const pricedItems = await Promise.all((items || []).map(async (item) => {
+    const plainItem = typeof item.toObject === 'function' ? item.toObject() : item;
+    const product = await Product.findById(plainItem.productId);
+
+    if (!product) {
+      throw new Error(`${plainItem.productName || 'Product'} is no longer available`);
+    }
+
+    const variation = plainItem.variationId ? product.variations.id(plainItem.variationId) : null;
+    const basePrice = variation ? variation.price : product.price;
+    const price = calculateCustomerSellingPrice(basePrice);
+    const quantity = Number(plainItem.quantity || 1);
+
+    return {
+      ...plainItem,
+      price,
+      quantity,
+      subtotal: price * quantity,
+    };
+  }));
+
+  return {
+    items: pricedItems,
+    totalAmount: pricedItems.reduce((sum, item) => sum + Number(item.subtotal || 0), 0),
+  };
+};
+
 module.exports = {
+  CUSTOMER_PRICE_BLOCK_AMOUNT,
+  CUSTOMER_PRICE_BLOCK_FEE,
+  calculatePayOnceSellingPrice,
+  calculatePaySmallSmallSellingPrice,
+  calculateCustomerSellingPrice,
   getOrCreateCart,
+  refreshCartVisiblePrices,
   addToCart,
   updateCartItem,
   removeFromCart,
   getCart,
   clearCart,
   mergeGuestCartToCustomer,
-  getProductForPayment
+  getProductForPayment,
+  priceCartItemsForPaymentType
 };

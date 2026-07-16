@@ -547,7 +547,7 @@ const initializePayment = async (req, res) => {
 
     // If productId is provided, get product directly (no stock check for payment)
     if (productId) {
-      const productInfo = await CartService.getProductForPayment(productId, quantity, variationId || '');
+      const productInfo = await CartService.getProductForPayment(productId, quantity, variationId || '', paymentType);
       totalAmount = productInfo.subtotal;
       productName = productInfo.variationName
         ? `${productInfo.productName} - ${productInfo.variationName}`
@@ -562,9 +562,10 @@ const initializePayment = async (req, res) => {
       if (!cart || cart.items.length === 0) {
         return res.status(400).json({ message: 'Cart is empty' });
       }
-      totalAmount = cart.totalAmount;
+      const pricedCart = await CartService.priceCartItemsForPaymentType(cart.items, paymentType);
+      totalAmount = pricedCart.totalAmount;
       productName = cart.items.map(item => item.productName).join(', ');
-      cartItems = cart.items;
+      cartItems = pricedCart.items;
     }
 
     // Calculate amount based on payment type - this is the amount to charge NOW
