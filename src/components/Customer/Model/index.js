@@ -55,6 +55,20 @@ const customerSchema = new mongoose.Schema({
     ref:'Branch',
     required: true
 
+  },
+  settlementBankDetails: {
+    bankName: {
+      type: String,
+      default: '',
+    },
+    accountName: {
+      type: String,
+      default: '',
+    },
+    bankAccountNumber: {
+      type: String,
+      default: '',
+    },
   }
 },
 {timestamps:true}

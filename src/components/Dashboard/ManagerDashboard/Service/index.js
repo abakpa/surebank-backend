@@ -71,6 +71,7 @@ const Order = require('../../../SBAccount/Model/order');
 const EcommerceOrder = require('../../../EcommerceOrder/Model');
 
 const ECOMMERCE_DEPOSIT_NARRATION_PATTERN = /^(Wallet Funding|SB Order Wallet Funding|Order Payment to Wallet)/i;
+const ECOMMERCE_DS_DEPOSIT_NARRATION_PATTERN = /^DS Deposit via Ecommerce/i;
 const STAFF_SB_ORDER_WALLET_DEPOSIT_NARRATION_PATTERN = /^(Deposited by .* for Order|SB Order Wallet Deposit)/i;
 const STAFF_STATS_QUERY_FILTER = { $ne: true };
 const STAFF_TRANSACTION_EXCLUDED_NARRATION_QUERY = {
@@ -1276,6 +1277,90 @@ const getBranchEcommerceDepositReport = async (date = null, staff) => {
     staffName: formatStaffName(staffMap.get(transaction.createdBy?.toString()) || null),
   }));
 };
+
+const getBranchEcommerceDSDeposit = async (date = null, staff) => {
+  const branch = await Staff.findOne({ _id: staff }).select('branchId').lean();
+  const query = {
+    package: 'DS',
+    direction: 'Credit',
+    narration: { $regex: ECOMMERCE_DS_DEPOSIT_NARRATION_PATTERN },
+    createdAt: buildCumulativeCreatedAtQuery(date),
+  };
+
+  if (branch?.branchId) {
+    query.branchId = branch.branchId;
+  } else {
+    return 0;
+  }
+
+  const transactions = await AccountTransaction.find(query).select('amount').lean();
+  return transactions.reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
+};
+
+const getBranchEcommerceDSDepositReport = async (date = null, staff) => {
+  const branch = await Staff.findOne({ _id: staff }).select('branchId').lean();
+  const query = {
+    package: 'DS',
+    direction: 'Credit',
+    narration: { $regex: ECOMMERCE_DS_DEPOSIT_NARRATION_PATTERN },
+    createdAt: buildCumulativeCreatedAtQuery(date),
+  };
+
+  if (branch?.branchId) {
+    query.branchId = branch.branchId;
+  } else {
+    return [];
+  }
+
+  const transactions = await AccountTransaction.find(query)
+    .sort({ createdAt: -1 })
+    .lean();
+
+  const customerIds = [...new Set(
+    transactions
+      .map((transaction) => transaction.customerId?.toString())
+      .filter(isValidObjectId)
+  )];
+  const staffIds = [...new Set(
+    transactions
+      .map((transaction) => transaction.createdBy?.toString())
+      .filter(isValidObjectId)
+  )];
+  const accountTypeIds = [...new Set(
+    transactions
+      .map((transaction) => transaction.accountTypeId?.toString())
+      .filter(isValidObjectId)
+  )];
+
+  const [customers, staffList, dsAccounts] = await Promise.all([
+    Customer.find({ _id: { $in: customerIds } }).select('_id firstName lastName phone').lean(),
+    Staff.find({ _id: { $in: staffIds } }).select('_id firstName lastName').lean(),
+    DSAccount.find({ _id: { $in: accountTypeIds } }).select('_id DSAccountNumber accountNumber accountType amountPerDay totalContribution').lean(),
+  ]);
+
+  const customerMap = new Map(customers.map((customer) => [customer._id.toString(), customer]));
+  const staffMap = new Map(staffList.map((member) => [member._id.toString(), member]));
+  const dsAccountMap = new Map(dsAccounts.map((account) => [account._id.toString(), account]));
+
+  return transactions.map((transaction) => {
+    const dsAccount = dsAccountMap.get(transaction.accountTypeId?.toString()) || null;
+
+    return {
+      _id: transaction._id,
+      customerName: formatCustomerName(customerMap.get(transaction.customerId?.toString()) || null),
+      narration: transaction.narration,
+      amount: Number(transaction.amount || 0),
+      balance: Number(transaction.balance || 0),
+      date: transaction.createdAt,
+      staffName: formatStaffName(staffMap.get(transaction.createdBy?.toString()) || null),
+      packageName: 'DS',
+      dsAccountNumber: dsAccount?.DSAccountNumber || 'N/A',
+      accountNumber: transaction.accountNumber || dsAccount?.accountNumber || 'N/A',
+      accountType: dsAccount?.accountType || 'N/A',
+      amountPerDay: Number(dsAccount?.amountPerDay || 0),
+    };
+  });
+};
 module.exports = {
     getAllBranchDSAccount,
     getAllBranchDSAccountWithdrawal,
@@ -1315,5 +1400,7 @@ module.exports = {
     getBranchOrder,
     getBranchEcommerceDeposit,
     getBranchEcommerceDepositReport,
+    getBranchEcommerceDSDeposit,
+    getBranchEcommerceDSDepositReport,
     getDailyReversalTotal,
   };

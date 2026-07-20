@@ -16,8 +16,18 @@ require('dotenv').config()
         });
         const status = 'open';
         const hasBeenCharged = "false"
-          const { accountNumber, amountPerDay, accountManagerId,accountType } = req.body;
-          const newDSAccount = await DSAccountService.createDSAccount({ accountNumber,amountPerDay,createdBy,startDate,status,accountManagerId,hasBeenCharged, accountType });
+          const { accountNumber, amountPerDay, accountManagerId,accountType, bankName, accountName, bankAccountNumber, settlementBankDetails } = req.body;
+          const newDSAccount = await DSAccountService.createDSAccount({
+            accountNumber,
+            amountPerDay,
+            createdBy,
+            startDate,
+            status,
+            accountManagerId,
+            hasBeenCharged,
+            accountType,
+            settlementBankDetails: settlementBankDetails || { bankName, accountName, bankAccountNumber },
+          });
           res.status(201).json({ message: newDSAccount.message, DSAccount: newDSAccount.newDSAccount });
         } catch (error) {
           res.status(500).json({ message: 'Server error', error: error.message });

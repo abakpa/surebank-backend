@@ -7,6 +7,7 @@ const Branch = require('../../Branch/Model/index');
 const AccountTransactionModel = require('../../AccountTransaction/Model/index');
 const AccountTransactionService = require('../../AccountTransaction/Service/index');
 const PaystackService = require('../../Paystack/Service/index');
+const CustomerWithdrawalRequestService = require('../../CustomerWithdrawalRequest/Service/index');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
@@ -60,6 +61,43 @@ const buildFallbackEmail = (customer) => {
     .replace(/[^a-zA-Z0-9]/g, '')
     .toLowerCase();
   return `${identifier || 'customer'}@surebankstores.com`;
+};
+
+const calculatePaystackLocalFee = (payableAmount) => {
+  const normalizedAmount = Number(payableAmount || 0);
+  if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) return 0;
+
+  const percentageFee = normalizedAmount * 0.015;
+  const fee = normalizedAmount < 2500 ? percentageFee : percentageFee + 100;
+  return Math.min(2000, Math.ceil(fee));
+};
+
+const calculatePaystackPayableForNetAmount = (netAmount) => {
+  const normalizedNetAmount = Math.ceil(Number(netAmount || 0));
+  if (!Number.isFinite(normalizedNetAmount) || normalizedNetAmount <= 0) {
+    return { contributionAmount: 0, paystackFee: 0, payableAmount: 0 };
+  }
+
+  let payableAmount = normalizedNetAmount;
+  for (let index = 0; index < 10; index += 1) {
+    const paystackFee = calculatePaystackLocalFee(payableAmount);
+    const nextPayableAmount = normalizedNetAmount + paystackFee;
+    if (nextPayableAmount === payableAmount) {
+      return {
+        contributionAmount: normalizedNetAmount,
+        paystackFee,
+        payableAmount,
+      };
+    }
+    payableAmount = nextPayableAmount;
+  }
+
+  const paystackFee = calculatePaystackLocalFee(payableAmount);
+  return {
+    contributionAmount: normalizedNetAmount,
+    paystackFee,
+    payableAmount: normalizedNetAmount + paystackFee,
+  };
 };
 
 const buildSBOrderWalletAccountNumber = (customer) => `${customer.phone}-SBW`;
@@ -380,6 +418,10 @@ const getCustomerWallet = async (customerId) => {
   }
 
   const account = await ensureCustomerSBOrderWallet(customer);
+  const mainAccount = await Account.findOne({
+    customerId: customer._id.toString(),
+    walletType: { $ne: 'sb_order_wallet' }
+  }).lean();
   const transactions = await getWalletTransactions(account._id, customer._id);
   const dsTransactions = await getDSTransactions(customer._id);
   const dsAccounts = await DSAccount.find({
@@ -397,12 +439,175 @@ const getCustomerWallet = async (customerId) => {
       lastName: customer.lastName,
       phone: customer.phone,
       email: customer.email || '',
-      address: customer.address
+      address: customer.address,
+      settlementBankDetails: {
+        bankName: customer.settlementBankDetails?.bankName || '',
+        accountName: customer.settlementBankDetails?.accountName || '',
+        bankAccountNumber: customer.settlementBankDetails?.bankAccountNumber || '',
+      },
     },
     account,
+    mainAccount,
     transactions,
     dsTransactions,
     dsAccounts
+  };
+};
+
+const createFreeToWithdrawRequest = async (customerId, requestData = {}) => {
+  const amount = Number(requestData.amount || 0);
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error('Enter a valid request amount');
+  }
+
+  const customer = await Customer.findById(customerId).select('-password');
+  if (!customer) {
+    throw new Error('Customer not found');
+  }
+
+  const settlementBankDetails = {
+    bankName: String(requestData.bankName || customer.settlementBankDetails?.bankName || '').trim(),
+    accountName: String(requestData.accountName || customer.settlementBankDetails?.accountName || '').trim(),
+    bankAccountNumber: String(requestData.bankAccountNumber || customer.settlementBankDetails?.bankAccountNumber || '').trim(),
+  };
+
+  if (!settlementBankDetails.bankName || !settlementBankDetails.accountName || !settlementBankDetails.bankAccountNumber) {
+    throw new Error('Please supply your settlement bank details before making a request');
+  }
+
+  if (
+    settlementBankDetails.bankName !== String(customer.settlementBankDetails?.bankName || '').trim()
+    || settlementBankDetails.accountName !== String(customer.settlementBankDetails?.accountName || '').trim()
+    || settlementBankDetails.bankAccountNumber !== String(customer.settlementBankDetails?.bankAccountNumber || '').trim()
+  ) {
+    customer.settlementBankDetails = settlementBankDetails;
+    await customer.save();
+  }
+
+  const mainAccount = await Account.findOne({
+    customerId: customer._id.toString(),
+    walletType: { $ne: 'sb_order_wallet' }
+  });
+
+  if (!mainAccount) {
+    throw new Error('Free to withdraw account not found');
+  }
+
+  const availableBalance = Number(mainAccount.availableBalance || 0);
+  if (amount > availableBalance) {
+    throw new Error(`Insufficient free to withdraw balance. Available: ₦${availableBalance.toLocaleString()}, Requested: ₦${amount.toLocaleString()}`);
+  }
+
+  const accountManagerId = mainAccount.accountManagerId || customer.accountManagerId || mainAccount.createdBy || 'ECOMMERCE_SYSTEM';
+
+  const withdrawalRequest = await CustomerWithdrawalRequestService.CustomerWithdrawalRequest({
+    accountNumber: mainAccount.accountNumber,
+    customerId: customer._id.toString(),
+    accountManagerId,
+    accountTypeId: mainAccount._id.toString(),
+    packageNumber: mainAccount.accountNumber,
+    branchId: mainAccount.branchId || customer.branchId || '',
+    package: 'Free To Withdraw',
+    channelOfWithdrawal: 'Free To Withdraw Request',
+    date: new Date(),
+    amount,
+    ...settlementBankDetails,
+  });
+
+  return {
+    message: 'Withdrawal request sent successfully',
+    withdrawalRequest,
+    mainAccount,
+  };
+};
+
+const createCustomerDSAccount = async (customerId, dsAccountData = {}) => {
+  const customer = await Customer.findById(customerId);
+  if (!customer) {
+    throw new Error('Customer not found');
+  }
+
+  const accountType = String(dsAccountData.accountType || '').trim();
+  const amountPerDay = Number(dsAccountData.amountPerDay || 0);
+
+  if (!accountType) {
+    throw new Error('Select a DS package type');
+  }
+
+  if (!Number.isFinite(amountPerDay) || amountPerDay <= 0) {
+    throw new Error('Enter a valid daily deposit amount');
+  }
+
+  const existingDSAccountCount = await DSAccount.countDocuments({
+    customerId: customer._id.toString(),
+  });
+  const settlementBankDetails = {
+    bankName: String(dsAccountData.bankName || dsAccountData.settlementBankDetails?.bankName || '').trim(),
+    accountName: String(dsAccountData.accountName || dsAccountData.settlementBankDetails?.accountName || '').trim(),
+    bankAccountNumber: String(dsAccountData.bankAccountNumber || dsAccountData.settlementBankDetails?.bankAccountNumber || '').trim(),
+  };
+  const hasIncomingSettlementBankDetails = Boolean(
+    settlementBankDetails.bankName
+    && settlementBankDetails.accountName
+    && settlementBankDetails.bankAccountNumber
+  );
+  const hasCurrentSettlementBankDetails = Boolean(
+    customer.settlementBankDetails?.bankName
+    && customer.settlementBankDetails?.accountName
+    && customer.settlementBankDetails?.bankAccountNumber
+  );
+
+  if (hasIncomingSettlementBankDetails) {
+    customer.settlementBankDetails = settlementBankDetails;
+    await customer.save();
+  } else if (existingDSAccountCount === 0 && !hasCurrentSettlementBankDetails) {
+    throw new Error('Please supply your settlement bank details before creating your first DS package');
+  }
+
+  const mainAccount = await Account.findOne({
+    customerId: customer._id.toString(),
+    walletType: { $ne: 'sb_order_wallet' }
+  });
+
+  if (!mainAccount) {
+    throw new Error('Customer main account was not found');
+  }
+
+  const currentDate = new Date();
+  const startDate = currentDate.toLocaleString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  });
+
+  const tiedStaffId = mainAccount.accountManagerId
+    || customer.accountManagerId
+    || (mainAccount.createdBy !== 'ECOMMERCE_SYSTEM' ? mainAccount.createdBy : '')
+    || (customer.createdBy !== 'ECOMMERCE_SYSTEM' ? customer.createdBy : '');
+  const createdBy = tiedStaffId || 'ECOMMERCE_SYSTEM';
+
+  const result = await DSAccountService.createDSAccount({
+    accountNumber: mainAccount.accountNumber,
+    amountPerDay,
+    createdBy,
+    startDate,
+    status: 'open',
+    accountManagerId: tiedStaffId || '',
+    hasBeenCharged: 'false',
+    accountType,
+    settlementBankDetails: hasIncomingSettlementBankDetails ? settlementBankDetails : undefined,
+  });
+
+  const refreshedWallet = await getCustomerWallet(customer._id);
+
+  return {
+    message: result.message,
+    dsAccount: result.newDSAccount,
+    ...refreshedWallet,
   };
 };
 
@@ -504,10 +709,11 @@ const initializeDSAccountFunding = async (customerId, fundingData) => {
     throw new Error('Callback URL is required');
   }
 
+  const paystackCharge = calculatePaystackPayableForNetAmount(amount);
   const reference = PaystackService.generateReference('DS');
   const paymentResult = await PaystackService.initializeTransaction({
     email: customerEmail,
-    amount: Math.round(amount * 100),
+    amount: Math.round(paystackCharge.payableAmount * 100),
     reference,
     callback_url: callbackUrl,
     channels: ['card', 'bank', 'ussd', 'qr', 'mobile_money', 'bank_transfer'],
@@ -520,6 +726,8 @@ const initializeDSAccountFunding = async (customerId, fundingData) => {
         accountType: dsAccount.accountType,
         accountNumber: dsAccount.accountNumber,
         amount,
+        paystackFee: paystackCharge.paystackFee,
+        payableAmount: paystackCharge.payableAmount,
       }
     }
   });
@@ -532,7 +740,9 @@ const initializeDSAccountFunding = async (customerId, fundingData) => {
     authorization_url: paymentResult.data.authorization_url,
     access_code: paymentResult.data.access_code,
     reference,
-    amount
+    amount,
+    paystackFee: paystackCharge.paystackFee,
+    payableAmount: paystackCharge.payableAmount
   };
 };
 
@@ -584,6 +794,7 @@ const verifyWalletFunding = async (customerId, reference) => {
         createdBy: dsAccount.createdBy,
         transactionRef: reference,
         narration: `DS Deposit via Ecommerce - Ref: ${reference}`,
+        excludeFromStaffStats: true,
       });
     }
 
@@ -611,6 +822,8 @@ const verifyWalletFunding = async (customerId, reference) => {
       paymentType: 'ds_package',
       paymentDetails: {
         amount: Number(walletData.amount || (verificationResult.data.amount / 100)),
+        paystackFee: Number(walletData.paystackFee || 0),
+        payableAmount: Number(walletData.payableAmount || (verificationResult.data.amount / 100)),
         reference,
         paidAt: verificationResult.data.paid_at
       }
@@ -885,6 +1098,8 @@ module.exports = {
   resetPasswordWithOtp,
   resetAdminForcedPassword,
   getCustomerWallet,
+  createFreeToWithdrawRequest,
+  createCustomerDSAccount,
   initializeWalletFunding,
   initializeDSAccountFunding,
   verifyWalletFunding

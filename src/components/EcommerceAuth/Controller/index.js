@@ -111,6 +111,49 @@ const getWallet = async (req, res) => {
   }
 };
 
+const createDSAccount = async (req, res) => {
+  try {
+    const customerId = req.customer.customerId;
+    const { accountType, amountPerDay, bankName, accountName, bankAccountNumber } = req.body;
+
+    const result = await EcommerceAuthService.createCustomerDSAccount(customerId, {
+      accountType,
+      amountPerDay,
+      bankName,
+      accountName,
+      bankAccountNumber,
+    });
+
+    res.status(201).json({
+      message: result.message || 'DS package created successfully',
+      ...result
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const createFreeToWithdrawRequest = async (req, res) => {
+  try {
+    const customerId = req.customer.customerId;
+    const { amount, bankName, accountName, bankAccountNumber } = req.body;
+
+    const result = await EcommerceAuthService.createFreeToWithdrawRequest(customerId, {
+      amount,
+      bankName,
+      accountName,
+      bankAccountNumber,
+    });
+
+    res.status(201).json({
+      message: result.message || 'Withdrawal request sent successfully',
+      ...result
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const initializeWalletFunding = async (req, res) => {
   try {
     const customerId = req.customer.customerId;
@@ -233,6 +276,8 @@ module.exports = {
   updateProfile,
   changePassword,
   getWallet,
+  createDSAccount,
+  createFreeToWithdrawRequest,
   initializeWalletFunding,
   initializeDSAccountFunding,
   verifyWalletFunding

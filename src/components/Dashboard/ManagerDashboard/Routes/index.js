@@ -29,6 +29,8 @@ router.post('/branchtransaction', staffAuth, AcountTransactionController.getTran
 router.post('/branchorder', staffAuth, AcountTransactionController.getBranchOrder);
 router.post('/branchecommercedeposit', staffAuth, AcountTransactionController.getBranchEcommerceDeposit);
 router.post('/branchecommercedepositreport', staffAuth, AcountTransactionController.getBranchEcommerceDepositReport);
+router.post('/branchecommercedsdeposit', staffAuth, AcountTransactionController.getBranchEcommerceDSDeposit);
+router.post('/branchecommercedsdepositreport', staffAuth, AcountTransactionController.getBranchEcommerceDSDepositReport);
 router.post('/branchfd', staffAuth, AcountTransactionController.getAllFDAccount);
 router.post('/branchfdreport', staffAuth, AcountTransactionController.getAllFDTransaction);
 router.post('/branchfdinterestincome', staffAuth, AcountTransactionController.getAllFDInterestIncome);

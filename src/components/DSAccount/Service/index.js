@@ -5,11 +5,50 @@ const AccountTransaction = require('../../AccountTransaction/Service/index');
 const SureBankAccount = require('../../SureBankAccount/Service/index')
 const Staff = require('../../Staff/Model');
 const SBAccount = require('../../SBAccount/Model');
+const Customer = require('../../Customer/Model');
+
+const normalizeSettlementBankDetails = (details = {}) => ({
+  bankName: String(details.bankName || '').trim(),
+  accountName: String(details.accountName || '').trim(),
+  bankAccountNumber: String(details.bankAccountNumber || '').trim(),
+});
+
+const hasSettlementBankDetails = (details = {}) => {
+  const normalized = normalizeSettlementBankDetails(details);
+  return Boolean(normalized.bankName && normalized.accountName && normalized.bankAccountNumber);
+};
+
+const saveCustomerSettlementBankDetails = async (customerId, details = {}) => {
+  const settlementBankDetails = normalizeSettlementBankDetails(details);
+  if (!hasSettlementBankDetails(settlementBankDetails)) {
+    throw new Error('Settlement bank details are required: Bank name, Account name and Account number');
+  }
+
+  await Customer.findByIdAndUpdate(customerId, {
+    $set: { settlementBankDetails },
+  });
+
+  return settlementBankDetails;
+};
 
 const createDSAccount = async (DSAccountData) => {
           const existingDSAccountNumber = await getAccountByAccountNumber(DSAccountData.accountNumber);
           if (!existingDSAccountNumber) {
             throw new Error('Account number does not exists');
+          }
+          const existingCustomerDSAccounts = await DSAccount.countDocuments({
+            customerId: existingDSAccountNumber.customerId,
+          });
+          const customer = await Customer.findById(existingDSAccountNumber.customerId);
+          if (!customer) {
+            throw new Error('Customer not found');
+          }
+          const incomingSettlementBankDetails = normalizeSettlementBankDetails(DSAccountData.settlementBankDetails || {});
+          const currentSettlementBankDetails = normalizeSettlementBankDetails(customer.settlementBankDetails || {});
+          if (hasSettlementBankDetails(incomingSettlementBankDetails)) {
+            await saveCustomerSettlementBankDetails(existingDSAccountNumber.customerId, incomingSettlementBankDetails);
+          } else if (existingCustomerDSAccounts === 0 && !hasSettlementBankDetails(currentSettlementBankDetails)) {
+            throw new Error('Settlement bank details are required for the first DS package');
           }
           const existingDSAccount = await DSAccount.findOne({
             accountNumber: DSAccountData.accountNumber,
