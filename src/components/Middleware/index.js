@@ -66,6 +66,13 @@ const managerOnly = (req, res, next) => {
 
     next();
 };
+const adminOrManagerOnly = (req, res, next) => {
+    if (!['Admin', 'Manager'].includes(req.staff?.role)) {
+        return res.status(403).json({ message: 'Admin or manager access required' });
+    }
+
+    next();
+};
 const staffExceptProductManager = (req, res, next) => {
     if (['ProductManager', 'Product Manager', 'SubAdmin'].includes(req.staff?.role)) {
         return res.status(403).json({ message: 'Product manager access is limited to products and categories' });
@@ -77,6 +84,7 @@ module.exports = {
     customerAuth,
     staffAuth,
     adminOnly,
+    adminOrManagerOnly,
     managerOnly,
     productManagerOnly,
     staffExceptProductManager
