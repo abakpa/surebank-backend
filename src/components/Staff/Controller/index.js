@@ -97,6 +97,19 @@ const getBranchStaff = async (req, res) => {
             return { success: false, message: 'An error occurred while updating', error };
           }
         };
+     const updateStaffSignature = async (req,res) => {
+      const staffId = req.params.id
+          try {
+        const newData = await staffService.updateStaffSignature({
+          staffId,
+          signatureUrl: req.body.signatureUrl,
+          uploadedBy: req.staff.staffId
+        })
+            res.status(200).json(newData);
+          } catch (error) {
+            return res.status(500).json({ message: error.message || 'An error occurred while updating signature' });
+          }
+        };
 
   module.exports = {
     registerStaff,
@@ -104,5 +117,6 @@ const getBranchStaff = async (req, res) => {
     getBranchStaff,
     updateStaff,
     resetStaffPassword,
-    updateStaffPassword
+    updateStaffPassword,
+    updateStaffSignature
   };

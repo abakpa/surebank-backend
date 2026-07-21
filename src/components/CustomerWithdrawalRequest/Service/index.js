@@ -31,6 +31,12 @@ const CustomerWithdrawalRequest = async (withdrawalData) => {
     Object.assign(requestData, settlementBankDetails);
   }
 
+  await assertNoActiveWithdrawalRequest({
+    customerId: requestData.customerId,
+    accountTypeId: requestData.accountTypeId,
+    packageNumber: requestData.packageNumber,
+  });
+
   const withdrawalRequest = new CustomerWithdrawalRequestModel(requestData);
   return await withdrawalRequest.save();
 };
@@ -62,6 +68,34 @@ const getCustomerSettlementBankDetails = async (customerId) => {
     return settlementBankDetails;
 };
 
+const resolveAndSaveCustomerSettlementBankDetails = async (customerId, details = {}) => {
+    const requestBankDetails = normalizeSettlementBankDetails(details);
+
+    if (hasSettlementBankDetails(requestBankDetails)) {
+        await Customer.findByIdAndUpdate(customerId, {
+            $set: {
+                settlementBankDetails: requestBankDetails,
+            },
+        });
+        return requestBankDetails;
+    }
+
+    return getCustomerSettlementBankDetails(customerId);
+};
+
+const assertNoActiveWithdrawalRequest = async ({ customerId, accountTypeId, packageNumber }) => {
+    const activeRequest = await CustomerWithdrawalRequestModel.findOne({
+        customerId,
+        accountTypeId,
+        status: { $in: ['Pending', 'pending', 'Processing', 'processing'] },
+    }).lean();
+
+    if (activeRequest) {
+        const requestLabel = packageNumber || activeRequest.packageNumber || 'this account/package';
+        throw new Error(`There is already a pending withdrawal request for ${requestLabel}. Wait for admin to complete or reject it before making another request.`);
+    }
+};
+
 const createStaffCustomerWithdrawalRequest = async (withdrawalData, staff = {}) => {
     const amount = Number(withdrawalData.amount || 0);
     if (!amount || amount <= 0) {
@@ -72,7 +106,7 @@ const createStaffCustomerWithdrawalRequest = async (withdrawalData, staff = {}) 
     const isFreeToWithdrawRequest = requestType === 'free_to_withdraw' || /free\s*to\s*withdraw/i.test(withdrawalData.package || '');
 
     if (isFreeToWithdrawRequest) {
-        const settlementBankDetails = await getCustomerSettlementBankDetails(withdrawalData.customerId);
+        const settlementBankDetails = await resolveAndSaveCustomerSettlementBankDetails(withdrawalData.customerId, withdrawalData);
         const account = await Account.findOne({
             _id: withdrawalData.accountTypeId,
             customerId: withdrawalData.customerId,
@@ -85,6 +119,12 @@ const createStaffCustomerWithdrawalRequest = async (withdrawalData, staff = {}) 
         if (amount > Number(account.availableBalance || 0)) {
             throw new Error(`Insufficient available balance. Available: ₦${Number(account.availableBalance || 0).toLocaleString()}, Requested: ₦${amount.toLocaleString()}`);
         }
+
+        await assertNoActiveWithdrawalRequest({
+            customerId: account.customerId,
+            accountTypeId: account._id.toString(),
+            packageNumber: account.accountNumber,
+        });
 
         return CustomerWithdrawalRequest({
             accountNumber: account.accountNumber,
@@ -101,7 +141,7 @@ const createStaffCustomerWithdrawalRequest = async (withdrawalData, staff = {}) 
         });
     }
 
-    const settlementBankDetails = await getCustomerSettlementBankDetails(withdrawalData.customerId);
+    const settlementBankDetails = await resolveAndSaveCustomerSettlementBankDetails(withdrawalData.customerId, withdrawalData);
     const dsaccount = await DSAccount.findOne({
         _id: withdrawalData.accountTypeId,
         customerId: withdrawalData.customerId,
@@ -118,6 +158,12 @@ const createStaffCustomerWithdrawalRequest = async (withdrawalData, staff = {}) 
     if (amount > Number(dsaccount.totalContribution || 0)) {
         throw new Error(`Insufficient DS package balance. Available: ₦${Number(dsaccount.totalContribution || 0).toLocaleString()}, Requested: ₦${amount.toLocaleString()}`);
     }
+
+    await assertNoActiveWithdrawalRequest({
+        customerId: dsaccount.customerId,
+        accountTypeId: dsaccount._id.toString(),
+        packageNumber: dsaccount.DSAccountNumber,
+    });
 
     return CustomerWithdrawalRequest({
         accountNumber: dsaccount.accountNumber,

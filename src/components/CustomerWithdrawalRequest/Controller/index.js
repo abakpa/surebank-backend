@@ -41,7 +41,7 @@ const withdrawalRequest = async (req, res) => {
 
     res.status(201).json({ message: 'Withdrawal request sent successfully', withdrawalRequest: withdrawalRequest });
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    res.status(400).json({ message: error.message });
   }
 };
 
@@ -58,7 +58,7 @@ const staffWithdrawalRequest = async (req, res) => {
       withdrawalRequest,
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(400).json({ message: error.message });
   }
 };
 
