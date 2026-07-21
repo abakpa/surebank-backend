@@ -107,6 +107,14 @@ const formatSBAccountResponse = (data, requesterRole) => {
             res.status(500).json({ message: error.message });
         }
       }
+      const getClosedLegacySBAccounts = async (req, res) => {
+        try {
+          const accounts = await SBAccountService.getClosedLegacySBAccounts();
+          res.status(200).json(accounts);
+        } catch (error) {
+          res.status(500).json({ message: error.message });
+        }
+      }
       
       const saveSBContribution = async (req, res) => {
         try{
@@ -196,18 +204,44 @@ const formatSBAccountResponse = (data, requesterRole) => {
           res.status(500).json({ message: error.message });
         }
       }
+      const getSBAccountItemReceipt = async (req, res) => {
+        try {
+          const { SBAccountNumber, itemId } = req.params;
+          const receipt = await SBAccountService.getSBAccountItemReceipt({ SBAccountNumber, itemId, audience: 'staff' });
+          res.status(200).json(receipt);
+        } catch (error) {
+          res.status(500).json({ message: error.message });
+        }
+      }
+      const getCustomerSBAccountItemReceipt = async (req, res) => {
+        try {
+          const { SBAccountNumber, itemId } = req.params;
+          const receipt = await SBAccountService.getSBAccountItemReceipt({
+            SBAccountNumber,
+            itemId,
+            customerId: req.customer.customerId,
+            audience: 'customer'
+          });
+          res.status(200).json(receipt);
+        } catch (error) {
+          res.status(500).json({ message: error.message });
+        }
+      }
 
   module.exports = {
     createSBAccount,
     getDSAccount,
     saveSBContribution,
     getCustomerSBAccountById,
+    getClosedLegacySBAccounts,
     updateSBAccountAmount,
     withdrawSBContribution,
     sellProduct,
     markItemDelivered,
     requestItemFromWallet,
     updateItemCostPrice,
+    getSBAccountItemReceipt,
+    getCustomerSBAccountItemReceipt,
     getBackofficeProductDeliverySummary,
     updateCostPrice
   };

@@ -275,11 +275,49 @@ const isClosedLegacySBAccount = (sbaccount) => (
 );
 
 const filterClosedLegacySBAccountsForRole = (accounts = [], requesterRole = '') => {
-  if (!requesterRole || requesterRole === 'Admin') {
-    return accounts;
-  }
-
   return accounts.filter((account) => !isClosedLegacySBAccount(account));
+};
+
+const getClosedLegacySBAccounts = async () => {
+  const accounts = await SBAccount.find({
+    accountMode: { $ne: 'multi_item' },
+    $or: [
+      { items: { $exists: false } },
+      { items: { $size: 0 } }
+    ],
+    balance: { $lte: 0 }
+  })
+    .populate('customerId', 'firstName lastName phone accountNumber branchId accountManagerId')
+    .populate('branchId', 'name')
+    .sort({ updatedAt: -1 })
+    .lean();
+
+  const validCreatedByIds = [
+    ...new Set(
+      accounts
+        .map((account) => String(account.createdBy || ''))
+        .filter((staffId) => Staff.db.base.Types.ObjectId.isValid(staffId))
+    )
+  ];
+
+  const staffRecords = validCreatedByIds.length > 0
+    ? await Staff.find({ _id: { $in: validCreatedByIds } }).select('firstName lastName role').lean()
+    : [];
+  const staffById = new Map(staffRecords.map((staff) => [String(staff._id), staff]));
+
+  return accounts.map((account) => {
+    const createdById = String(account.createdBy || '');
+    const createdByStaff = staffById.get(createdById);
+
+    return {
+      ...account,
+      createdBy: createdByStaff || (
+        createdById === 'ECOMMERCE_SYSTEM'
+          ? { firstName: 'Ecommerce', lastName: 'System', role: 'System' }
+          : { firstName: createdById || 'N/A', lastName: '', role: 'Unknown' }
+      )
+    };
+  });
 };
 
 const getStaffDisplayName = (staff) => (
@@ -291,6 +329,155 @@ const getCustomerDisplayName = (customer) => (
 );
 
 const isMongoId = (value) => /^[a-f\d]{24}$/i.test(String(value || ''));
+
+const getItemByIdOrIndex = (items = [], itemId) => {
+  if (!Array.isArray(items)) return null;
+
+  const byId = items.find((item) => String(item?._id || '') === String(itemId));
+  if (byId) return byId;
+
+  const numericIndex = Number(itemId);
+  if (Number.isInteger(numericIndex) && numericIndex >= 0 && numericIndex < items.length) {
+    return items[numericIndex];
+  }
+
+  return null;
+};
+
+const escapeReceiptRegex = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const findReceiptPaymentTransaction = async ({ accountTypeId, productName, itemId }) => {
+  if (!accountTypeId) return null;
+
+  const escapedItemId = itemId ? escapeReceiptRegex(itemId) : '';
+  const escapedName = productName ? escapeReceiptRegex(productName) : '';
+  const baseQuery = {
+    accountTypeId,
+    direction: { $in: ['Bought', 'Delivered', 'Purchased', 'Debit'] }
+  };
+
+  if (escapedItemId) {
+    const transaction = await AccountTransactionModel.findOne({
+      ...baseQuery,
+      transactionRef: { $regex: escapedItemId, $options: 'i' }
+    }).sort({ createdAt: -1 }).lean();
+    if (transaction) return transaction;
+  }
+
+  if (escapedName) {
+    return await AccountTransactionModel.findOne({
+      ...baseQuery,
+      narration: { $regex: escapedName, $options: 'i' }
+    }).sort({ createdAt: -1 }).lean();
+  }
+
+  return await AccountTransactionModel.findOne(baseQuery).sort({ createdAt: -1 }).lean();
+};
+
+const buildReceiptNumber = (prefix, accountNumber, itemId) => {
+  const accountPart = String(accountNumber || 'SB').replace(/[^a-zA-Z0-9]/g, '');
+  const itemPart = String(itemId || '').replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase() || 'ITEM';
+  return `${prefix}-${accountPart}-${itemPart}`;
+};
+
+const getReceiptStaffFallback = (audience = 'staff') => (
+  audience === 'customer' ? 'Sure-Bank Delivery Team' : 'Delivery staff not recorded'
+);
+
+const getReceiptStaffDisplayName = (staff, audience = 'staff') => {
+  const displayName = getStaffDisplayName(staff);
+  return displayName === 'N/A' ? getReceiptStaffFallback(audience) : displayName;
+};
+
+const getSBAccountItemReceipt = async ({ SBAccountNumber, itemId, customerId = null, audience = 'staff' }) => {
+  const query = { SBAccountNumber };
+  if (customerId) {
+    query.customerId = customerId.toString();
+  }
+
+  const sbAccount = await SBAccount.findOne(query).lean();
+  if (!sbAccount) {
+    throw new Error('SB account not found');
+  }
+
+  const item = getItemByIdOrIndex(sbAccount.items, itemId);
+  if (!item) {
+    throw new Error('Order item not found');
+  }
+
+  if (!['delivered', 'completed'].includes(item.fulfillmentStatus || 'pending')) {
+    throw new Error('Receipt is only available after product delivery');
+  }
+
+  const linkedOrder = await EcommerceOrder.findOne({ SBAccountNumber: sbAccount.SBAccountNumber })
+    .select('processedBy items')
+    .lean();
+  const linkedOrderItem = (linkedOrder?.items || []).find((orderItem) => (
+    String(orderItem?._id || '') === String(item._id || itemId) ||
+    (
+      String(orderItem?.productId || '') === String(item.productId || '') &&
+      String(orderItem?.variationId || '') === String(item.variationId || '')
+    )
+  ));
+  const deliveredStaffId = item.fulfilledBy
+    || linkedOrderItem?.fulfilledBy
+    || linkedOrder?.processedBy
+    || (sbAccount.createdBy !== 'ECOMMERCE_SYSTEM' ? sbAccount.createdBy : '');
+
+  const [customer, branch, createdBy, fulfilledBy, paymentTransaction] = await Promise.all([
+    isMongoId(sbAccount.customerId) ? Customer.findById(sbAccount.customerId).select('firstName lastName phone email address').lean() : null,
+    isMongoId(sbAccount.branchId) ? Branch.findById(sbAccount.branchId).select('name').lean() : null,
+    isMongoId(sbAccount.createdBy) ? Staff.findById(sbAccount.createdBy).select('firstName lastName email role').lean() : null,
+    isMongoId(deliveredStaffId) ? Staff.findById(deliveredStaffId).select('firstName lastName email role signature').lean() : null,
+    findReceiptPaymentTransaction({
+      accountTypeId: sbAccount._id,
+      productName: item.productName,
+      itemId: item._id || itemId
+    })
+  ]);
+
+  const quantity = Number(item.quantity || 1);
+  const totalAmount = Number(item.subtotal || (Number(item.price || 0) * quantity));
+
+  return {
+    receiptNumber: buildReceiptNumber('RCPT', sbAccount.SBAccountNumber, item._id || itemId),
+    receiptDate: item.fulfilledAt || sbAccount.updatedAt,
+    source: sbAccount.createdBy === 'ECOMMERCE_SYSTEM' ? 'Ecommerce' : 'Backoffice',
+    orderNumber: sbAccount.paymentReference || '',
+    SBAccountNumber: sbAccount.SBAccountNumber,
+    accountNumber: sbAccount.accountNumber,
+    customer: {
+      name: getCustomerDisplayName(customer),
+      phone: customer?.phone || sbAccount.accountNumber || '',
+      email: customer?.email || '',
+      address: customer?.address || ''
+    },
+    branch: {
+      name: branch?.name || 'N/A'
+    },
+    product: {
+      name: item.productName || sbAccount.productName || 'N/A',
+      description: item.productDescription || sbAccount.productDescription || '',
+      quantity,
+      unitPrice: Number(item.price || 0),
+      totalAmount,
+      paymentStatus: 'paid',
+      fulfillmentStatus: item.fulfillmentStatus || 'delivered',
+      deliveredAt: item.fulfilledAt || sbAccount.updatedAt
+    },
+    payment: {
+      amount: totalAmount,
+      paidAt: paymentTransaction?.createdAt || item.fulfilledAt || sbAccount.updatedAt,
+      reference: paymentTransaction?.transactionRef || item.paymentReference || 'N/A',
+      channel: paymentTransaction ? 'SB order wallet' : 'Wallet'
+    },
+    staff: {
+      createdBy: getStaffDisplayName(createdBy),
+      deliveredBy: deliveredStaffId ? getReceiptStaffDisplayName(fulfilledBy, audience) : getReceiptStaffFallback(audience),
+      signatureUrl: fulfilledBy?.signature?.url || ''
+    }
+  };
+};
 
 const hasRepAccessToCustomer = (staffId, customer, fallbackManagerId = '') => {
   const id = String(staffId || '');
@@ -461,11 +648,13 @@ const getBackofficeProductDeliverySummary = async (staff = {}, options = {}) => 
       const itemId = String(item._id || index);
       const branch = branchById.get(String(account.branchId || ''));
       const createdBy = staffById.get(String(account.createdBy || ''));
-      const fulfilledBy = staffById.get(String(item.fulfilledBy || ''));
+      const effectiveFulfilledById = item.fulfilledBy || account.createdBy || '';
+      const fulfilledBy = staffById.get(String(effectiveFulfilledById || ''));
       const effectiveFulfilledAt = item.fulfilledAt || (isDelivered ? account.updatedAt : null);
 
       const detail = {
         id: `${account._id}-${itemId}`,
+        itemId,
         sbAccountId: String(account._id),
         SBAccountNumber: account.SBAccountNumber,
         customerId: String(account.customerId || ''),
@@ -479,7 +668,7 @@ const getBackofficeProductDeliverySummary = async (staff = {}, options = {}) => 
         accountStatus: account.status || '',
         source: 'Backoffice',
         createdBy: getStaffDisplayName(createdBy),
-        fulfilledBy: item.fulfilledBy ? getStaffDisplayName(fulfilledBy) : 'N/A',
+        fulfilledBy: effectiveFulfilledById ? getReceiptStaffDisplayName(fulfilledBy, 'staff') : getReceiptStaffFallback('staff'),
         addedAt: item.addedAt || account.createdAt,
         fulfilledAt: effectiveFulfilledAt,
         actionUrl: `/customeraccountdashboard/${account.customerId}`
@@ -514,11 +703,13 @@ const getBackofficeProductDeliverySummary = async (staff = {}, options = {}) => 
       const isDelivered = ['delivered', 'completed'].includes(status);
       const itemId = String(item._id || index);
       const branch = branchById.get(String(order.branchId || ''));
-      const fulfilledBy = staffById.get(String(item.fulfilledBy || order.processedBy || ''));
+      const effectiveFulfilledById = item.fulfilledBy || order.processedBy || '';
+      const fulfilledBy = staffById.get(String(effectiveFulfilledById || ''));
       const effectiveFulfilledAt = item.fulfilledAt || (isDelivered ? order.updatedAt : null);
 
       const detail = {
         id: `ecommerce-${order._id}-${itemId}`,
+        itemId,
         orderId: String(order._id),
         orderNumber: order.orderNumber,
         SBAccountNumber: order.SBAccountNumber || '',
@@ -533,7 +724,7 @@ const getBackofficeProductDeliverySummary = async (staff = {}, options = {}) => 
         accountStatus: order.status || '',
         source: 'Ecommerce',
         createdBy: 'Ecommerce',
-        fulfilledBy: item.fulfilledBy ? getStaffDisplayName(fulfilledBy) : 'N/A',
+        fulfilledBy: effectiveFulfilledById ? getReceiptStaffDisplayName(fulfilledBy, 'staff') : getReceiptStaffFallback('staff'),
         addedAt: item.addedAt || order.createdAt,
         fulfilledAt: effectiveFulfilledAt,
         actionUrl: `/ecommerce-order/${order._id}`
@@ -1432,12 +1623,14 @@ module.exports = {
     createSBAccount,
     updateSBAccountAmount,
     getCustomerSBAccountById,
+    getClosedLegacySBAccounts,
     saveSBContribution,
     withdrawSBContribution,
     sellProduct,
     markSBAccountItemDelivered,
     requestSBAccountItemFromWallet,
     updateSBAccountItemCostPrice,
+    getSBAccountItemReceipt,
     getBackofficeProductDeliverySummary,
     updateCostPrice
   };

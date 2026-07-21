@@ -12,6 +12,7 @@ router.put('/number/:orderNumber/items/:itemId/replace', customerAuth, Ecommerce
 router.post('/number/:orderNumber/items/:itemId/pay-wallet', customerAuth, EcommerceOrderController.payOrderItemFromWallet);
 router.post('/number/:orderNumber/payoff', customerAuth, EcommerceOrderController.payoffRemainingBalance);
 router.post('/number/:orderNumber/deposit/initialize', customerAuth, EcommerceOrderController.initializeOrderDepositPayment);
+router.get('/customer/:orderId/items/:itemId/receipt', customerAuth, EcommerceOrderController.getCustomerOrderItemReceipt);
 
 // Payment routes (Paystack)
 router.post('/payment/initialize', customerAuth, EcommerceOrderController.initializePayment);
@@ -27,6 +28,7 @@ router.get('/product-demand', staffAuth, adminOnly, EcommerceOrderController.get
 router.get('/product-sales', staffAuth, adminOnly, EcommerceOrderController.getProductSalesSummary);
 router.get('/product-demand/:productId', staffAuth, adminOnly, EcommerceOrderController.getProductDemandDetail);
 router.put('/staff/sb/:SBAccountNumber/items/:itemId/replace', staffAuth, staffExceptProductManager, EcommerceOrderController.replaceInstallmentOrderItemByStaff);
+router.get('/staff/:orderId/items/:itemId/receipt', staffAuth, staffExceptProductManager, EcommerceOrderController.getStaffOrderItemReceipt);
 
 // Process automatic payments (can be called by cron job or manually)
 router.post('/process-automatic-payments', staffAuth, adminOnly, EcommerceOrderController.processAutomaticPayments);

@@ -11,6 +11,7 @@ const SureBankAccountTransaction = require('../../SureBankAccount/Model/index');
 const SureBankAccountTransactionService = require('../../SureBankAccount/Service/index');
 const Staff = require('../../Staff/Model/index');
 const Customer = require('../../Customer/Model/index');
+const Branch = require('../../Branch/Model/index');
 const ProductBranchStock = require('../../ProductBranchStock/Model/index');
 const generateUniqueAccountNumber = require('../../generateAccountNumber');
 
@@ -464,6 +465,7 @@ const buildOrderFromSBAccount = async (sbAccount) => {
 
 	    return {
 	      _id: `${sbAccount._id}-item-${item.productId || index}`,
+	      receiptItemId: item._id || index,
 	      productId: item.productId || '',
 	      variationId: item.variationId || '',
 	      variationName: item.variationName || '',
@@ -475,7 +477,8 @@ const buildOrderFromSBAccount = async (sbAccount) => {
 	      addedAt: resolveOrderItemAddedAt(item, sbAccount.createdAt),
 	      paidAmount,
 	      paymentStatus: paidAmount >= subtotal ? 'paid' : paidAmount > 0 ? 'partial' : 'unpaid',
-	      fulfillmentStatus: item.fulfillmentStatus || (sbAccount.status === 'sold' ? 'completed' : 'pending')
+	      fulfillmentStatus: item.fulfillmentStatus || (sbAccount.status === 'sold' ? 'completed' : 'pending'),
+	      fulfilledAt: item.fulfilledAt
 	    };
   });
 
@@ -3037,6 +3040,143 @@ const getCustomerDisplayName = (customer) => {
   return [customer?.firstName, customer?.lastName].filter(Boolean).join(' ').trim() || 'Unknown Customer';
 };
 
+const isMongoId = (value) => /^[a-f\d]{24}$/i.test(String(value || ''));
+
+const buildReceiptNumber = (prefix, accountNumber, itemId) => {
+  const accountPart = String(accountNumber || 'ORDER').replace(/[^a-zA-Z0-9]/g, '');
+  const itemPart = String(itemId || '').replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase() || 'ITEM';
+  return `${prefix}-${accountPart}-${itemPart}`;
+};
+
+const getReceiptStaffFallback = (audience = 'staff') => (
+  audience === 'customer' ? 'Sure-Bank Delivery Team' : 'Delivery staff not recorded'
+);
+
+const findOrderReceiptPaymentTransaction = async ({ accountTypeId, customerId, orderNumber, productName, itemId }) => {
+  const escapedItemId = itemId ? escapeRegex(itemId) : '';
+  const escapedName = productName ? escapeRegex(productName) : '';
+  const escapedOrderNumber = orderNumber ? escapeRegex(orderNumber) : '';
+  const baseQuery = {
+    direction: { $in: ['Bought', 'Delivered', 'Purchased', 'Debit'] },
+    ...(accountTypeId ? { accountTypeId } : {}),
+    ...(!accountTypeId && customerId ? { customerId: customerId.toString() } : {})
+  };
+
+  if (escapedItemId && orderNumber) {
+    const transaction = await AccountTransactionModel.findOne({
+      ...baseQuery,
+      transactionRef: { $regex: escapedItemId, $options: 'i' }
+    }).sort({ createdAt: -1 }).lean();
+    if (transaction) return transaction;
+  }
+
+  if (escapedName) {
+    return await AccountTransactionModel.findOne({
+      ...baseQuery,
+      narration: { $regex: escapedOrderNumber ? `${escapedName}|${escapedOrderNumber}` : escapedName, $options: 'i' }
+    }).sort({ createdAt: -1 }).lean();
+  }
+
+  if (escapedOrderNumber) {
+    return await AccountTransactionModel.findOne({
+      ...baseQuery,
+      narration: { $regex: escapedOrderNumber, $options: 'i' }
+    }).sort({ createdAt: -1 }).lean();
+  }
+
+  return accountTypeId || customerId
+    ? await AccountTransactionModel.findOne(baseQuery).sort({ createdAt: -1 }).lean()
+    : null;
+};
+
+const getEcommerceOrderItemReceipt = async ({ orderId, itemId, customerId = null, audience = 'staff' }) => {
+  const query = { _id: orderId };
+  if (customerId) {
+    query.customerId = customerId.toString();
+  }
+
+  const order = await EcommerceOrder.findOne(query).lean();
+  if (!order) {
+    throw new Error('Order not found');
+  }
+
+  const item = (order.items || []).find((orderItem) => String(orderItem?._id || '') === String(itemId));
+  if (!item) {
+    throw new Error('Order item not found');
+  }
+
+  if (!['delivered', 'completed'].includes(item.fulfillmentStatus || 'pending')) {
+    throw new Error('Receipt is only available after product delivery');
+  }
+
+  const sbAccount = order.SBAccountNumber
+    ? await SBAccount.findOne({ SBAccountNumber: order.SBAccountNumber }).select('_id').lean()
+    : null;
+  const deliveredStaffId = item.fulfilledBy || order.processedBy || '';
+
+  const [customer, branch, fulfilledBy, paymentTransaction] = await Promise.all([
+    isMongoId(order.customerId) ? Customer.findById(order.customerId).select('firstName lastName phone email address').lean() : null,
+    isMongoId(order.branchId) ? Branch.findById(order.branchId).select('name').lean() : null,
+    isMongoId(deliveredStaffId) ? Staff.findById(deliveredStaffId).select('firstName lastName email role signature').lean() : null,
+    findOrderReceiptPaymentTransaction({
+      accountTypeId: sbAccount?._id,
+      customerId: order.customerId,
+      orderNumber: order.orderNumber,
+      productName: item.productName,
+      itemId: item._id || itemId
+    })
+  ]);
+
+  const quantity = Number(item.quantity || 1);
+  const totalAmount = Number(item.subtotal || (Number(item.price || 0) * quantity));
+  const selectedOptionText = Object.entries(item.selectedOptions || {})
+    .filter(([, value]) => value)
+    .map(([name, value]) => `${name}: ${value}`)
+    .join(' / ');
+  const deliveredByName = [fulfilledBy?.firstName, fulfilledBy?.lastName].filter(Boolean).join(' ').trim()
+    || fulfilledBy?.email
+    || getReceiptStaffFallback(audience);
+
+  return {
+    receiptNumber: buildReceiptNumber('RCPT', order.SBAccountNumber || order.orderNumber, item._id || itemId),
+    receiptDate: item.fulfilledAt || order.updatedAt,
+    source: 'Ecommerce',
+    orderNumber: order.orderNumber,
+    SBAccountNumber: order.SBAccountNumber || '',
+    accountNumber: order.accountNumber,
+    customer: {
+      name: getCustomerDisplayName(customer),
+      phone: customer?.phone || order.customerPhone || order.accountNumber || '',
+      email: customer?.email || order.customerEmail || '',
+      address: order.shippingAddress || customer?.address || ''
+    },
+    branch: {
+      name: branch?.name || 'N/A'
+    },
+    product: {
+      name: item.productName || 'N/A',
+      description: [item.variationName, selectedOptionText].filter(Boolean).join(' / '),
+      quantity,
+      unitPrice: Number(item.price || 0),
+      totalAmount,
+      paymentStatus: item.paymentStatus || 'paid',
+      fulfillmentStatus: item.fulfillmentStatus || 'delivered',
+      deliveredAt: item.fulfilledAt || order.updatedAt
+    },
+    payment: {
+      amount: totalAmount,
+      paidAt: paymentTransaction?.createdAt || item.fulfilledAt || order.updatedAt,
+      reference: paymentTransaction?.transactionRef || item.paymentReference || order.paymentReference || 'N/A',
+      channel: paymentTransaction ? 'SB order wallet' : 'Wallet'
+    },
+    staff: {
+      createdBy: 'Ecommerce',
+      deliveredBy: deliveredStaffId ? deliveredByName : getReceiptStaffFallback(audience),
+      signatureUrl: fulfilledBy?.signature?.url || ''
+    }
+  };
+};
+
 const normalizeProductActionKeyPart = (value) => String(value || '').trim().toLowerCase();
 
 const buildProductActionDedupeKey = ({
@@ -3808,5 +3948,6 @@ module.exports = {
   createOrderAndPayFromWallet,
   replaceInstallmentOrderItem,
   replaceInstallmentOrderItemBySBAccount,
+  getEcommerceOrderItemReceipt,
   payOrderItemFromWallet
 };

@@ -101,6 +101,31 @@ const getOrderByNumber = async (req, res) => {
   }
 };
 
+const getCustomerOrderItemReceipt = async (req, res) => {
+  try {
+    const { orderId, itemId } = req.params;
+    const receipt = await EcommerceOrderService.getEcommerceOrderItemReceipt({
+      orderId,
+      itemId,
+      customerId: req.customer.customerId,
+      audience: 'customer'
+    });
+    res.status(200).json(receipt);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+const getStaffOrderItemReceipt = async (req, res) => {
+  try {
+    const { orderId, itemId } = req.params;
+    const receipt = await EcommerceOrderService.getEcommerceOrderItemReceipt({ orderId, itemId, audience: 'staff' });
+    res.status(200).json(receipt);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 const getMyOrders = async (req, res) => {
   try {
     const customerId = req.customer.customerId;
@@ -907,6 +932,8 @@ module.exports = {
   createOrder,
   getOrderById,
   getOrderByNumber,
+  getCustomerOrderItemReceipt,
+  getStaffOrderItemReceipt,
   getMyOrders,
   getProductActionRequests,
   getActiveOrder,

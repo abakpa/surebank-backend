@@ -97,6 +97,32 @@ const updateStaffPassword = async (details) => {
   }
 };
 
+const updateStaffSignature = async ({ staffId, signatureUrl, uploadedBy }) => {
+  if (!signatureUrl) {
+    throw new Error("Signature image is required");
+  }
+
+  const updatedStaff = await Staff.findByIdAndUpdate(
+    staffId,
+    {
+      $set: {
+        signature: {
+          url: signatureUrl,
+          uploadedAt: new Date(),
+          uploadedBy
+        }
+      }
+    },
+    { new: true }
+  ).select('-password');
+
+  if (!updatedStaff) {
+    throw new Error("Staff not found or update failed");
+  }
+
+  return { success: true, message: "Staff signature updated successfully", updatedStaff };
+};
+
 
 module.exports = {
     createStaff,
@@ -106,5 +132,6 @@ module.exports = {
     updateStaff,
     resetStaffPassword,
     getStaffByPhone,
-    updateStaffPassword
+    updateStaffPassword,
+    updateStaffSignature
   };

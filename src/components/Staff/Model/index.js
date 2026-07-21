@@ -53,6 +53,19 @@ const staffSchema = new mongoose.Schema({
     type: Boolean, 
     default: false
    },
+  signature: {
+    url: {
+      type: String,
+      default: ''
+    },
+    uploadedAt: {
+      type: Date
+    },
+    uploadedBy: {
+      type: String,
+      ref: 'Staff'
+    }
+  },
   branchId: { 
     type: String, 
     ref:'Branch',

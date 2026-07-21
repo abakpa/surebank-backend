@@ -111,6 +111,30 @@ const uploadCategoryImage = (req, res, next) => {
   });
 };
 
+const uploadStaffSignature = (req, res, next) => {
+  uploadSingle(req, res, async (err) => {
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ message: 'File too large. Maximum size is 5MB.' });
+      }
+      return res.status(400).json({ message: err.message });
+    } else if (err) {
+      return res.status(400).json({ message: err.message });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ message: 'Signature image is required.' });
+    }
+
+    try {
+      req.body.signatureUrl = await uploadImageBuffer(req.file, 'surebank/staff-signatures');
+      next();
+    } catch (uploadError) {
+      return res.status(500).json({ message: uploadError.message });
+    }
+  });
+};
+
 // Delete image file
 const deleteImage = (imagePath) => {
   if (isAbsoluteUrl(imagePath)) {
@@ -131,5 +155,6 @@ module.exports = {
   uploadMultiple,
   uploadProductImages,
   uploadCategoryImage,
+  uploadStaffSignature,
   deleteImage
 };
