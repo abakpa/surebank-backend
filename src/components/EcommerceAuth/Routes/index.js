@@ -17,6 +17,7 @@ router.put('/profile', customerAuth, EcommerceAuthController.updateProfile);
 router.put('/change-password', customerAuth, EcommerceAuthController.changePassword);
 router.get('/wallet', customerAuth, EcommerceAuthController.getWallet);
 router.post('/wallet/ds-package', customerAuth, EcommerceAuthController.createDSAccount);
+router.put('/wallet/ds-package/:id', customerAuth, EcommerceAuthController.updateDSAccountDailyAmount);
 router.post('/wallet/free-to-withdraw/request', customerAuth, EcommerceAuthController.createFreeToWithdrawRequest);
 router.post('/wallet/fund/initialize', customerAuth, EcommerceAuthController.initializeWalletFunding);
 router.post('/wallet/ds-package/fund/initialize', customerAuth, EcommerceAuthController.initializeDSAccountFunding);

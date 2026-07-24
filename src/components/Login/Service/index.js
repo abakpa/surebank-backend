@@ -1,9 +1,114 @@
 const Customer = require('../../Customer/Model/index');
 const Staff = require('../../Staff/Model/index');
 const Login = require('../Model/index')
+const AccountTransaction = require('../../AccountTransaction/Model/index');
+const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken')
 require('dotenv').config()
+
+const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(String(value || ''));
+
+const buildCustomerUsageReport = async (query = {}) => {
+    const logins = await Login.find(query)
+      .populate({
+          path: 'branchId',
+          model: 'Branch',
+      })
+      .populate({
+          path: 'customerId',
+          model: 'Customer',
+      })
+      .lean();
+
+    const customerIds = logins
+      .map((login) => login.customerId?._id?.toString() || login.customerId?.toString())
+      .filter(Boolean);
+
+    const staffIds = [...new Set(logins
+      .map((login) => login.accountManagerId?.toString())
+      .filter((id) => id && isValidObjectId(id)))];
+
+    const [dsTotals, sbTotals, staffList] = await Promise.all([
+      AccountTransaction.aggregate([
+        {
+          $match: {
+            customerId: { $in: customerIds },
+            package: 'DS',
+          }
+        },
+        {
+          $group: {
+            _id: '$customerId',
+            credit: {
+              $sum: {
+                $cond: [{ $eq: ['$direction', 'Credit'] }, '$amount', 0]
+              }
+            },
+            debit: {
+              $sum: {
+                $cond: [{ $in: ['$direction', ['Debit', 'Charge']] }, '$amount', 0]
+              }
+            },
+            transactions: { $sum: 1 }
+          }
+        }
+      ]),
+      AccountTransaction.aggregate([
+        {
+          $match: {
+            customerId: { $in: customerIds },
+            package: 'SB',
+            direction: { $in: ['Debit', 'Purchased', 'Bought', 'Delivered'] },
+            narration: { $not: /^Reversed payment reservation for changed product:/i }
+          }
+        },
+        {
+          $group: {
+            _id: '$customerId',
+            total: { $sum: '$amount' },
+            transactions: { $sum: 1 }
+          }
+        }
+      ]),
+      Staff.find({ _id: { $in: staffIds } }).select('_id firstName lastName role branchId').lean()
+    ]);
+
+    const dsTotalMap = new Map(dsTotals.map((item) => [item._id?.toString(), item]));
+    const sbTotalMap = new Map(sbTotals.map((item) => [item._id?.toString(), item]));
+    const staffMap = new Map(staffList.map((staff) => [staff._id.toString(), staff]));
+
+    return logins.map((login) => {
+      const customerId = login.customerId?._id?.toString() || login.customerId?.toString();
+      const ds = dsTotalMap.get(customerId) || {};
+      const sb = sbTotalMap.get(customerId) || {};
+      const staff = staffMap.get(login.accountManagerId?.toString()) || null;
+      const dsCredit = Number(ds.credit || 0);
+      const dsDebit = Number(ds.debit || 0);
+      const dsNet = Math.max(0, dsCredit - dsDebit);
+      const sbPurchaseTotal = Number(sb.total || 0);
+
+      return {
+        ...login,
+        accountManager: staff ? {
+          _id: staff._id,
+          firstName: staff.firstName,
+          lastName: staff.lastName,
+          role: staff.role,
+          branchId: staff.branchId,
+        } : null,
+        performance: {
+          dsTotal: dsNet,
+          dsCreditTotal: dsCredit,
+          dsDebitTotal: dsDebit,
+          dsTransactionCount: Number(ds.transactions || 0),
+          sbPurchaseTotal,
+          sbTransactionCount: Number(sb.transactions || 0),
+          combinedTotal: dsNet + sbPurchaseTotal,
+        }
+      };
+    });
+};
 
 const customerLogin = async (phone, password) => {
     try {
@@ -57,28 +162,14 @@ const customerLogin = async (phone, password) => {
 };
 const getCustomers = async () =>{
     try {
-        return await Login.find({}).populate({
-            path: 'branchId',
-            model: 'Branch',
-          })
-          .populate({
-            path: 'customerId',
-            model: 'Customer',
-          });
+        return await buildCustomerUsageReport({});
     } catch (error) {
         throw error;
     }
   }
 const getBranchCustomers = async (branchId) =>{
     try {
-        return await Login.find({branchId:branchId}).populate({
-            path: 'branchId',
-            model: 'Branch',
-          })
-          .populate({
-            path: 'customerId',
-            model: 'Customer',
-          });
+        return await buildCustomerUsageReport({ branchId });
     } catch (error) {
         throw error;
     }
@@ -86,14 +177,7 @@ const getBranchCustomers = async (branchId) =>{
 const getRepCustomers = async (repId) =>{
     
     try {
-        return await Login.find({accountManagerId:repId}).populate({
-            path: 'branchId',
-            model: 'Branch',
-          })
-          .populate({
-            path: 'customerId',
-            model: 'Customer',
-          });
+        return await buildCustomerUsageReport({ accountManagerId: repId });
     } catch (error) {
         throw error;
     }
