@@ -8,6 +8,7 @@ const AccountTransactionModel = require('../../AccountTransaction/Model/index');
 const AccountTransactionService = require('../../AccountTransaction/Service/index');
 const PaystackService = require('../../Paystack/Service/index');
 const CustomerWithdrawalRequestService = require('../../CustomerWithdrawalRequest/Service/index');
+const Login = require('../../Login/Model/index');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
@@ -31,6 +32,37 @@ const getDefaultBranch = async () => {
     throw new Error('No branch configured. Please create a branch first.');
   }
   return branch;
+};
+
+const recordCustomerAppLogin = async (customer) => {
+  if (!customer?._id) return;
+
+  const now = new Date();
+  const branchId = customer.branchId || (await getDefaultBranch())._id.toString();
+  const accountManagerId = customer.accountManagerId || 'ECOMMERCE_SYSTEM';
+  const existingLogin = await Login.findOne({ customerId: customer._id.toString() });
+
+  if (existingLogin) {
+    existingLogin.count = Number(existingLogin.count || 0) + 1;
+    existingLogin.lastLogin = now;
+    if (!existingLogin.branchId && branchId) {
+      existingLogin.branchId = branchId;
+    }
+    if (!existingLogin.accountManagerId && accountManagerId) {
+      existingLogin.accountManagerId = accountManagerId;
+    }
+    await existingLogin.save();
+    return;
+  }
+
+  await Login.create({
+    customerId: customer._id.toString(),
+    branchId,
+    accountManagerId,
+    count: 1,
+    firstLogin: now,
+    lastLogin: now,
+  });
 };
 
 const checkExistingCustomer = async (phone) => {
@@ -182,13 +214,22 @@ const ensureCustomerSBOrderWallet = async (customer) => {
   return account;
 };
 
-const getWalletTransactions = async (accountId, customerId = '') => {
-  const transactionQueries = [{
+const getWalletTransactions = async (accountId, customerId = '', options = {}) => {
+  const {
+    includeEcommerceSBPayments = true,
+    walletPackages = ['Wallet'],
+  } = options;
+  const baseWalletQuery = {
     accountTypeId: accountId.toString(),
-    package: 'Wallet'
-  }];
+  };
 
-  if (customerId) {
+  if (Array.isArray(walletPackages) && walletPackages.length > 0) {
+    baseWalletQuery.package = { $in: walletPackages };
+  }
+
+  const transactionQueries = [baseWalletQuery];
+
+  if (customerId && includeEcommerceSBPayments) {
     const ecommerceSBAccounts = await SBAccount.find({
       customerId: customerId.toString(),
       createdBy: 'ECOMMERCE_SYSTEM'
@@ -341,6 +382,8 @@ const loginEcommerceCustomer = async (phone, password) => {
     throw new Error('Invalid phone number or password');
   }
 
+  await recordCustomerAppLogin(customer);
+
   // Generate token
   const token = jwt.sign(
     { id: customer._id, phone: customer.phone },
@@ -422,7 +465,12 @@ const getCustomerWallet = async (customerId) => {
     customerId: customer._id.toString(),
     walletType: { $ne: 'sb_order_wallet' }
   }).lean();
-  const transactions = await getWalletTransactions(account._id, customer._id);
+  const transactions = mainAccount
+    ? await getWalletTransactions(mainAccount._id, customer._id, {
+      includeEcommerceSBPayments: false,
+      walletPackages: [],
+    })
+    : [];
   const dsTransactions = await getDSTransactions(customer._id);
   const dsAccounts = await DSAccount.find({
     customerId: customer._id.toString(),
@@ -607,6 +655,44 @@ const createCustomerDSAccount = async (customerId, dsAccountData = {}) => {
   return {
     message: result.message,
     dsAccount: result.newDSAccount,
+    ...refreshedWallet,
+  };
+};
+
+const updateCustomerDSAccountDailyAmount = async (customerId, dsAccountId, updateData = {}) => {
+  const amountPerDay = Number(updateData.amountPerDay || 0);
+
+  if (!dsAccountId) {
+    throw new Error('DS package is required');
+  }
+
+  if (!Number.isFinite(amountPerDay) || amountPerDay <= 0) {
+    throw new Error('Enter a valid daily deposit amount');
+  }
+
+  const dsAccount = await DSAccount.findOne({
+    _id: dsAccountId,
+    customerId: customerId.toString(),
+    status: { $ne: 'closed' }
+  });
+
+  if (!dsAccount) {
+    throw new Error('DS package not found');
+  }
+
+  if (Number(dsAccount.totalContribution || 0) > 0) {
+    throw new Error('Daily amount can only be edited when the package balance is zero');
+  }
+
+  dsAccount.amountPerDay = amountPerDay;
+  dsAccount.editedBy = customerId.toString();
+  await dsAccount.save();
+
+  const refreshedWallet = await getCustomerWallet(customerId);
+
+  return {
+    message: 'Daily amount updated successfully',
+    dsAccount,
     ...refreshedWallet,
   };
 };
@@ -1100,6 +1186,7 @@ module.exports = {
   getCustomerWallet,
   createFreeToWithdrawRequest,
   createCustomerDSAccount,
+  updateCustomerDSAccountDailyAmount,
   initializeWalletFunding,
   initializeDSAccountFunding,
   verifyWalletFunding

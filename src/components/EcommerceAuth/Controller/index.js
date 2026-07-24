@@ -133,6 +133,22 @@ const createDSAccount = async (req, res) => {
   }
 };
 
+const updateDSAccountDailyAmount = async (req, res) => {
+  try {
+    const customerId = req.customer.customerId;
+    const { amountPerDay } = req.body;
+    const result = await EcommerceAuthService.updateCustomerDSAccountDailyAmount(
+      customerId,
+      req.params.id,
+      { amountPerDay }
+    );
+
+    res.status(200).json(result);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
 const createFreeToWithdrawRequest = async (req, res) => {
   try {
     const customerId = req.customer.customerId;
@@ -277,6 +293,7 @@ module.exports = {
   changePassword,
   getWallet,
   createDSAccount,
+  updateDSAccountDailyAmount,
   createFreeToWithdrawRequest,
   initializeWalletFunding,
   initializeDSAccountFunding,
