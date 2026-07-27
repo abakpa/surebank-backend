@@ -47,6 +47,32 @@ const customerLogin = async (req, res) => {
             res.status(500).json({ message: error.message });
         }
       }
+     const getNewCustomers = async (req, res) => {
+        try {
+            const customers = await customerService.getNewCustomers();
+            res.status(200).json(customers);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
+     const getBranchNewCustomers = async (req, res) => {
+        const branchId = req.params.id
+        try {
+            const customers = await customerService.getBranchNewCustomers(branchId);
+            res.status(200).json(customers);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
+     const getRepNewCustomers = async (req, res) => {
+        const repId = req.staff.staffId;
+        try {
+            const customers = await customerService.getRepNewCustomers(repId);
+            res.status(200).json(customers);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
     const blockAllUsers = async (req, res) => {
         try {
           const result = await staffService.blockAllUsersService();
@@ -96,5 +122,8 @@ module.exports = {
     blockAllUsers,
     unblockAllUsers,
     getBranchCustomers,
-    getRepCustomers
+    getRepCustomers,
+    getNewCustomers,
+    getBranchNewCustomers,
+    getRepNewCustomers
 };
