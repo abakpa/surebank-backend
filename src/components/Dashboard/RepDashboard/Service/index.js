@@ -63,6 +63,16 @@ const buildDailyCreatedAtQuery = (dateInput) => {
     $lte: getEndOfDay(effectiveDate),
   };
 };
+
+const buildStrictDailyCreatedAtQuery = (dateInput) => {
+  const { date, startDate, endDate } = normalizeDateInput(dateInput);
+  const effectiveDate = date || startDate || endDate || new Date();
+
+  return {
+    $gte: getStartOfDay(effectiveDate),
+    $lte: getEndOfDay(effectiveDate),
+  };
+};
 const FDAccount = require('../../../FDAccount/Model');
 const Order = require('../../../SBAccount/Model/order');
 const EcommerceOrder = require('../../../EcommerceOrder/Model');
@@ -162,7 +172,7 @@ async function getAllRepDSAccount(date = null, staff) {
     // Filter by date if provided or default to today
     const endDate = date ? new Date(date) : new Date();
     endDate.setHours(23, 59, 59, 999);
-    query.createdAt = buildCumulativeCreatedAtQuery(date);
+    query.createdAt = buildStrictDailyCreatedAtQuery(date);
     const transactions = await AccountTransaction.find(query);
     
     // // Sort transactions by createdAt in ascending order
@@ -227,7 +237,7 @@ async function getAllRepSBAccount(date = null, staff) {
     // Filter by date if provided or default to today
     const endDate = date ? new Date(date) : new Date();
     endDate.setHours(23, 59, 59, 999);
-    query.createdAt = buildCumulativeCreatedAtQuery(date);
+    query.createdAt = buildStrictDailyCreatedAtQuery(date);
   
   
     const transactions = await AccountTransaction.find(query);
@@ -561,7 +571,7 @@ async function getAllRepDailySBandDSAccount(date = null, staff) {
 }
 async function getAllRepDSAccountPackage(date = null, staff) {
     const query = {
-      createdAt: buildCumulativeCreatedAtQuery(date),
+      createdAt: buildStrictDailyCreatedAtQuery(date),
       accountManagerId:staff
     };
   
@@ -578,7 +588,7 @@ async function getAllRepDSAccountPackage(date = null, staff) {
   
 async function getAllRepSBAccountPackage(date = null, staff) {
     const query = {
-      createdAt: buildCumulativeCreatedAtQuery(date),
+      createdAt: buildStrictDailyCreatedAtQuery(date),
       accountManagerId:staff
     };
   
@@ -927,13 +937,14 @@ const getRepExpenditureReport = async (staff) => {
     const query = {
       package: 'Wallet',
       direction: 'Credit',
-      createdBy: staff,
-      narration: { $regex: ECOMMERCE_DEPOSIT_NARRATION_PATTERN }
+      narration: { $regex: ECOMMERCE_DEPOSIT_NARRATION_PATTERN },
+      $or: [
+        { createdBy: staff },
+        { accountManagerId: staff }
+      ]
     };
 
-    const endDate = date ? new Date(date) : new Date();
-    endDate.setHours(23, 59, 59, 999);
-    query.createdAt = buildCumulativeCreatedAtQuery(date);
+    query.createdAt = buildStrictDailyCreatedAtQuery(date);
 
     const transactions = await AccountTransaction.find(query).select('amount').lean();
     return transactions.reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
@@ -942,13 +953,14 @@ const getRepExpenditureReport = async (staff) => {
     const query = {
       package: 'Wallet',
       direction: 'Credit',
-      createdBy: staff,
-      narration: { $regex: ECOMMERCE_DEPOSIT_NARRATION_PATTERN }
+      narration: { $regex: ECOMMERCE_DEPOSIT_NARRATION_PATTERN },
+      $or: [
+        { createdBy: staff },
+        { accountManagerId: staff }
+      ]
     };
 
-    const endDate = date ? new Date(date) : new Date();
-    endDate.setHours(23, 59, 59, 999);
-    query.createdAt = buildCumulativeCreatedAtQuery(date);
+    query.createdAt = buildStrictDailyCreatedAtQuery(date);
 
     const transactions = await AccountTransaction.find(query)
       .populate({
@@ -971,9 +983,12 @@ const getRepExpenditureReport = async (staff) => {
     const query = {
       package: 'DS',
       direction: 'Credit',
-      createdBy: staff,
       narration: { $regex: ECOMMERCE_DS_DEPOSIT_NARRATION_PATTERN },
-      createdAt: buildCumulativeCreatedAtQuery(date),
+      createdAt: buildStrictDailyCreatedAtQuery(date),
+      $or: [
+        { createdBy: staff },
+        { accountManagerId: staff }
+      ]
     };
 
     const transactions = await AccountTransaction.find(query).select('amount').lean();
@@ -983,9 +998,12 @@ const getRepExpenditureReport = async (staff) => {
     const query = {
       package: 'DS',
       direction: 'Credit',
-      createdBy: staff,
       narration: { $regex: ECOMMERCE_DS_DEPOSIT_NARRATION_PATTERN },
-      createdAt: buildCumulativeCreatedAtQuery(date),
+      createdAt: buildStrictDailyCreatedAtQuery(date),
+      $or: [
+        { createdBy: staff },
+        { accountManagerId: staff }
+      ]
     };
 
     const transactions = await AccountTransaction.find(query)

@@ -65,6 +65,16 @@ const buildDailyCreatedAtQuery = (dateInput) => {
     $lte: getEndOfDay(effectiveDate),
   };
 };
+
+const buildStrictDailyCreatedAtQuery = (dateInput) => {
+  const { date, startDate, endDate } = normalizeDateInput(dateInput);
+  const effectiveDate = date || startDate || endDate || new Date();
+
+  return {
+    $gte: getStartOfDay(effectiveDate),
+    $lte: getEndOfDay(effectiveDate),
+  };
+};
 const Customer = require('../../../Customer/Model');
 const FDAccount = require('../../../FDAccount/Model');
 const Order = require('../../../SBAccount/Model/order');
@@ -1200,17 +1210,10 @@ const getBranchEcommerceDeposit = async (date = null, staff) => {
 
   const endDate = date ? new Date(date) : new Date();
   endDate.setHours(23, 59, 59, 999);
-  query.createdAt = buildCumulativeCreatedAtQuery(date);
+  query.createdAt = buildStrictDailyCreatedAtQuery(date);
 
   if (branch?.branchId) {
-    const branchStaff = await Staff.find({ branchId: branch.branchId }).select('_id').lean();
-    const branchStaffIds = branchStaff.map((member) => member._id.toString());
-
-    if (branchStaffIds.length === 0) {
-      return 0;
-    }
-
-    query.createdBy = { $in: branchStaffIds };
+    query.branchId = branch.branchId;
   } else if (branchId) {
     query.branchId = branchId;
   }
@@ -1230,17 +1233,10 @@ const getBranchEcommerceDepositReport = async (date = null, staff) => {
 
   const endDate = date ? new Date(date) : new Date();
   endDate.setHours(23, 59, 59, 999);
-  query.createdAt = buildCumulativeCreatedAtQuery(date);
+  query.createdAt = buildStrictDailyCreatedAtQuery(date);
 
   if (branch?.branchId) {
-    const branchStaff = await Staff.find({ branchId: branch.branchId }).select('_id').lean();
-    const branchStaffIds = branchStaff.map((member) => member._id.toString());
-
-    if (branchStaffIds.length === 0) {
-      return [];
-    }
-
-    query.createdBy = { $in: branchStaffIds };
+    query.branchId = branch.branchId;
   } else if (branchId) {
     query.branchId = branchId;
   }
@@ -1284,7 +1280,7 @@ const getBranchEcommerceDSDeposit = async (date = null, staff) => {
     package: 'DS',
     direction: 'Credit',
     narration: { $regex: ECOMMERCE_DS_DEPOSIT_NARRATION_PATTERN },
-    createdAt: buildCumulativeCreatedAtQuery(date),
+    createdAt: buildStrictDailyCreatedAtQuery(date),
   };
 
   if (branch?.branchId) {
@@ -1303,7 +1299,7 @@ const getBranchEcommerceDSDepositReport = async (date = null, staff) => {
     package: 'DS',
     direction: 'Credit',
     narration: { $regex: ECOMMERCE_DS_DEPOSIT_NARRATION_PATTERN },
-    createdAt: buildCumulativeCreatedAtQuery(date),
+    createdAt: buildStrictDailyCreatedAtQuery(date),
   };
 
   if (branch?.branchId) {
