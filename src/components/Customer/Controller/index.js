@@ -3,6 +3,8 @@ const accountService = require('../../Account/Service/index')
 require('dotenv').config()
 const bcrypt = require('bcrypt')
 
+const normalizePhoneNumber = (value = '') => String(value || '').replace(/\D/g, '');
+const isValidPhoneNumber = (value = '') => /^\d{11}$/.test(value);
 
     const registerCustomer = async (req, res) => {
         try {
@@ -11,8 +13,12 @@ const bcrypt = require('bcrypt')
         const salt = await bcrypt.genSalt()
         req.body.password = await bcrypt.hash(req.body.password,salt)
           const { firstName,lastName, phone, address, password,branchId,accountManagerId } = req.body;
-          const newCustomer = await customerService.createCustomer({ firstName,lastName, phone, address,createdBy,accountManagerId, password,branchId });
-          const accountNumber = await accountService.createAccount({customerId:newCustomer._id,staffId:staffId,branchId,accountManagerId,phone:phone})
+          const normalizedPhone = normalizePhoneNumber(phone);
+          if (!isValidPhoneNumber(normalizedPhone)) {
+            return res.status(400).json({ error: 'Phone number must be exactly 11 digits' });
+          }
+          const newCustomer = await customerService.createCustomer({ firstName,lastName, phone: normalizedPhone, address,createdBy,accountManagerId, password,branchId });
+          const accountNumber = await accountService.createAccount({customerId:newCustomer._id,staffId:staffId,branchId,accountManagerId,phone:normalizedPhone})
           res.status(201).json({ message: 'Customer registered successfully', user: newCustomer,accountNumber:accountNumber });
         } catch (error) {
           res.status(500).json({ error: error.message });

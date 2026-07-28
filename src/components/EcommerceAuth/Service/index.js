@@ -281,8 +281,12 @@ const getDSTransactions = async (customerId = '') => {
 };
 
 const registerEcommerceCustomer = async (customerData) => {
-  const { firstName, lastName, phone, address, password, email } = customerData;
+  const { firstName, lastName, address, password, email } = customerData;
+  const phone = String(customerData.phone || '').replace(/\D/g, '');
   const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (!/^\d{11}$/.test(phone)) {
+    throw new Error('Phone number must be exactly 11 digits');
+  }
 
   // Check if customer already exists
   const existingCustomer = await checkExistingCustomer(phone);

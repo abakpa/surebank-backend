@@ -9,6 +9,11 @@ const Staff = require('../../Staff/Model');
 const Customer = require('../Model/index');
 
 const createCustomer = async (customerData) => {
+     const normalizedPhone = String(customerData.phone || '').replace(/\D/g, '');
+            if (!/^\d{11}$/.test(normalizedPhone)) {
+            throw new Error('Phone number must be exactly 11 digits');
+            }
+            customerData.phone = normalizedPhone;
 
      const existingPhone = await getCustomerByPhone(customerData.phone);
             if (existingPhone) {

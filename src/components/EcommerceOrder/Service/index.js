@@ -436,13 +436,29 @@ async function normalizeMultiItemOrderPayments(plainOrder) {
 const buildOrderFromSBAccount = async (sbAccount) => {
   const sellingPrice = Number(sbAccount.sellingPrice || 0);
   const isLegacyAccount = sbAccount.accountMode !== 'multi_item';
-  const walletAccount = await ensureSBOrderWalletForCustomer({
-    customerId: sbAccount.customerId,
-    accountNumber: sbAccount.accountNumber
-  });
-  const payments = await getSBOrderWalletStatementRecords(walletAccount._id);
+  const walletAccount = isLegacyAccount
+    ? null
+    : await ensureSBOrderWalletForCustomer({
+        customerId: sbAccount.customerId,
+        accountNumber: sbAccount.accountNumber
+      });
+  const payments = isLegacyAccount
+    ? await getSBAccountPaymentRecords(sbAccount._id)
+    : await getSBOrderWalletStatementRecords(walletAccount._id);
   const paymentSummary = getInstallmentPaymentSummary(payments);
-  const totalPaid = Number(walletAccount.availableBalance || 0);
+  const legacyRecordedBalance = Number(sbAccount.balance || 0);
+  const legacyTransactionPaid = getSBAccountPaidAmountFromRecords(payments);
+  const totalPaid = isLegacyAccount
+    ? Math.min(
+        sellingPrice,
+        Math.max(
+          0,
+          sbAccount.status === 'sold'
+            ? sellingPrice
+            : Math.max(legacyRecordedBalance, legacyTransactionPaid)
+        )
+      )
+    : Number(walletAccount.availableBalance || 0);
   const remainingBalance = Math.max(0, sellingPrice - totalPaid);
   const creditBalance = Math.max(0, totalPaid - sellingPrice);
   const sbItems = Array.isArray(sbAccount.items) && sbAccount.items.length > 0
@@ -455,13 +471,19 @@ const buildOrderFromSBAccount = async (sbAccount) => {
         price: sellingPrice,
         subtotal: sellingPrice
       }];
+  let remainingLegacyPaid = totalPaid;
   const items = sbItems.map((item, index) => {
     const quantity = Math.max(1, Number(item.quantity || 1));
     const subtotal = Number(item.subtotal || item.price || 0);
     const itemPaidAmount = ['delivered', 'completed'].includes(item.fulfillmentStatus)
       ? subtotal
-      : Number(item.paidAmount || 0);
+      : isLegacyAccount
+        ? Math.min(subtotal, Math.max(0, remainingLegacyPaid))
+        : Number(item.paidAmount || 0);
     const paidAmount = Math.min(subtotal, Math.max(0, itemPaidAmount));
+    if (isLegacyAccount) {
+      remainingLegacyPaid = Math.max(0, remainingLegacyPaid - paidAmount);
+    }
 
 	    return {
 	      _id: `${sbAccount._id}-item-${item.productId || index}`,
@@ -523,7 +545,27 @@ const buildOrderFromSBAccount = async (sbAccount) => {
     source: 'backoffice_sb_account'
   };
 
-  attachOrderItemFinancialSummary(order, { walletBalance: totalPaid });
+  if (isLegacyAccount) {
+    order.activeItemsSubtotal = items
+      .filter((item) => !isDeliveredOrderItem(item))
+      .reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
+    order.outstandingItemsSubtotal = items
+      .filter((item) => !isDeliveredOrderItem(item))
+      .reduce((sum, item) => sum + Math.max(0, Number(item.subtotal || 0) - Number(item.paidAmount || 0)), 0);
+    order.deliveredItemsSubtotal = items
+      .filter(isDeliveredOrderItem)
+      .reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
+    order.customerStatement = {
+      title: 'Customer Statement of Account',
+      walletBalance: totalPaid,
+      totalDeposits: paymentSummary.grossPaid,
+      totalProductPayments: paymentSummary.debitTotal,
+      remainingBalance,
+      transactions: payments
+    };
+  } else {
+    attachOrderItemFinancialSummary(order, { walletBalance: totalPaid });
+  }
   return order;
 };
 
