@@ -1,5 +1,8 @@
 const EcommerceAuthService = require('../Service/index');
 
+const normalizePhoneNumber = (value = '') => String(value || '').replace(/\D/g, '');
+const isValidPhoneNumber = (value = '') => /^\d{11}$/.test(value);
+
 const register = async (req, res) => {
   try {
     const { firstName, lastName, phone, address, password, email } = req.body;
@@ -9,11 +12,15 @@ const register = async (req, res) => {
         message: 'All fields are required: firstName, lastName, phone, address, password'
       });
     }
+    const normalizedPhone = normalizePhoneNumber(phone);
+    if (!isValidPhoneNumber(normalizedPhone)) {
+      return res.status(400).json({ message: 'Phone number must be exactly 11 digits' });
+    }
 
     const result = await EcommerceAuthService.registerEcommerceCustomer({
       firstName,
       lastName,
-      phone,
+      phone: normalizedPhone,
       address,
       password,
       email
