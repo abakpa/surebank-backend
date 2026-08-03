@@ -104,16 +104,10 @@ const addToCart = async (identifier, productId, quantity = 1, skipStockCheck = f
   }
 
   const variation = getVariationSelection(product, variationId);
-  const selectedStock = variation ? variation.stock : product.stock;
   const basePrice = variation ? variation.price : product.price;
   const selectedPrice = calculateCustomerSellingPrice(basePrice);
   const selectedImage = variation?.image || (product.images && product.images.length > 0 ? product.images[0] : '');
   const normalizedVariationId = variation ? variation._id.toString() : '';
-
-  // Only check stock if not skipping (for regular cart operations)
-  if (!skipStockCheck && selectedStock < quantity) {
-    throw new Error('Insufficient stock');
-  }
 
   let cart = await getOrCreateCart(identifier);
 
@@ -122,10 +116,6 @@ const addToCart = async (identifier, productId, quantity = 1, skipStockCheck = f
   );
 
   if (existingItemIndex > -1) {
-    const nextQuantity = Number(cart.items[existingItemIndex].quantity || 0) + Number(quantity || 0);
-    if (!skipStockCheck && selectedStock < nextQuantity) {
-      throw new Error('Insufficient stock');
-    }
     cart.items[existingItemIndex].price = selectedPrice;
     cart.items[existingItemIndex].quantity += quantity;
     cart.items[existingItemIndex].subtotal = selectedPrice * cart.items[existingItemIndex].quantity;
@@ -169,11 +159,6 @@ const updateCartItem = async (identifier, productId, quantity, skipStockCheck = 
       throw new Error('Product not found');
     }
     const variation = getVariationSelection(product, variationId);
-    const selectedStock = variation ? variation.stock : product.stock;
-    // Only check stock if not skipping (for regular cart operations)
-    if (!skipStockCheck && selectedStock < quantity) {
-      throw new Error('Insufficient stock');
-    }
     const basePrice = variation ? variation.price : product.price;
     const visiblePrice = calculateCustomerSellingPrice(basePrice);
     cart.items[itemIndex].price = visiblePrice;
