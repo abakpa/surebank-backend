@@ -200,6 +200,7 @@ const statusOrder = {
     pending: 1,
     processing: 2,
     completed: 3,
+    rejected: 4,
 };
 
 const sortRequestsByStatus = (requests) => requests.sort((a, b) => {
@@ -513,11 +514,54 @@ const completeWithdrawalRequestDebit = async (currentRequest, adminId) => {
     }
 };
 
+  const rejectCustomerWithdrawalRequest = async (details) => {
+    const { withdrawalRequestId, adminId, staff, rejectionReason = '' } = details;
+    try {
+        if (staff?.role !== 'Admin') {
+            throw new Error('Only admin can reject withdrawal requests');
+        }
+
+        const currentRequest = await CustomerWithdrawalRequestModel.findById({ _id: withdrawalRequestId });
+
+        if (!currentRequest) {
+            throw new Error('Withdrawal request not found');
+        }
+
+        const currentStatus = String(currentRequest.status || '').toLowerCase();
+        if (!['pending', 'processing'].includes(currentStatus)) {
+            throw new Error(`Cannot reject from current status: ${currentRequest.status}`);
+        }
+
+        const updatedWithdrawalRequest = await CustomerWithdrawalRequestModel.findOneAndUpdate(
+            { _id: withdrawalRequestId },
+            {
+                $set: {
+                    status: 'rejected',
+                    rejectedBy: adminId,
+                    rejectedByRole: staff?.role || '',
+                    rejectedAt: new Date(),
+                    rejectionReason: String(rejectionReason || '').trim(),
+                },
+            },
+            { new: true }
+        );
+
+        return {
+            success: true,
+            message: 'Withdrawal request rejected successfully',
+            updatedWithdrawalRequest,
+        };
+    } catch (error) {
+        throw new Error(`${error.message}`);
+    }
+};
+
 module.exports = {
     CustomerWithdrawalRequest,
     createStaffCustomerWithdrawalRequest,
     getCustomersWithdrawalRequest,
     updateCustomerWithdrawalRequestStatus,
+    rejectCustomerWithdrawalRequest,
     getBranchCustomersWithdrawalRequest,
     getCustomersWithdrawalRequestForCustomer,
     getRepCustomersWithdrawalRequest

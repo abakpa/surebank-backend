@@ -55,6 +55,18 @@ const customerWithdrawalRequestSchema = new mongoose.Schema({
   completedAt: {
     type: Date,
   },
+  rejectedBy: {
+    type: String,
+  },
+  rejectedByRole: {
+    type: String,
+  },
+  rejectedAt: {
+    type: Date,
+  },
+  rejectionReason: {
+    type: String,
+  },
   bankName: { 
     type: String, 
   },

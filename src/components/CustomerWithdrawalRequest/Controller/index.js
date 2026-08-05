@@ -115,12 +115,29 @@ const staffWithdrawalRequest = async (req, res) => {
           res.status(500).json({ message: error.message });
         }
       };
+     const rejectCustomerWithdrawalRequest = async (req,res) => {
+        const withdrawalRequestId = req.params.id
+        const adminId = req.staff.staffId
+        const rejectionReason = req.body?.rejectionReason || req.body?.reason || ''
+        try {
+          const rejectedRequest = await CustomerWithdrawalRequest.rejectCustomerWithdrawalRequest({
+            withdrawalRequestId,
+            adminId,
+            staff: req.staff,
+            rejectionReason,
+          })
+          res.status(200).json({ data: rejectedRequest });
+        } catch (error) {
+          res.status(500).json({ message: error.message });
+        }
+      };
 
   module.exports = {
     withdrawalRequest,
     staffWithdrawalRequest,
     getCustomersWithdrawalRequest,
     updateCustomerWithdrawalRequestStatus,
+    rejectCustomerWithdrawalRequest,
     getBranchCustomersWithdrawalRequest,
     getBranchCustomersWithdrawalRequest,
     getCustomersWithdrawalRequestForCustomer,
