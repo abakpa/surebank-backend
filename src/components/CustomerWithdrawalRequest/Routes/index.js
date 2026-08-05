@@ -1,10 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const CustomerWithdrawalRequest = require('../Controller/index');
-const {staffAuth, adminOrManagerOnly} = require('../../Middleware/index')
+const {staffAuth, adminOnly, adminOrManagerOnly} = require('../../Middleware/index')
 const {customerAuth} = require('../../Middleware/index')
 
 // router.post('/', staffAuth, DSAccountController.createDSAccount);
+router.put('/:id/reject', staffAuth, adminOnly, CustomerWithdrawalRequest.rejectCustomerWithdrawalRequest);
 router.put('/:id', staffAuth, adminOrManagerOnly, CustomerWithdrawalRequest.updateCustomerWithdrawalRequestStatus);
 // router.get('/',staffAuth, DSAccountController.getDSAccount);
 // router.get('/',staffAuth, DSAccountController.getDSAccount);

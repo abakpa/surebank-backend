@@ -35,6 +35,7 @@ const withdrawalRequest = async (req, res) => {
         bankAccountNumber,
         accountName,
         channelOfWithdrawal,
+        payoutMethod: 'transfer',
         date,
         amount 
     });
@@ -64,7 +65,9 @@ const staffWithdrawalRequest = async (req, res) => {
 
      const getCustomersWithdrawalRequest = async (req, res) => {
         try {
-            const customersWithdrawalRequest = await CustomerWithdrawalRequest.getCustomersWithdrawalRequest();
+            const customersWithdrawalRequest = await CustomerWithdrawalRequest.getCustomersWithdrawalRequest({
+                payoutMethod: req.query.payoutMethod,
+            });
             res.status(200).json(customersWithdrawalRequest);
         } catch (error) {
             res.status(500).json({ message: error.message });
@@ -73,7 +76,9 @@ const staffWithdrawalRequest = async (req, res) => {
      const getRepCustomersWithdrawalRequest = async (req, res) => {
         const repId = req.staff.staffId;
         try {
-            const customersWithdrawalRequest = await CustomerWithdrawalRequest.getRepCustomersWithdrawalRequest(repId);
+            const customersWithdrawalRequest = await CustomerWithdrawalRequest.getRepCustomersWithdrawalRequest(repId, {
+                payoutMethod: req.query.payoutMethod,
+            });
             res.status(200).json(customersWithdrawalRequest);
         } catch (error) {
             res.status(500).json({ message: error.message });
@@ -82,7 +87,9 @@ const staffWithdrawalRequest = async (req, res) => {
      const getBranchCustomersWithdrawalRequest = async (req, res) => {
         const branchId = req.params.id
         try {
-            const customersWithdrawalRequest = await CustomerWithdrawalRequest.getBranchCustomersWithdrawalRequest(branchId);
+            const customersWithdrawalRequest = await CustomerWithdrawalRequest.getBranchCustomersWithdrawalRequest(branchId, {
+                payoutMethod: req.query.payoutMethod,
+            });
             res.status(200).json(customersWithdrawalRequest);
         } catch (error) {
             res.status(500).json({ message: error.message });
@@ -108,12 +115,29 @@ const staffWithdrawalRequest = async (req, res) => {
           res.status(500).json({ message: error.message });
         }
       };
+     const rejectCustomerWithdrawalRequest = async (req,res) => {
+        const withdrawalRequestId = req.params.id
+        const adminId = req.staff.staffId
+        const rejectionReason = req.body?.rejectionReason || req.body?.reason || ''
+        try {
+          const rejectedRequest = await CustomerWithdrawalRequest.rejectCustomerWithdrawalRequest({
+            withdrawalRequestId,
+            adminId,
+            staff: req.staff,
+            rejectionReason,
+          })
+          res.status(200).json({ data: rejectedRequest });
+        } catch (error) {
+          res.status(500).json({ message: error.message });
+        }
+      };
 
   module.exports = {
     withdrawalRequest,
     staffWithdrawalRequest,
     getCustomersWithdrawalRequest,
     updateCustomerWithdrawalRequestStatus,
+    rejectCustomerWithdrawalRequest,
     getBranchCustomersWithdrawalRequest,
     getBranchCustomersWithdrawalRequest,
     getCustomersWithdrawalRequestForCustomer,

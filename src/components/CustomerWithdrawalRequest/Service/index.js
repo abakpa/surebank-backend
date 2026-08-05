@@ -20,13 +20,16 @@ const formatTransactionDate = (date = new Date()) => {
 
 const CustomerWithdrawalRequest = async (withdrawalData) => {
   const requestData = { ...withdrawalData };
+  requestData.payoutMethod = String(requestData.payoutMethod || 'transfer').toLowerCase() === 'cash'
+    ? 'cash'
+    : 'transfer';
   const hasRequestBankDetails = Boolean(
     String(requestData.bankName || '').trim()
     && String(requestData.accountName || '').trim()
     && String(requestData.bankAccountNumber || '').trim()
   );
 
-  if (!hasRequestBankDetails && requestData.customerId) {
+  if (requestData.payoutMethod === 'transfer' && !hasRequestBankDetails && requestData.customerId) {
     const settlementBankDetails = await getCustomerSettlementBankDetails(requestData.customerId);
     Object.assign(requestData, settlementBankDetails);
   }
@@ -102,11 +105,16 @@ const createStaffCustomerWithdrawalRequest = async (withdrawalData, staff = {}) 
         throw new Error('Invalid withdrawal request amount');
     }
 
+    const payoutMethod = String(withdrawalData.payoutMethod || 'transfer').toLowerCase() === 'cash'
+        ? 'cash'
+        : 'transfer';
     const requestType = String(withdrawalData.requestType || '').toLowerCase();
     const isFreeToWithdrawRequest = requestType === 'free_to_withdraw' || /free\s*to\s*withdraw/i.test(withdrawalData.package || '');
 
     if (isFreeToWithdrawRequest) {
-        const settlementBankDetails = await resolveAndSaveCustomerSettlementBankDetails(withdrawalData.customerId, withdrawalData);
+        const settlementBankDetails = payoutMethod === 'transfer'
+            ? await resolveAndSaveCustomerSettlementBankDetails(withdrawalData.customerId, withdrawalData)
+            : {};
         const account = await Account.findOne({
             _id: withdrawalData.accountTypeId,
             customerId: withdrawalData.customerId,
@@ -134,14 +142,19 @@ const createStaffCustomerWithdrawalRequest = async (withdrawalData, staff = {}) 
             packageNumber: account.accountNumber,
             branchId: account.branchId,
             package: 'Free To Withdraw',
-            channelOfWithdrawal: 'Free To Withdraw Request',
+            channelOfWithdrawal: payoutMethod === 'cash' ? 'Cash Free To Withdraw Request' : 'Free To Withdraw Request',
+            payoutMethod,
+            requestedBy: staff.staffId,
+            requestedByRole: staff.role,
             date: new Date(),
             amount,
             ...settlementBankDetails,
         });
     }
 
-    const settlementBankDetails = await resolveAndSaveCustomerSettlementBankDetails(withdrawalData.customerId, withdrawalData);
+    const settlementBankDetails = payoutMethod === 'transfer'
+        ? await resolveAndSaveCustomerSettlementBankDetails(withdrawalData.customerId, withdrawalData)
+        : {};
     const dsaccount = await DSAccount.findOne({
         _id: withdrawalData.accountTypeId,
         customerId: withdrawalData.customerId,
@@ -173,7 +186,10 @@ const createStaffCustomerWithdrawalRequest = async (withdrawalData, staff = {}) 
         packageNumber: dsaccount.DSAccountNumber,
         branchId: dsaccount.branchId,
         package: 'DS',
-        channelOfWithdrawal: 'DS Package Withdrawal Request',
+        channelOfWithdrawal: payoutMethod === 'cash' ? 'Cash DS Package Withdrawal Request' : 'DS Package Withdrawal Request',
+        payoutMethod,
+        requestedBy: staff.staffId,
+        requestedByRole: staff.role,
         date: new Date(),
         amount,
         ...settlementBankDetails,
@@ -184,6 +200,7 @@ const statusOrder = {
     pending: 1,
     processing: 2,
     completed: 3,
+    rejected: 4,
 };
 
 const sortRequestsByStatus = (requests) => requests.sort((a, b) => {
@@ -191,6 +208,21 @@ const sortRequestsByStatus = (requests) => requests.sort((a, b) => {
     const statusB = (b.status || '').toLowerCase();
     return (statusOrder[statusA] || 99) - (statusOrder[statusB] || 99);
 });
+
+const getPayoutMethodQuery = (payoutMethod = 'transfer') => {
+    const normalizedMethod = String(payoutMethod || 'transfer').toLowerCase() === 'cash' ? 'cash' : 'transfer';
+    if (normalizedMethod === 'cash') {
+        return { payoutMethod: 'cash' };
+    }
+
+    return {
+        $or: [
+            { payoutMethod: { $exists: false } },
+            { payoutMethod: '' },
+            { payoutMethod: 'transfer' },
+        ],
+    };
+};
 
 const isValidObjectId = (value) => Boolean(value) && mongoose.Types.ObjectId.isValid(String(value));
 
@@ -230,25 +262,33 @@ const enrichWithdrawalRequests = async (requests) => {
     }));
 };
 
-const getCustomersWithdrawalRequest = async () => {
+const getCustomersWithdrawalRequest = async (filters = {}) => {
     try {
-        const requests = await CustomerWithdrawalRequestModel.find({}).lean();
+        const requests = await CustomerWithdrawalRequestModel.find({
+            ...getPayoutMethodQuery(filters.payoutMethod || 'transfer'),
+        }).lean();
         return enrichWithdrawalRequests(requests);
     } catch (error) {
         throw error;
     }
 }
-const getBranchCustomersWithdrawalRequest = async (branchId) => {
+const getBranchCustomersWithdrawalRequest = async (branchId, filters = {}) => {
     try {
-        const requests = await CustomerWithdrawalRequestModel.find({branchId:branchId}).lean();
+        const requests = await CustomerWithdrawalRequestModel.find({
+            branchId:branchId,
+            ...getPayoutMethodQuery(filters.payoutMethod || 'transfer'),
+        }).lean();
         return enrichWithdrawalRequests(requests);
     } catch (error) {
         throw error;
     }
 }
-const getRepCustomersWithdrawalRequest = async (repId) => {
+const getRepCustomersWithdrawalRequest = async (repId, filters = {}) => {
     try {
-        const requests = await CustomerWithdrawalRequestModel.find({accountManagerId:repId}).lean();
+        const requests = await CustomerWithdrawalRequestModel.find({
+            accountManagerId:repId,
+            ...getPayoutMethodQuery(filters.payoutMethod || 'transfer'),
+        }).lean();
         return enrichWithdrawalRequests(requests);
     } catch (error) {
         throw error;
@@ -262,6 +302,152 @@ const getCustomersWithdrawalRequestForCustomer = async (customerId) => {
         throw error;
     }
 }
+const completeWithdrawalRequestDebit = async (currentRequest, adminId) => {
+    const amount = Number(currentRequest.amount || 0);
+    const shouldDebitAvailableBalance = /free\s*to\s*withdraw/i.test(currentRequest.package || '');
+    const shouldDebitDSPackage = String(currentRequest.package || '').toLowerCase() === 'ds';
+
+    if (shouldDebitAvailableBalance) {
+        const account = await Account.findOne({
+            _id: currentRequest.accountTypeId,
+            customerId: currentRequest.customerId,
+        });
+
+        if (!account) {
+            throw new Error('Customer account not found for this request');
+        }
+
+        const availableBalance = Number(account.availableBalance || 0);
+        if (amount <= 0) {
+            throw new Error('Invalid withdrawal request amount');
+        }
+
+        if (amount > availableBalance) {
+            throw new Error(`Insufficient available balance. Available: ₦${availableBalance.toLocaleString()}, Requested: ₦${amount.toLocaleString()}`);
+        }
+
+        const newAvailableBalance = availableBalance - amount;
+
+        await AccountTransaction.create({
+            accountNumber: account.accountNumber,
+            customerId: currentRequest.customerId,
+            amount,
+            balance: newAvailableBalance,
+            createdBy: adminId,
+            transactionOwnerId: adminId,
+            narration: 'Withdrawal',
+            accountTypeId: account._id.toString(),
+            accountManagerId: account.accountManagerId || currentRequest.accountManagerId,
+            branchId: account.branchId || currentRequest.branchId,
+            date: formatTransactionDate(),
+            package: 'Account',
+            direction: 'Debit',
+        });
+
+        await Account.findByIdAndUpdate(account._id, {
+            $set: {
+                availableBalance: newAvailableBalance,
+                ledgerBalance: Number(account.ledgerBalance || 0) - amount,
+            },
+        });
+    }
+
+    if (shouldDebitDSPackage) {
+        const dsaccount = await DSAccount.findOne({
+            _id: currentRequest.accountTypeId,
+            customerId: currentRequest.customerId,
+        });
+
+        if (!dsaccount) {
+            throw new Error('Customer DS package not found for this request');
+        }
+
+        if (dsaccount.status === 'closed') {
+            throw new Error('This account has been closed');
+        }
+
+        if (amount <= 0) {
+            throw new Error('Invalid withdrawal request amount');
+        }
+
+        if (amount > Number(dsaccount.totalContribution || 0)) {
+            throw new Error(`Insufficient DS package balance. Available: ₦${Number(dsaccount.totalContribution || 0).toLocaleString()}, Requested: ₦${amount.toLocaleString()}`);
+        }
+
+        const account = await Account.findOne({ accountNumber: dsaccount.accountNumber });
+        if (!account) {
+            throw new Error('Account not found for ledger update');
+        }
+
+        const newBalance = Number(dsaccount.totalContribution || 0) - amount;
+
+        await AccountTransaction.create({
+            accountNumber: dsaccount.accountNumber,
+            customerId: currentRequest.customerId,
+            amount,
+            balance: newBalance,
+            createdBy: adminId,
+            transactionOwnerId: adminId,
+            narration: 'DS package withdrawal request paid',
+            accountTypeId: dsaccount._id.toString(),
+            accountManagerId: dsaccount.accountManagerId || currentRequest.accountManagerId,
+            branchId: dsaccount.branchId || currentRequest.branchId,
+            date: formatTransactionDate(),
+            package: 'DS',
+            direction: 'Debit',
+        });
+
+        if (newBalance > 0) {
+            await AccountTransaction.create({
+                accountNumber: dsaccount.accountNumber,
+                customerId: currentRequest.customerId,
+                amount: newBalance,
+                balance: 0,
+                createdBy: adminId,
+                transactionOwnerId: adminId,
+                narration: 'Moved',
+                accountTypeId: dsaccount._id.toString(),
+                accountManagerId: dsaccount.accountManagerId || currentRequest.accountManagerId,
+                branchId: dsaccount.branchId || currentRequest.branchId,
+                date: formatTransactionDate(),
+                package: 'DS',
+                direction: 'Moved',
+            });
+
+            await AccountTransaction.create({
+                accountNumber: account.accountNumber,
+                customerId: currentRequest.customerId,
+                amount: newBalance,
+                balance: Number(account.availableBalance || 0) + newBalance,
+                createdBy: adminId,
+                transactionOwnerId: adminId,
+                narration: 'From DS account',
+                accountTypeId: account._id.toString(),
+                accountManagerId: account.accountManagerId || currentRequest.accountManagerId,
+                branchId: account.branchId || currentRequest.branchId,
+                date: formatTransactionDate(),
+                package: 'DS',
+                direction: 'Transfer',
+            });
+        }
+
+        await Account.findByIdAndUpdate(account._id, {
+            $set: {
+                availableBalance: Number(account.availableBalance || 0) + newBalance,
+                ledgerBalance: Number(account.ledgerBalance || 0) - amount,
+            },
+        });
+
+        await DSAccount.findByIdAndUpdate(dsaccount._id, {
+            $set: {
+                hasBeenCharged: 'false',
+                totalContribution: 0,
+                totalCount: 0,
+            },
+        });
+    }
+};
+
   const updateCustomerWithdrawalRequestStatus = async (details) => {
     const { withdrawalRequestId, adminId, staff } = details;
     try {
@@ -281,153 +467,24 @@ const getCustomersWithdrawalRequestForCustomer = async (customerId) => {
         // Determine the new status based on current status
         const currentStatus = (currentRequest.status || '').toLowerCase();
 
-        if (currentStatus === 'pending') {
+        const payoutMethod = String(currentRequest.payoutMethod || 'transfer').toLowerCase() === 'cash'
+            ? 'cash'
+            : 'transfer';
+
+        if (currentStatus === 'pending' && payoutMethod === 'cash') {
+            if (!['Admin', 'Manager'].includes(staff?.role)) {
+                throw new Error('Only admin or manager can complete cash withdrawal requests');
+            }
+            await completeWithdrawalRequestDebit(currentRequest, adminId);
+            newStatus = 'completed';
+        } else if (currentStatus === 'pending') {
             newStatus = 'processing';
         } else if (currentStatus === 'processing') {
-            const amount = Number(currentRequest.amount || 0);
-            const shouldDebitAvailableBalance = /free\s*to\s*withdraw/i.test(currentRequest.package || '');
-            const shouldDebitDSPackage = String(currentRequest.package || '').toLowerCase() === 'ds';
-
-            if (shouldDebitAvailableBalance) {
-                const account = await Account.findOne({
-                    _id: currentRequest.accountTypeId,
-                    customerId: currentRequest.customerId,
-                });
-
-                if (!account) {
-                    throw new Error('Customer account not found for this request');
-                }
-
-                const availableBalance = Number(account.availableBalance || 0);
-                if (amount <= 0) {
-                    throw new Error('Invalid withdrawal request amount');
-                }
-
-                if (amount > availableBalance) {
-                    throw new Error(`Insufficient available balance. Available: ₦${availableBalance.toLocaleString()}, Requested: ₦${amount.toLocaleString()}`);
-                }
-
-                const newAvailableBalance = availableBalance - amount;
-
-                await AccountTransaction.create({
-                    accountNumber: account.accountNumber,
-                    customerId: currentRequest.customerId,
-                    amount,
-                    balance: newAvailableBalance,
-                    createdBy: adminId,
-                    transactionOwnerId: adminId,
-                    narration: 'Withdrawal',
-                    accountTypeId: account._id.toString(),
-                    accountManagerId: account.accountManagerId || currentRequest.accountManagerId,
-                    branchId: account.branchId || currentRequest.branchId,
-                    date: formatTransactionDate(),
-                    package: 'Account',
-                    direction: 'Debit',
-                });
-
-                await Account.findByIdAndUpdate(account._id, {
-                    $set: {
-                        availableBalance: newAvailableBalance,
-                        ledgerBalance: Number(account.ledgerBalance || 0) - amount,
-                    },
-                });
+            if (staff?.role === 'Manager' && payoutMethod !== 'cash') {
+                throw new Error('Only admin can complete withdrawal requests');
             }
 
-            if (shouldDebitDSPackage) {
-                const dsaccount = await DSAccount.findOne({
-                    _id: currentRequest.accountTypeId,
-                    customerId: currentRequest.customerId,
-                });
-
-                if (!dsaccount) {
-                    throw new Error('Customer DS package not found for this request');
-                }
-
-                if (dsaccount.status === 'closed') {
-                    throw new Error('This account has been closed');
-                }
-
-                if (amount <= 0) {
-                    throw new Error('Invalid withdrawal request amount');
-                }
-
-                if (amount > Number(dsaccount.totalContribution || 0)) {
-                    throw new Error(`Insufficient DS package balance. Available: ₦${Number(dsaccount.totalContribution || 0).toLocaleString()}, Requested: ₦${amount.toLocaleString()}`);
-                }
-
-                const account = await Account.findOne({ accountNumber: dsaccount.accountNumber });
-                if (!account) {
-                    throw new Error('Account not found for ledger update');
-                }
-
-                const newBalance = Number(dsaccount.totalContribution || 0) - amount;
-
-                await AccountTransaction.create({
-                    accountNumber: dsaccount.accountNumber,
-                    customerId: currentRequest.customerId,
-                    amount,
-                    balance: newBalance,
-                    createdBy: adminId,
-                    transactionOwnerId: adminId,
-                    narration: 'DS package withdrawal request paid',
-                    accountTypeId: dsaccount._id.toString(),
-                    accountManagerId: dsaccount.accountManagerId || currentRequest.accountManagerId,
-                    branchId: dsaccount.branchId || currentRequest.branchId,
-                    date: formatTransactionDate(),
-                    package: 'DS',
-                    direction: 'Debit',
-                });
-
-                if (newBalance > 0) {
-                    await AccountTransaction.create({
-                        accountNumber: dsaccount.accountNumber,
-                        customerId: currentRequest.customerId,
-                        amount: newBalance,
-                        balance: 0,
-                        createdBy: adminId,
-                        transactionOwnerId: adminId,
-                        narration: 'Moved',
-                        accountTypeId: dsaccount._id.toString(),
-                        accountManagerId: dsaccount.accountManagerId || currentRequest.accountManagerId,
-                        branchId: dsaccount.branchId || currentRequest.branchId,
-                        date: formatTransactionDate(),
-                        package: 'DS',
-                        direction: 'Moved',
-                    });
-
-                    await AccountTransaction.create({
-                        accountNumber: account.accountNumber,
-                        customerId: currentRequest.customerId,
-                        amount: newBalance,
-                        balance: Number(account.availableBalance || 0) + newBalance,
-                        createdBy: adminId,
-                        transactionOwnerId: adminId,
-                        narration: 'From DS account',
-                        accountTypeId: account._id.toString(),
-                        accountManagerId: account.accountManagerId || currentRequest.accountManagerId,
-                        branchId: account.branchId || currentRequest.branchId,
-                        date: formatTransactionDate(),
-                        package: 'DS',
-                        direction: 'Transfer',
-                    });
-                }
-
-                await Account.findByIdAndUpdate(account._id, {
-                    $set: {
-                        availableBalance: Number(account.availableBalance || 0) + newBalance,
-                        ledgerBalance: Number(account.ledgerBalance || 0) - amount,
-                    },
-                });
-
-                await DSAccount.findByIdAndUpdate(dsaccount._id, {
-                    $set: {
-                        hasBeenCharged: 'false',
-                        totalContribution: 0,
-                        totalCount: 0,
-                    },
-                });
-            }
-
+            await completeWithdrawalRequestDebit(currentRequest, adminId);
             newStatus = 'completed';
         } else {
             throw new Error(`Cannot update from current status: ${currentRequest.status}`);
@@ -436,7 +493,14 @@ const getCustomersWithdrawalRequestForCustomer = async (customerId) => {
         // Update the status
         const updatedWithdrawalRequest = await CustomerWithdrawalRequestModel.findOneAndUpdate(
             { _id:withdrawalRequestId },
-            { $set: { status: newStatus } },
+            { $set: {
+                status: newStatus,
+                ...(newStatus === 'completed' ? {
+                    completedBy: adminId,
+                    completedByRole: staff?.role || '',
+                    completedAt: new Date(),
+                } : {}),
+            } },
             { new: true }
         );
 
@@ -450,11 +514,54 @@ const getCustomersWithdrawalRequestForCustomer = async (customerId) => {
     }
 };
 
+  const rejectCustomerWithdrawalRequest = async (details) => {
+    const { withdrawalRequestId, adminId, staff, rejectionReason = '' } = details;
+    try {
+        if (staff?.role !== 'Admin') {
+            throw new Error('Only admin can reject withdrawal requests');
+        }
+
+        const currentRequest = await CustomerWithdrawalRequestModel.findById({ _id: withdrawalRequestId });
+
+        if (!currentRequest) {
+            throw new Error('Withdrawal request not found');
+        }
+
+        const currentStatus = String(currentRequest.status || '').toLowerCase();
+        if (!['pending', 'processing'].includes(currentStatus)) {
+            throw new Error(`Cannot reject from current status: ${currentRequest.status}`);
+        }
+
+        const updatedWithdrawalRequest = await CustomerWithdrawalRequestModel.findOneAndUpdate(
+            { _id: withdrawalRequestId },
+            {
+                $set: {
+                    status: 'rejected',
+                    rejectedBy: adminId,
+                    rejectedByRole: staff?.role || '',
+                    rejectedAt: new Date(),
+                    rejectionReason: String(rejectionReason || '').trim(),
+                },
+            },
+            { new: true }
+        );
+
+        return {
+            success: true,
+            message: 'Withdrawal request rejected successfully',
+            updatedWithdrawalRequest,
+        };
+    } catch (error) {
+        throw new Error(`${error.message}`);
+    }
+};
+
 module.exports = {
     CustomerWithdrawalRequest,
     createStaffCustomerWithdrawalRequest,
     getCustomersWithdrawalRequest,
     updateCustomerWithdrawalRequestStatus,
+    rejectCustomerWithdrawalRequest,
     getBranchCustomersWithdrawalRequest,
     getCustomersWithdrawalRequestForCustomer,
     getRepCustomersWithdrawalRequest

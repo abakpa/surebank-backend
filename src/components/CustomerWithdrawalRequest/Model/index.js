@@ -35,6 +35,38 @@ const customerWithdrawalRequestSchema = new mongoose.Schema({
     type: String, 
     required: true
   },
+  payoutMethod: {
+    type: String,
+    enum: ['transfer', 'cash'],
+    default: 'transfer',
+  },
+  requestedBy: {
+    type: String,
+  },
+  requestedByRole: {
+    type: String,
+  },
+  completedBy: {
+    type: String,
+  },
+  completedByRole: {
+    type: String,
+  },
+  completedAt: {
+    type: Date,
+  },
+  rejectedBy: {
+    type: String,
+  },
+  rejectedByRole: {
+    type: String,
+  },
+  rejectedAt: {
+    type: Date,
+  },
+  rejectionReason: {
+    type: String,
+  },
   bankName: { 
     type: String, 
   },
