@@ -15,6 +15,7 @@ router.get('/reports/closed-legacy', staffAuth, adminOnly, SBAccountController.g
 router.get('/customer/:SBAccountNumber/items/:itemId/receipt', customerAuth, SBAccountController.getCustomerSBAccountItemReceipt);
 router.get('/:SBAccountNumber/items/:itemId/receipt', staffAuth, SBAccountController.getSBAccountItemReceipt);
 router.put('/:SBAccountNumber/items/:itemId/costprice', staffAuth, adminOnly, SBAccountController.updateItemCostPrice);
+router.put('/:SBAccountNumber/items/:itemId/selling-price', staffAuth, adminOnly, SBAccountController.updateItemSellingPrice);
 router.post('/:SBAccountNumber/items/:itemId/mark-delivered', staffAuth, SBAccountController.markItemDelivered);
 router.post('/:SBAccountNumber/items/:itemId/customer-request', staffAuth, SBAccountController.requestItemFromWallet);
 router.get('/:id',staffAuth, SBAccountController.getCustomerSBAccountById);

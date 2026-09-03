@@ -100,6 +100,8 @@ const customerWithdrawalRequestSchema = new mongoose.Schema({
 {timestamps:true}
 );
 
+customerWithdrawalRequestSchema.index({ customerId: 1, accountTypeId: 1, status: 1 });
+
 const CustomerWithdrawalRequest = mongoose.model('CustomerWithdrawalRequest', customerWithdrawalRequestSchema);
 
 module.exports = CustomerWithdrawalRequest;

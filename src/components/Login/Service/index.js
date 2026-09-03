@@ -2,40 +2,74 @@ const Customer = require('../../Customer/Model/index');
 const Staff = require('../../Staff/Model/index');
 const Login = require('../Model/index')
 const AccountTransaction = require('../../AccountTransaction/Model/index');
+const Branch = require('../../Branch/Model/index');
 const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken')
 require('dotenv').config()
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(String(value || ''));
+const SB_PURCHASE_DIRECTIONS = ['Debit', 'Purchased', 'Bought', 'Delivered'];
 
-const buildCustomerUsageReport = async (query = {}) => {
+const buildTransactionMatch = (query = {}, periodStart = null) => {
+    const match = {
+      ...query,
+      $or: [
+        { package: 'DS' },
+        {
+          package: 'SB',
+          direction: { $in: SB_PURCHASE_DIRECTIONS },
+          narration: { $not: /^Reversed payment reservation for changed product:/i }
+        }
+      ],
+    };
+
+    if (periodStart) {
+      match.createdAt = { $gte: periodStart };
+    }
+
+    return match;
+};
+
+const buildCustomerUsageReport = async (query = {}, options = {}) => {
+    const includeTransactionCustomers = options.includeTransactionCustomers === true;
     const periodStart = new Date();
     periodStart.setDate(periodStart.getDate() - 30);
 
-    const logins = await Login.find(query)
-      .populate({
-          path: 'branchId',
-          model: 'Branch',
-      })
-      .populate({
-          path: 'customerId',
-          model: 'Customer',
-      })
-      .lean();
+    const [logins, transactionCustomers] = await Promise.all([
+      Login.find(query)
+        .populate({
+            path: 'branchId',
+            model: 'Branch',
+        })
+        .populate({
+            path: 'customerId',
+            model: 'Customer',
+        })
+        .lean(),
+      includeTransactionCustomers
+        ? AccountTransaction.aggregate([
+            { $match: buildTransactionMatch(query) },
+            { $group: { _id: '$customerId' } }
+          ])
+        : Promise.resolve([])
+    ]);
 
-    const customerIds = logins
-      .map((login) => login.customerId?._id?.toString() || login.customerId?.toString())
-      .filter(Boolean);
+    const customerIds = [...new Set([
+      ...logins
+        .map((login) => login.customerId?._id?.toString() || login.customerId?.toString())
+        .filter(Boolean),
+      ...transactionCustomers
+        .map((item) => item._id?.toString())
+        .filter(Boolean),
+    ])];
 
-    const staffIds = [...new Set(logins
-      .map((login) => login.accountManagerId?.toString())
-      .filter((id) => id && isValidObjectId(id)))];
-
-    const [dsTotals, sbTotals, periodDsTotals, periodSbTotals, staffList] = await Promise.all([
+    const [customers, dsTotals, sbTotals, periodDsTotals, periodSbTotals] = await Promise.all([
+      Customer.find({ _id: { $in: customerIds.filter((id) => isValidObjectId(id)) } }).lean(),
       AccountTransaction.aggregate([
         {
           $match: {
+            ...query,
             customerId: { $in: customerIds },
             package: 'DS',
           }
@@ -60,9 +94,10 @@ const buildCustomerUsageReport = async (query = {}) => {
       AccountTransaction.aggregate([
         {
           $match: {
+            ...query,
             customerId: { $in: customerIds },
             package: 'SB',
-            direction: { $in: ['Debit', 'Purchased', 'Bought', 'Delivered'] },
+            direction: { $in: SB_PURCHASE_DIRECTIONS },
             narration: { $not: /^Reversed payment reservation for changed product:/i }
           }
         },
@@ -77,6 +112,7 @@ const buildCustomerUsageReport = async (query = {}) => {
       AccountTransaction.aggregate([
         {
           $match: {
+            ...query,
             customerId: { $in: customerIds },
             package: 'DS',
             createdAt: { $gte: periodStart },
@@ -102,9 +138,10 @@ const buildCustomerUsageReport = async (query = {}) => {
       AccountTransaction.aggregate([
         {
           $match: {
+            ...query,
             customerId: { $in: customerIds },
             package: 'SB',
-            direction: { $in: ['Debit', 'Purchased', 'Bought', 'Delivered'] },
+            direction: { $in: SB_PURCHASE_DIRECTIONS },
             narration: { $not: /^Reversed payment reservation for changed product:/i },
             createdAt: { $gte: periodStart },
           }
@@ -116,8 +153,42 @@ const buildCustomerUsageReport = async (query = {}) => {
             transactions: { $sum: 1 }
           }
         }
-      ]),
-      Staff.find({ _id: { $in: staffIds } }).select('_id firstName lastName role branchId').lean()
+      ])
+    ]);
+
+    const loginMap = new Map(logins.map((login) => {
+      const customerId = login.customerId?._id?.toString() || login.customerId?.toString();
+      return [customerId, login];
+    }));
+    const customerMap = new Map(customers.map((customer) => [customer._id.toString(), customer]));
+    logins.forEach((login) => {
+      const customerId = login.customerId?._id?.toString() || login.customerId?.toString();
+      if (customerId && login.customerId?._id && !customerMap.has(customerId)) {
+        customerMap.set(customerId, login.customerId);
+      }
+    });
+
+    const branchIds = [...new Set([
+      ...logins
+        .map((login) => login.branchId?._id?.toString() || login.branchId?.toString())
+        .filter((id) => id && isValidObjectId(id)),
+      ...Array.from(customerMap.values())
+        .map((customer) => customer.branchId?.toString())
+        .filter((id) => id && isValidObjectId(id)),
+    ])];
+
+    const staffIds = [...new Set([
+      ...logins
+        .map((login) => login.accountManagerId?.toString())
+        .filter((id) => id && isValidObjectId(id)),
+      ...Array.from(customerMap.values())
+        .map((customer) => customer.accountManagerId?.toString())
+        .filter((id) => id && isValidObjectId(id)),
+    ])];
+
+    const [staffList, branchList] = await Promise.all([
+      Staff.find({ _id: { $in: staffIds } }).select('_id firstName lastName role branchId').lean(),
+      Branch.find({ _id: { $in: branchIds } }).select('_id name address branchKey').lean()
     ]);
 
     const dsTotalMap = new Map(dsTotals.map((item) => [item._id?.toString(), item]));
@@ -125,14 +196,19 @@ const buildCustomerUsageReport = async (query = {}) => {
     const periodDsTotalMap = new Map(periodDsTotals.map((item) => [item._id?.toString(), item]));
     const periodSbTotalMap = new Map(periodSbTotals.map((item) => [item._id?.toString(), item]));
     const staffMap = new Map(staffList.map((staff) => [staff._id.toString(), staff]));
+    const branchMap = new Map(branchList.map((branch) => [branch._id.toString(), branch]));
 
-    return logins.map((login) => {
-      const customerId = login.customerId?._id?.toString() || login.customerId?.toString();
+    return customerIds.map((customerId) => {
+      const login = loginMap.get(customerId) || {};
+      const customer = customerMap.get(customerId) || null;
       const ds = dsTotalMap.get(customerId) || {};
       const sb = sbTotalMap.get(customerId) || {};
       const periodDs = periodDsTotalMap.get(customerId) || {};
       const periodSb = periodSbTotalMap.get(customerId) || {};
-      const staff = staffMap.get(login.accountManagerId?.toString()) || null;
+      const accountManagerId = login.accountManagerId?.toString() || customer?.accountManagerId?.toString();
+      const branchId = login.branchId?._id?.toString() || login.branchId?.toString() || customer?.branchId?.toString();
+      const staff = staffMap.get(accountManagerId) || null;
+      const branch = login.branchId?._id ? login.branchId : branchMap.get(branchId) || customer?.branchId || null;
       const dsCredit = Number(ds.credit || 0);
       const dsDebit = Number(ds.debit || 0);
       const dsNet = Math.max(0, dsCredit - dsDebit);
@@ -144,6 +220,10 @@ const buildCustomerUsageReport = async (query = {}) => {
 
       return {
         ...login,
+        _id: login._id || customerId,
+        customerId: customer || login.customerId || customerId,
+        branchId: branch,
+        accountManagerId,
         accountManager: staff ? {
           _id: staff._id,
           firstName: staff.firstName,
@@ -342,7 +422,7 @@ const customerLogin = async (phone, password) => {
 };
 const getCustomers = async () =>{
     try {
-        return await buildCustomerUsageReport({});
+        return await buildCustomerUsageReport({}, { includeTransactionCustomers: true });
     } catch (error) {
         throw error;
     }

@@ -344,6 +344,21 @@ const getItemByIdOrIndex = (items = [], itemId) => {
   return null;
 };
 
+const getItemIndexByIdOrIndex = (items = [], itemId) => {
+  if (!Array.isArray(items)) return -1;
+
+  const decodedItemId = decodeURIComponent(String(itemId));
+  const numericItemIndex = Number(decodedItemId);
+  if (Number.isInteger(numericItemIndex) && numericItemIndex >= 0 && numericItemIndex < items.length) {
+    return numericItemIndex;
+  }
+
+  return items.findIndex((item) =>
+    String(item?._id || '') === decodedItemId ||
+    String(item?.productId || '') === decodedItemId
+  );
+};
+
 const escapeReceiptRegex = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const findReceiptPaymentTransaction = async ({ accountTypeId, productName, itemId }) => {
@@ -1042,6 +1057,115 @@ const updateSBAccountItemCostPrice = async ({ SBAccountNumber, itemId, costPrice
   return { success: true, message: 'Item cost price updated successfully', sbAccount: sbaccount };
 };
 
+const updateLinkedOrderItemSellingPrice = async ({ SBAccountNumber, itemId, subtotal }) => {
+  const order = await EcommerceOrder.findOne({
+    SBAccountNumber,
+    status: { $ne: 'cancelled' }
+  }).sort({ updatedAt: -1, createdAt: -1 });
+
+  if (!order || !Array.isArray(order.items) || order.items.length === 0) {
+    return null;
+  }
+
+  const itemIndex = getItemIndexByIdOrIndex(order.items, itemId);
+  if (itemIndex === -1) {
+    return null;
+  }
+
+  const item = order.items[itemIndex];
+  const quantity = Math.max(1, Number(item.quantity || 1));
+  const unitPrice = Math.round((subtotal / quantity) * 100) / 100;
+
+  item.price = unitPrice;
+  item.subtotal = subtotal;
+  item.profitAmount = Math.max(0, subtotal - Number(item.costSubtotal || 0));
+  item.paymentStatus = Number(item.paidAmount || 0) >= subtotal
+    ? 'paid'
+    : Number(item.paidAmount || 0) > 0
+      ? 'partial'
+      : 'unpaid';
+
+  const totalAmount = order.items.reduce((sum, orderItem) => sum + Number(orderItem.subtotal || 0), 0);
+  const totalPaid = order.items.reduce((sum, orderItem) => sum + Number(orderItem.paidAmount || 0), 0);
+  const remainingBalance = Math.max(0, totalAmount - totalPaid);
+
+  order.totalAmount = totalAmount;
+  order.installmentPlan = order.installmentPlan || {};
+  order.installmentPlan.frequency = 'flexible';
+  order.installmentPlan.duration = 0;
+  order.installmentPlan.amountPerPeriod = 0;
+  order.installmentPlan.totalPaid = totalPaid;
+  order.installmentPlan.remainingBalance = remainingBalance;
+  order.installmentPlan.creditBalance = Math.max(0, totalPaid - totalAmount);
+  order.installmentPlan.nextPaymentDate = null;
+  order.paymentStatus = remainingBalance <= 0 ? 'paid' : totalPaid > 0 ? 'partial' : 'unpaid';
+
+  if (!['delivered', 'completed', 'cancelled'].includes(order.status || '')) {
+    order.status = remainingBalance <= 0 ? 'paid' : totalPaid > 0 ? 'partially_paid' : 'pending';
+  }
+
+  return await order.save();
+};
+
+const updateSBAccountItemSellingPrice = async ({ SBAccountNumber, itemId, sellingPrice, editedBy }) => {
+  if (!SBAccountNumber) {
+    throw new Error('Invalid account number');
+  }
+
+  const sbaccount = await SBAccount.findOne({ SBAccountNumber });
+  if (!sbaccount) {
+    throw new Error('SBAccount not found');
+  }
+  if (!Array.isArray(sbaccount.items) || sbaccount.items.length === 0) {
+    throw new Error('This SB account does not have item details');
+  }
+
+  const itemIndex = getItemIndexByIdOrIndex(sbaccount.items, itemId);
+  if (itemIndex === -1) {
+    throw new Error('SB account item not found');
+  }
+  if (['delivered', 'completed'].includes(sbaccount.items[itemIndex].fulfillmentStatus)) {
+    throw new Error('Delivered item selling price cannot be changed');
+  }
+
+  const nextSubtotal = Number(sellingPrice || 0);
+  if (!Number.isFinite(nextSubtotal) || nextSubtotal <= 0) {
+    throw new Error('Enter a valid selling price');
+  }
+
+  const item = sbaccount.items[itemIndex];
+  const quantity = Math.max(1, Number(item.quantity || 1));
+  const nextUnitPrice = Math.round((nextSubtotal / quantity) * 100) / 100;
+  const paidAmount = Number(item.paidAmount || 0);
+  const costSubtotal = Number(item.costSubtotal || 0);
+
+  if (nextSubtotal < paidAmount) {
+    throw new Error('Selling price cannot be less than the amount already paid for this item');
+  }
+  if (costSubtotal > 0 && nextSubtotal < costSubtotal) {
+    throw new Error('Selling price cannot be less than approved cost price');
+  }
+
+  sbaccount.items[itemIndex].price = nextUnitPrice;
+  sbaccount.items[itemIndex].subtotal = nextSubtotal;
+  sbaccount.items[itemIndex].profitAmount = Math.max(0, nextSubtotal - costSubtotal);
+  sbaccount.sellingPrice = sbaccount.items.reduce((sum, orderItem) => sum + Number(orderItem.subtotal || 0), 0);
+  refreshSBAccountCostFromItems(sbaccount);
+  sbaccount.editedBy = editedBy;
+  if (sbaccount.status === 'sold' && Number(sbaccount.balance || 0) < Number(sbaccount.sellingPrice || 0)) {
+    sbaccount.status = 'booked';
+  }
+
+  await sbaccount.save();
+  await updateLinkedOrderItemSellingPrice({
+    SBAccountNumber,
+    itemId,
+    subtotal: nextSubtotal
+  });
+
+  return { success: true, message: 'Item selling price updated successfully', sbAccount: sbaccount };
+};
+
 const getAccountByAccountNumber = async (accountNumber) => {
     return await Account.findOne({ accountNumber });
   };
@@ -1630,6 +1754,7 @@ module.exports = {
     markSBAccountItemDelivered,
     requestSBAccountItemFromWallet,
     updateSBAccountItemCostPrice,
+    updateSBAccountItemSellingPrice,
     getSBAccountItemReceipt,
     getBackofficeProductDeliverySummary,
     updateCostPrice

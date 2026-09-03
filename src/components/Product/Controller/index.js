@@ -81,13 +81,15 @@ const createProduct = async (req, res) => {
 
 const getAllProducts = async (req, res) => {
   try {
-    const { categoryId, subCategoryId, minPrice, maxPrice, search } = req.query;
+    const { categoryId, subCategoryId, minPrice, maxPrice, search, limit, page } = req.query;
     const products = await ProductService.getAllProducts({
       categoryId,
       subCategoryId,
       minPrice: minPrice ? parseFloat(minPrice) : undefined,
       maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
-      search
+      search,
+      limit,
+      page
     });
     res.status(200).json(products);
   } catch (error) {

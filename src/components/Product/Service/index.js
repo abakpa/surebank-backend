@@ -28,6 +28,20 @@ const normalizeNumber = (value, fallback = 0) => {
   return Number.isFinite(number) ? number : fallback;
 };
 
+const normalizeLimit = (value, fallback = 0) => {
+  const limit = Number.parseInt(value, 10);
+  if (!Number.isFinite(limit) || limit <= 0) return fallback;
+  return Math.min(limit, 100);
+};
+
+const normalizePage = (value) => {
+  const page = Number.parseInt(value, 10);
+  if (!Number.isFinite(page) || page <= 0) return 1;
+  return page;
+};
+
+const escapeRegex = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const assertCostNotAbovePrice = (costPrice, price, label = 'Product') => {
   const nextCostPrice = normalizeNumber(costPrice);
   const nextPrice = normalizeNumber(price);
@@ -182,15 +196,8 @@ const getVariationNameById = (product, variationId = '') => {
   return variation?.name || '';
 };
 
-const applyBranchStockToProduct = async (product) => {
-  if (!product) return product;
-
+const applyBranchStockRowsToProduct = (product, stockRows = [], branchNameById = new Map()) => {
   const productObject = typeof product.toObject === 'function' ? product.toObject() : { ...product };
-  const [stockRows, branches] = await Promise.all([
-    ProductBranchStock.find({ productId: productObject._id.toString() }).lean(),
-    Branch.find({ isActive: { $ne: false } }).select('_id name').lean()
-  ]);
-  const branchNameById = new Map(branches.map((branch) => [branch._id.toString(), branch.name]));
   const hasBranchStockRows = stockRows.length > 0;
   const totalStock = stockRows.reduce((total, row) => total + Number(row.quantity || 0), 0);
 
@@ -226,8 +233,46 @@ const applyBranchStockToProduct = async (product) => {
   return productObject;
 };
 
+const applyBranchStockToProduct = async (product) => {
+  if (!product) return product;
+
+  const productId = String(product._id || '');
+  const [stockRows, branches] = await Promise.all([
+    ProductBranchStock.find({ productId }).lean(),
+    Branch.find({ isActive: { $ne: false } }).select('_id name').lean()
+  ]);
+  const branchNameById = new Map(branches.map((branch) => [branch._id.toString(), branch.name]));
+
+  return applyBranchStockRowsToProduct(product, stockRows, branchNameById);
+};
+
 const applyBranchStockToProducts = async (products) => {
-  return await Promise.all(products.map((product) => applyBranchStockToProduct(product)));
+  if (!Array.isArray(products) || products.length === 0) {
+    return [];
+  }
+
+  const productIds = products.map((product) => String(product._id || '')).filter(Boolean);
+  const [stockRows, branches] = await Promise.all([
+    ProductBranchStock.find({ productId: { $in: productIds } }).lean(),
+    Branch.find({ isActive: { $ne: false } }).select('_id name').lean()
+  ]);
+  const stockRowsByProductId = stockRows.reduce((groups, row) => {
+    const productId = String(row.productId || '');
+    if (!groups.has(productId)) {
+      groups.set(productId, []);
+    }
+    groups.get(productId).push(row);
+    return groups;
+  }, new Map());
+  const branchNameById = new Map(branches.map((branch) => [branch._id.toString(), branch.name]));
+
+  return products.map((product) => (
+    applyBranchStockRowsToProduct(
+      product,
+      stockRowsByProductId.get(String(product._id || '')) || [],
+      branchNameById
+    )
+  ));
 };
 
 const recalculateProductStock = async (productId) => {
@@ -442,24 +487,54 @@ const getAllProducts = async (filters = {}) => {
     query.price = { ...query.price, $lte: filters.maxPrice };
   }
 
-  if (filters.search) {
-    query.$or = [
-      { name: { $regex: filters.search, $options: 'i' } },
-      { description: { $regex: filters.search, $options: 'i' } }
-    ];
+  const searchText = String(filters.search || '').trim();
+  if (searchText) {
+    query.name = { $regex: escapeRegex(searchText), $options: 'i' };
   }
 
-  const products = await Product.find(query).sort({ createdAt: -1 });
-  return await applyBranchStockToProducts(products);
+  const page = filters.page ? normalizePage(filters.page) : null;
+  const limit = normalizeLimit(filters.limit, page ? 20 : 0);
+  const productQuery = Product.find(query).sort({ createdAt: -1 }).lean();
+
+  if (page && limit) {
+    productQuery.skip((page - 1) * limit);
+  }
+
+  if (limit) {
+    productQuery.limit(limit);
+  }
+
+  const [products, total] = await Promise.all([
+    productQuery,
+    page ? Product.countDocuments(query) : Promise.resolve(null)
+  ]);
+  const hydratedProducts = await applyBranchStockToProducts(products);
+
+  if (!page) {
+    return hydratedProducts;
+  }
+
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  return {
+    products: hydratedProducts,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages,
+      hasNextPage: page < totalPages,
+      hasPrevPage: page > 1
+    }
+  };
 };
 
 const getAllProductsAdmin = async () => {
-  const products = await Product.find({}).sort({ createdAt: -1 });
+  const products = await Product.find({}).sort({ createdAt: -1 }).lean();
   return await applyBranchStockToProducts(products);
 };
 
 const getProductById = async (productId) => {
-  const product = await Product.findById(productId);
+  const product = await Product.findById(productId).lean();
   if (!product) {
     throw new Error('Product not found');
   }
@@ -467,7 +542,7 @@ const getProductById = async (productId) => {
 };
 
 const getProductsByCategory = async (categoryId) => {
-  const products = await Product.find({ categoryId, isActive: true }).sort({ createdAt: -1 });
+  const products = await Product.find({ categoryId, isActive: true }).sort({ createdAt: -1 }).lean();
   return await applyBranchStockToProducts(products);
 };
 
@@ -581,9 +656,19 @@ const updateProductStock = async (productId, quantity, operation = 'decrease', v
 };
 
 const getFeaturedProducts = async (limit = 8) => {
-  const products = await Product.find({ isActive: true })
+  const products = await Product.find({
+    isActive: true,
+    images: {
+      $elemMatch: {
+        $type: 'string',
+        $ne: '',
+        $not: /^\/uploads\//i
+      }
+    }
+  })
     .sort({ createdAt: -1 })
-    .limit(limit);
+    .limit(normalizeLimit(limit, 8))
+    .lean();
   return await applyBranchStockToProducts(products);
 };
 

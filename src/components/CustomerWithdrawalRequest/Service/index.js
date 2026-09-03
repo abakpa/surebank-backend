@@ -18,6 +18,51 @@ const formatTransactionDate = (date = new Date()) => {
     });
 };
 
+const ACTIVE_REQUEST_STATUSES = ['Pending', 'pending', 'Processing', 'processing'];
+
+const isFreeToWithdrawRequestData = (requestData = {}) => (
+    String(requestData.requestType || '').toLowerCase() === 'free_to_withdraw' ||
+    /free\s*to\s*withdraw/i.test(requestData.package || '')
+);
+
+const getPendingWithdrawalAmount = async ({ customerId, accountTypeId }) => {
+    const result = await CustomerWithdrawalRequestModel.aggregate([
+        {
+            $match: {
+                customerId: String(customerId || ''),
+                accountTypeId: String(accountTypeId || ''),
+                status: { $in: ACTIVE_REQUEST_STATUSES },
+            },
+        },
+        {
+            $group: {
+                _id: null,
+                total: { $sum: '$amount' },
+            },
+        },
+    ]);
+
+    return Number(result[0]?.total || 0);
+};
+
+const assertFreeToWithdrawRequestBalance = async ({ account, amount }) => {
+    const availableBalance = Number(account?.availableBalance || 0);
+    const pendingAmount = await getPendingWithdrawalAmount({
+        customerId: account?.customerId,
+        accountTypeId: account?._id?.toString(),
+    });
+    const requestableBalance = Math.max(0, availableBalance - pendingAmount);
+
+    if (amount > requestableBalance) {
+        throw new Error(
+            `Insufficient available balance after pending requests. ` +
+            `Available: ₦${requestableBalance.toLocaleString()}, ` +
+            `Pending: ₦${pendingAmount.toLocaleString()}, ` +
+            `Requested: ₦${amount.toLocaleString()}`
+        );
+    }
+};
+
 const CustomerWithdrawalRequest = async (withdrawalData) => {
   const requestData = { ...withdrawalData };
   requestData.payoutMethod = String(requestData.payoutMethod || 'transfer').toLowerCase() === 'cash'
@@ -34,11 +79,25 @@ const CustomerWithdrawalRequest = async (withdrawalData) => {
     Object.assign(requestData, settlementBankDetails);
   }
 
-  await assertNoActiveWithdrawalRequest({
-    customerId: requestData.customerId,
-    accountTypeId: requestData.accountTypeId,
-    packageNumber: requestData.packageNumber,
-  });
+  if (isFreeToWithdrawRequestData(requestData)) {
+    const amount = Number(requestData.amount || 0);
+    const account = await Account.findOne({
+        _id: requestData.accountTypeId,
+        customerId: requestData.customerId,
+    });
+
+    if (!account) {
+        throw new Error('Customer account not found for this request');
+    }
+
+    await assertFreeToWithdrawRequestBalance({ account, amount });
+  } else {
+    await assertNoActiveWithdrawalRequest({
+        customerId: requestData.customerId,
+        accountTypeId: requestData.accountTypeId,
+        packageNumber: requestData.packageNumber,
+    });
+  }
 
   const withdrawalRequest = new CustomerWithdrawalRequestModel(requestData);
   return await withdrawalRequest.save();
@@ -124,15 +183,7 @@ const createStaffCustomerWithdrawalRequest = async (withdrawalData, staff = {}) 
             throw new Error('Customer account not found for this request');
         }
 
-        if (amount > Number(account.availableBalance || 0)) {
-            throw new Error(`Insufficient available balance. Available: ₦${Number(account.availableBalance || 0).toLocaleString()}, Requested: ₦${amount.toLocaleString()}`);
-        }
-
-        await assertNoActiveWithdrawalRequest({
-            customerId: account.customerId,
-            accountTypeId: account._id.toString(),
-            packageNumber: account.accountNumber,
-        });
+        await assertFreeToWithdrawRequestBalance({ account, amount });
 
         return CustomerWithdrawalRequest({
             accountNumber: account.accountNumber,

@@ -192,6 +192,17 @@ const formatSBAccountResponse = (data, requesterRole) => {
           res.status(500).json({ message: error.message });
         }
       }
+      const updateItemSellingPrice = async (req, res) => {
+        try {
+          const editedBy = req.staff.staffId;
+          const { SBAccountNumber, itemId } = req.params;
+          const { sellingPrice } = req.body;
+          const result = await SBAccountService.updateSBAccountItemSellingPrice({ SBAccountNumber, itemId, sellingPrice, editedBy });
+          res.status(200).json(result);
+        } catch (error) {
+          res.status(500).json({ message: error.message });
+        }
+      }
       const getBackofficeProductDeliverySummary = async (req, res) => {
         try {
           const result = await SBAccountService.getBackofficeProductDeliverySummary(req.staff, {
@@ -240,6 +251,7 @@ const formatSBAccountResponse = (data, requesterRole) => {
     markItemDelivered,
     requestItemFromWallet,
     updateItemCostPrice,
+    updateItemSellingPrice,
     getSBAccountItemReceipt,
     getCustomerSBAccountItemReceipt,
     getBackofficeProductDeliverySummary,
