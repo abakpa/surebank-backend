@@ -3,6 +3,10 @@ const Staff = require('../../Staff/Model/index');
 const Login = require('../Model/index')
 const AccountTransaction = require('../../AccountTransaction/Model/index');
 const Branch = require('../../Branch/Model/index');
+const DSAccount = require('../../DSAccount/Model/index');
+const SBAccount = require('../../SBAccount/Model/index');
+const Order = require('../../SBAccount/Model/order');
+const EcommerceOrder = require('../../EcommerceOrder/Model/index');
 const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken')
@@ -31,12 +35,101 @@ const buildTransactionMatch = (query = {}, periodStart = null) => {
     return match;
 };
 
+const getProductItemAmount = (item = {}) => {
+    const subtotal = Number(item.subtotal || 0);
+    if (subtotal > 0) return subtotal;
+    return Number(item.price || 0) * Number(item.quantity || 1);
+};
+
+const isPaidProductItem = (item = {}) => {
+    const amount = getProductItemAmount(item);
+    return item.paymentStatus === 'paid' || (amount > 0 && Number(item.paidAmount || 0) >= amount);
+};
+
+const isPaidProductRecord = (record = {}) => {
+    const hasInstallmentPlan = Boolean(record.installmentPlan);
+    const remainingBalance = Number(record.installmentPlan?.remainingBalance || 0);
+    const totalAmount = Number(record.totalAmount || record.sellingPrice || 0);
+    const paidAmount = Number(record.installmentPlan?.totalPaid || record.balance || 0);
+    return (
+      record.paymentStatus === 'paid' ||
+      ['paid', 'sold', 'completed'].includes(String(record.status || '').toLowerCase()) ||
+      (totalAmount > 0 && ((hasInstallmentPlan && remainingBalance <= 0) || paidAmount >= totalAmount))
+    );
+};
+
+const getPaidProductRecordTotal = (record = {}) => {
+    const items = Array.isArray(record.items) ? record.items : [];
+    if (items.length > 0) {
+      if (isPaidProductRecord(record)) {
+        return items.reduce((total, item) => total + getProductItemAmount(item), 0);
+      }
+
+      return items
+        .filter(isPaidProductItem)
+        .reduce((total, item) => total + getProductItemAmount(item), 0);
+    }
+
+    return isPaidProductRecord(record) ? Number(record.totalAmount || record.sellingPrice || 0) : 0;
+};
+
+const buildPaidProductModelQuery = (query = {}, periodStart = null) => {
+    const modelQuery = { ...query };
+    if (periodStart) {
+      modelQuery.createdAt = { $gte: periodStart };
+    }
+    return modelQuery;
+};
+
+const getPaidProductTotals = async (query = {}, periodStart = null) => {
+    const modelQuery = buildPaidProductModelQuery(query, periodStart);
+    const [orders, sbAccounts, ecommerceOrders] = await Promise.all([
+      Order.find(modelQuery).select('_id customerId sellingPrice status items createdAt').lean(),
+      SBAccount.find(modelQuery).select('_id customerId sellingPrice status balance items SBAccountNumber productDescription createdBy createdAt').lean(),
+      EcommerceOrder.find(modelQuery).select('_id customerId totalAmount status paymentStatus installmentPlan items SBAccountNumber createdAt').lean(),
+    ]);
+
+    const ecommerceSbAccountNumbers = new Set(
+      ecommerceOrders
+        .map((order) => order.SBAccountNumber)
+        .filter(Boolean)
+    );
+
+    const paidProductMap = new Map();
+    const addPaidTotal = (record) => {
+      const customerId = record.customerId?.toString();
+      if (!customerId) return;
+
+      const total = getPaidProductRecordTotal(record);
+      if (total <= 0) return;
+
+      const current = paidProductMap.get(customerId) || { _id: customerId, total: 0, transactions: 0 };
+      current.total += total;
+      current.transactions += 1;
+      paidProductMap.set(customerId, current);
+    };
+
+    orders.forEach(addPaidTotal);
+    ecommerceOrders.forEach(addPaidTotal);
+    sbAccounts
+      .filter((account) => {
+        const isEcommerceDefaultAccount =
+          account.createdBy === 'ECOMMERCE_SYSTEM' &&
+          account.productDescription === 'Default SB Account for e-commerce customers';
+
+        return !ecommerceSbAccountNumbers.has(account.SBAccountNumber) && !isEcommerceDefaultAccount;
+      })
+      .forEach(addPaidTotal);
+
+    return Array.from(paidProductMap.values());
+};
+
 const buildCustomerUsageReport = async (query = {}, options = {}) => {
     const includeTransactionCustomers = options.includeTransactionCustomers === true;
     const periodStart = new Date();
     periodStart.setDate(periodStart.getDate() - 30);
 
-    const [logins, transactionCustomers] = await Promise.all([
+    const [logins, transactionCustomers, paidProductCustomers, dsBalanceCustomers, sbBalanceCustomers] = await Promise.all([
       Login.find(query)
         .populate({
             path: 'branchId',
@@ -52,6 +145,21 @@ const buildCustomerUsageReport = async (query = {}, options = {}) => {
             { $match: buildTransactionMatch(query) },
             { $group: { _id: '$customerId' } }
           ])
+        : Promise.resolve([]),
+      includeTransactionCustomers
+        ? getPaidProductTotals(query)
+        : Promise.resolve([]),
+      includeTransactionCustomers
+        ? DSAccount.aggregate([
+            { $match: query },
+            { $group: { _id: '$customerId' } }
+          ])
+        : Promise.resolve([]),
+      includeTransactionCustomers
+        ? SBAccount.aggregate([
+            { $match: query },
+            { $group: { _id: '$customerId' } }
+          ])
         : Promise.resolve([])
     ]);
 
@@ -62,9 +170,18 @@ const buildCustomerUsageReport = async (query = {}, options = {}) => {
       ...transactionCustomers
         .map((item) => item._id?.toString())
         .filter(Boolean),
+      ...paidProductCustomers
+        .map((item) => item._id?.toString())
+        .filter(Boolean),
+      ...dsBalanceCustomers
+        .map((item) => item._id?.toString())
+        .filter(Boolean),
+      ...sbBalanceCustomers
+        .map((item) => item._id?.toString())
+        .filter(Boolean),
     ])];
 
-    const [customers, dsTotals, sbTotals, periodDsTotals, periodSbTotals] = await Promise.all([
+    const [customers, dsTotals, sbTotals, periodDsTotals, periodSbTotals, dsBalances, sbBalances] = await Promise.all([
       Customer.find({ _id: { $in: customerIds.filter((id) => isValidObjectId(id)) } }).lean(),
       AccountTransaction.aggregate([
         {
@@ -91,24 +208,7 @@ const buildCustomerUsageReport = async (query = {}, options = {}) => {
           }
         }
       ]),
-      AccountTransaction.aggregate([
-        {
-          $match: {
-            ...query,
-            customerId: { $in: customerIds },
-            package: 'SB',
-            direction: { $in: SB_PURCHASE_DIRECTIONS },
-            narration: { $not: /^Reversed payment reservation for changed product:/i }
-          }
-        },
-        {
-          $group: {
-            _id: '$customerId',
-            total: { $sum: '$amount' },
-            transactions: { $sum: 1 }
-          }
-        }
-      ]),
+      getPaidProductTotals({ ...query, customerId: { $in: customerIds } }),
       AccountTransaction.aggregate([
         {
           $match: {
@@ -135,22 +235,34 @@ const buildCustomerUsageReport = async (query = {}, options = {}) => {
           }
         }
       ]),
-      AccountTransaction.aggregate([
+      getPaidProductTotals({ ...query, customerId: { $in: customerIds } }, periodStart),
+      DSAccount.aggregate([
         {
           $match: {
             ...query,
             customerId: { $in: customerIds },
-            package: 'SB',
-            direction: { $in: SB_PURCHASE_DIRECTIONS },
-            narration: { $not: /^Reversed payment reservation for changed product:/i },
-            createdAt: { $gte: periodStart },
           }
         },
         {
           $group: {
             _id: '$customerId',
-            total: { $sum: '$amount' },
-            transactions: { $sum: 1 }
+            balance: { $sum: '$totalContribution' },
+            accounts: { $sum: 1 }
+          }
+        }
+      ]),
+      SBAccount.aggregate([
+        {
+          $match: {
+            ...query,
+            customerId: { $in: customerIds },
+          }
+        },
+        {
+          $group: {
+            _id: '$customerId',
+            balance: { $sum: '$balance' },
+            accounts: { $sum: 1 }
           }
         }
       ])
@@ -195,6 +307,8 @@ const buildCustomerUsageReport = async (query = {}, options = {}) => {
     const sbTotalMap = new Map(sbTotals.map((item) => [item._id?.toString(), item]));
     const periodDsTotalMap = new Map(periodDsTotals.map((item) => [item._id?.toString(), item]));
     const periodSbTotalMap = new Map(periodSbTotals.map((item) => [item._id?.toString(), item]));
+    const dsBalanceMap = new Map(dsBalances.map((item) => [item._id?.toString(), item]));
+    const sbBalanceMap = new Map(sbBalances.map((item) => [item._id?.toString(), item]));
     const staffMap = new Map(staffList.map((staff) => [staff._id.toString(), staff]));
     const branchMap = new Map(branchList.map((branch) => [branch._id.toString(), branch]));
 
@@ -205,6 +319,8 @@ const buildCustomerUsageReport = async (query = {}, options = {}) => {
       const sb = sbTotalMap.get(customerId) || {};
       const periodDs = periodDsTotalMap.get(customerId) || {};
       const periodSb = periodSbTotalMap.get(customerId) || {};
+      const dsBalance = dsBalanceMap.get(customerId) || {};
+      const sbBalance = sbBalanceMap.get(customerId) || {};
       const accountManagerId = login.accountManagerId?.toString() || customer?.accountManagerId?.toString();
       const branchId = login.branchId?._id?.toString() || login.branchId?.toString() || customer?.branchId?.toString();
       const staff = staffMap.get(accountManagerId) || null;
@@ -217,6 +333,8 @@ const buildCustomerUsageReport = async (query = {}, options = {}) => {
       const periodDsDebit = Number(periodDs.debit || 0);
       const periodDsNet = Math.max(0, periodDsCredit - periodDsDebit);
       const periodSbPurchaseTotal = Number(periodSb.total || 0);
+      const dsBalanceTotal = Number(dsBalance.balance || 0);
+      const sbBalanceTotal = Number(sbBalance.balance || 0);
 
       return {
         ...login,
@@ -236,8 +354,13 @@ const buildCustomerUsageReport = async (query = {}, options = {}) => {
           dsCreditTotal: dsCredit,
           dsDebitTotal: dsDebit,
           dsTransactionCount: Number(ds.transactions || 0),
+          dsBalanceTotal,
+          dsAccountCount: Number(dsBalance.accounts || 0),
           sbPurchaseTotal,
           sbTransactionCount: Number(sb.transactions || 0),
+          sbBalanceTotal,
+          sbAccountCount: Number(sbBalance.accounts || 0),
+          balanceCombinedTotal: dsBalanceTotal + sbBalanceTotal,
           combinedTotal: dsNet + sbPurchaseTotal,
           last30Days: {
             dsTotal: periodDsNet,

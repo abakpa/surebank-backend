@@ -489,7 +489,10 @@ const getAllProducts = async (filters = {}) => {
 
   const searchText = String(filters.search || '').trim();
   if (searchText) {
-    query.name = { $regex: escapeRegex(searchText), $options: 'i' };
+    const searchWords = searchText.split(/\s+/).filter(Boolean);
+    query.$and = searchWords.map((word) => ({
+      name: { $regex: escapeRegex(word), $options: 'i' }
+    }));
   }
 
   const page = filters.page ? normalizePage(filters.page) : null;

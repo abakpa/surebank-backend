@@ -571,7 +571,7 @@ async function getAllRepDailySBandDSAccount(date = null, staff) {
 }
 async function getAllRepDSAccountPackage(date = null, staff) {
     const query = {
-      createdAt: buildStrictDailyCreatedAtQuery(date),
+      createdAt: buildCumulativeCreatedAtQuery(date),
       accountManagerId:staff
     };
   
@@ -588,7 +588,7 @@ async function getAllRepDSAccountPackage(date = null, staff) {
   
 async function getAllRepSBAccountPackage(date = null, staff) {
     const query = {
-      createdAt: buildStrictDailyCreatedAtQuery(date),
+      createdAt: buildCumulativeCreatedAtQuery(date),
       accountManagerId:staff
     };
   
