@@ -7,6 +7,10 @@ const SureBankAccount = require('../../../SureBankAccount/Model');
 const Expenditure = require('../../../Expenditure/Model');
 const Staff = require('../../../Staff/Model');
 const Branch = require('../../../Branch/Model');
+const {
+  getSBPackageItemSummary,
+  getSBPackageCountValue,
+} = require('../../utils/sbPackageItemCount');
 
 const normalizeDateInput = (dateInput) => {
   if (dateInput && typeof dateInput === 'object' && !Array.isArray(dateInput)) {
@@ -883,15 +887,13 @@ async function getAllBranchSBAccountPackage(date = null, staff) {
     //   query.branchId = branchId;
     // }
   
-    // Count matching documents
-    const countPackage = await SBAccount.countDocuments(query);
-    return countPackage;
+    return getSBPackageItemSummary(SBAccount, query);
 }
 async function getAllBranchAccountPackage(date = null, staff) {
 const sbPackage = await getAllBranchSBAccountPackage(date,staff)    
 const dsPackage = await getAllBranchDSAccountPackage(date,staff)    
 const fdPackage = await getAllFDPackage(date,staff)    
-const packages = sbPackage + dsPackage + fdPackage
+const packages = getSBPackageCountValue(sbPackage) + dsPackage + fdPackage
     return packages 
 }
 async function getBranchSBAccountIncome(date = null, staff) {

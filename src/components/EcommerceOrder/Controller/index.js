@@ -203,6 +203,32 @@ const replaceInstallmentOrderItem = async (req, res) => {
   }
 };
 
+const updateOrderItemQuantity = async (req, res) => {
+  try {
+    const customerId = req.customer.customerId;
+    const { orderNumber, itemId } = req.params;
+    const quantity = Number(req.body.quantity);
+
+    if (!Number.isFinite(quantity) || quantity < 1) {
+      return res.status(400).json({ message: 'Quantity must be at least 1' });
+    }
+
+    const order = await EcommerceOrderService.updateInstallmentOrderItemQuantity({
+      orderNumber,
+      customerId,
+      itemId,
+      quantity
+    });
+
+    res.status(200).json({
+      message: 'Order item quantity updated successfully',
+      order
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
 const replaceInstallmentOrderItemByStaff = async (req, res) => {
   try {
     const { SBAccountNumber, itemId } = req.params;
@@ -938,6 +964,7 @@ module.exports = {
   getProductActionRequests,
   getActiveOrder,
   addItemsToActiveOrder,
+  updateOrderItemQuantity,
   replaceInstallmentOrderItem,
   replaceInstallmentOrderItemByStaff,
   payOrderItemFromWallet,

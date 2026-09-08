@@ -1755,6 +1755,196 @@ const findSBAccountReplacementItemIndex = (sbAccount, itemId) => {
   ));
 };
 
+const normalizeOrderItemQuantity = (quantity) => {
+  const normalizedQuantity = Math.floor(Number(quantity));
+  if (!Number.isFinite(normalizedQuantity) || normalizedQuantity < 1) {
+    throw new Error('Quantity must be at least 1');
+  }
+  return normalizedQuantity;
+};
+
+const recalculateEditableOrderItemPrice = async (item, quantity) => {
+  const product = item.productId ? await Product.findById(item.productId) : null;
+  if (!product || product.isActive === false) {
+    throw new Error('Product not found');
+  }
+
+  const variation = getOrderItemVariation(product, item.variationId || '');
+  const basePrice = variation ? Number(variation.price || 0) : Number(product.price || item.price || 0);
+  const price = CartService.calculateCustomerSellingPrice(basePrice, item.paymentType || 'installment');
+  const subtotal = price * quantity;
+  const paidAmount = Math.min(subtotal, Math.max(0, Number(item.paidAmount || 0)));
+  const profit = calculateOrderItemProfit(product, {
+    ...item,
+    quantity,
+    price,
+    subtotal
+  });
+
+  return {
+    price,
+    subtotal,
+    paidAmount,
+    paymentStatus: paidAmount >= subtotal ? 'paid' : paidAmount > 0 ? 'partial' : 'unpaid',
+    ...profit
+  };
+};
+
+const updateOrderFinancialTotals = (order) => {
+  const totalAmount = (order.items || []).reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
+  const totalPaid = (order.items || []).reduce((sum, item) => sum + Number(item.paidAmount || 0), 0);
+  const remainingBalance = Math.max(0, totalAmount - totalPaid);
+
+  if (!order.installmentPlan) {
+    order.installmentPlan = {};
+  }
+
+  order.totalAmount = totalAmount;
+  order.installmentPlan.totalPaid = totalPaid;
+  order.installmentPlan.remainingBalance = remainingBalance;
+  order.installmentPlan.creditBalance = Math.max(0, totalPaid - totalAmount);
+  order.installmentPlan.amountPerPeriod = 0;
+  order.installmentPlan.duration = 0;
+  order.installmentPlan.frequency = 'flexible';
+  order.installmentPlan.nextPaymentDate = null;
+
+  if (remainingBalance === 0) {
+    order.paymentStatus = 'paid';
+    if (!['delivered', 'completed', 'cancelled'].includes(order.status)) {
+      order.status = 'paid';
+    }
+  } else {
+    order.paymentStatus = totalPaid > 0 ? 'partial' : 'unpaid';
+    if (!['delivered', 'completed', 'cancelled'].includes(order.status)) {
+      order.status = totalPaid > 0 ? 'partially_paid' : 'pending';
+    }
+  }
+};
+
+const updateSBAccountOrderItemQuantity = async ({
+  orderNumber,
+  customerId,
+  itemId,
+  quantity
+}) => {
+  const normalizedQuantity = normalizeOrderItemQuantity(quantity);
+  const sbAccountQuery = { SBAccountNumber: orderNumber };
+  if (customerId) {
+    sbAccountQuery.customerId = customerId.toString();
+  }
+
+  const sbAccount = await SBAccount.findOne(sbAccountQuery);
+  if (!sbAccount) {
+    throw new Error('Order not found');
+  }
+
+  if (['sold', 'cancelled'].includes(sbAccount.status)) {
+    throw new Error('This order can no longer be edited');
+  }
+  if (!Array.isArray(sbAccount.items) || sbAccount.items.length === 0) {
+    throw new Error('Order item not found');
+  }
+
+  const itemIndex = findSBAccountReplacementItemIndex(sbAccount, itemId);
+  if (itemIndex === -1) {
+    throw new Error('Order item not found');
+  }
+
+  const item = sbAccount.items[itemIndex];
+  if (['delivered', 'completed'].includes(item.fulfillmentStatus || 'pending')) {
+    throw new Error('This product has already been delivered and cannot be changed');
+  }
+
+  const recalculated = await recalculateEditableOrderItemPrice(item, normalizedQuantity);
+  item.quantity = normalizedQuantity;
+  item.price = recalculated.price;
+  item.subtotal = recalculated.subtotal;
+  item.paidAmount = recalculated.paidAmount;
+  item.costPrice = recalculated.costPrice;
+  item.costSubtotal = recalculated.costSubtotal;
+  item.profitAmount = recalculated.profitAmount;
+  item.requiresCostApproval = recalculated.costPrice <= 0;
+  item.costApprovedBy = recalculated.costPrice > 0 ? (item.costApprovedBy || 'ECOMMERCE_SYSTEM') : undefined;
+  item.costApprovedAt = recalculated.costPrice > 0 ? (item.costApprovedAt || new Date()) : undefined;
+  item.profitReported = false;
+  item.profitReportedAt = undefined;
+
+  sbAccount.accountMode = 'multi_item';
+  sbAccount.productName = buildOrderProductSummary(sbAccount.items, sbAccount.SBAccountNumber);
+  sbAccount.productDescription = sbAccount.items
+    .map((currentItem) => currentItem.productDescription)
+    .filter(Boolean)
+    .join(' | ') || sbAccount.productName;
+  sbAccount.sellingPrice = sbAccount.items.reduce((sum, currentItem) => sum + Number(currentItem.subtotal || 0), 0);
+  sbAccount.costPrice = sbAccount.items.reduce((sum, currentItem) => sum + Number(currentItem.costSubtotal || 0), 0);
+  sbAccount.profit = sbAccount.items.reduce((sum, currentItem) => sum + Number(currentItem.profitAmount || 0), 0);
+
+  const savedSBAccount = await sbAccount.save();
+  return await buildOrderFromSBAccount(savedSBAccount);
+};
+
+const updateInstallmentOrderItemQuantity = async ({
+  orderNumber,
+  customerId,
+  itemId,
+  quantity
+}) => {
+  const normalizedQuantity = normalizeOrderItemQuantity(quantity);
+  const orderQuery = { orderNumber };
+  if (customerId) {
+    orderQuery.customerId = customerId.toString();
+  }
+
+  const order = await EcommerceOrder.findOne(orderQuery);
+  if (!order) {
+    return await updateSBAccountOrderItemQuantity({
+      orderNumber,
+      customerId,
+      itemId,
+      quantity: normalizedQuantity
+    });
+  }
+
+  if (order.paymentType !== 'installment') {
+    throw new Error('Only pay-small-small order items can be changed');
+  }
+  if (['delivered', 'completed', 'shipped', 'cancelled'].includes(order.status)) {
+    throw new Error('This order can no longer be edited');
+  }
+
+  const decodedItemId = decodeURIComponent(String(itemId || ''));
+  const numericItemIndex = Number(decodedItemId);
+  const itemIndex = Number.isInteger(numericItemIndex) && numericItemIndex >= 0 && numericItemIndex < (order.items || []).length
+    ? numericItemIndex
+    : order.items.findIndex((item) => String(item._id || '') === decodedItemId);
+  if (itemIndex === -1) {
+    throw new Error('Order item not found');
+  }
+
+  const item = order.items[itemIndex];
+  if (['delivered', 'completed'].includes(item.fulfillmentStatus || 'pending')) {
+    throw new Error('This product has already been delivered and cannot be changed');
+  }
+
+  const recalculated = await recalculateEditableOrderItemPrice(item, normalizedQuantity);
+  item.quantity = normalizedQuantity;
+  item.price = recalculated.price;
+  item.subtotal = recalculated.subtotal;
+  item.paidAmount = recalculated.paidAmount;
+  item.paymentStatus = recalculated.paymentStatus;
+  item.costPrice = recalculated.costPrice;
+  item.costSubtotal = recalculated.costSubtotal;
+  item.profitAmount = recalculated.profitAmount;
+  item.profitReported = false;
+  item.profitReportedAt = undefined;
+
+  updateOrderFinancialTotals(order);
+
+  const savedOrder = await order.save();
+  await syncSBAccountItemsFromOrder(savedOrder);
+  return savedOrder;
+};
+
 const replaceSBAccountOrderItem = async ({
   orderNumber,
   customerId,
@@ -3988,6 +4178,7 @@ module.exports = {
   recordWalletMovementForOrderPayment,
   payoffRemainingBalanceFromWallet,
   createOrderAndPayFromWallet,
+  updateInstallmentOrderItemQuantity,
   replaceInstallmentOrderItem,
   replaceInstallmentOrderItemBySBAccount,
   getEcommerceOrderItemReceipt,
