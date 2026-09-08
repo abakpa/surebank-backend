@@ -8,6 +8,7 @@ router.get('/my-orders', customerAuth, EcommerceOrderController.getMyOrders);
 router.get('/active', customerAuth, EcommerceOrderController.getActiveOrder);
 router.post('/active/items', customerAuth, EcommerceOrderController.addItemsToActiveOrder);
 router.get('/number/:orderNumber', customerAuth, EcommerceOrderController.getOrderByNumber);
+router.put('/number/:orderNumber/items/:itemId/quantity', customerAuth, EcommerceOrderController.updateOrderItemQuantity);
 router.put('/number/:orderNumber/items/:itemId/replace', customerAuth, EcommerceOrderController.replaceInstallmentOrderItem);
 router.post('/number/:orderNumber/items/:itemId/pay-wallet', customerAuth, EcommerceOrderController.payOrderItemFromWallet);
 router.post('/number/:orderNumber/payoff', customerAuth, EcommerceOrderController.payoffRemainingBalance);
