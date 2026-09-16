@@ -5,7 +5,7 @@ const isValidPhoneNumber = (value = '') => /^\d{11}$/.test(value);
 
 const register = async (req, res) => {
   try {
-    const { firstName, lastName, phone, address, password, email } = req.body;
+    const { firstName, lastName, phone, address, password, email, referralCode } = req.body;
 
     if (!firstName || !lastName || !phone || !address || !password) {
       return res.status(400).json({
@@ -23,7 +23,8 @@ const register = async (req, res) => {
       phone: normalizedPhone,
       address,
       password,
-      email
+      email,
+      referralCode
     });
 
     res.status(201).json({

@@ -46,6 +46,59 @@ const customerSchema = new mongoose.Schema({
   accountManagerId: {
     type: String,
   },
+  referredBy: {
+    type: String,
+    ref: 'Customer',
+    default: '',
+  },
+  referralCodeUsed: {
+    type: String,
+    default: '',
+  },
+  referralAncestors: [{
+    type: String,
+    ref: 'Customer',
+  }],
+  referralIncentiveBalance: {
+    type: Number,
+    default: 0,
+  },
+  referralIncentiveTotalEarned: {
+    type: Number,
+    default: 0,
+  },
+  loginBonusBalance: {
+    type: Number,
+    default: 0,
+  },
+  loginBonusTotalEarned: {
+    type: Number,
+    default: 0,
+  },
+  loginBonusCredited: {
+    type: Boolean,
+    default: false,
+  },
+  loginBonusCreditedAt: {
+    type: Date,
+  },
+  loginBonusTransferredAt: {
+    type: Date,
+  },
+  transactionBonusBalance: {
+    type: Number,
+    default: 0,
+  },
+  transactionBonusTotalEarned: {
+    type: Number,
+    default: 0,
+  },
+  transactionBonusLastCreditedAt: {
+    type: Date,
+  },
+  transactionBonusTransferredAt: {
+    type: Date,
+  },
   createdBy: {
     type: String,
     required: true,

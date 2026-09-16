@@ -11,6 +11,7 @@ const Product = require('../../../Product/Model');
 const Branch = require('../../../Branch/Model');
 const Customer = require('../../../Customer/Model');
 const Staff = require('../../../Staff/Model');
+const BonusLedger = require('../../../Referral/Model/BonusLedger');
 const {
   getSBPackageItemSummary,
   getSBPackageCountValue,
@@ -1127,8 +1128,114 @@ async function getAllExpenditure(date = null, branchId = null) {
     const expenditures = await Expenditure.find(query);
   
     const totalExpenditure = expenditures.reduce((sum, tx) => sum + tx.amount, 0);
+    const bonusExpense = await getBonusExpense(date, branchId);
   
-    return totalExpenditure;
+    return totalExpenditure + bonusExpense;
+}
+
+async function getBonusExpense(date = null, branchId = null, type = null) {
+  if (type === 'first_login') {
+    return getFirstLoginBonusExpense(date, branchId);
+  }
+
+  if (!type) {
+    const [firstLoginExpense, transactionExpense] = await Promise.all([
+      getFirstLoginBonusExpense(date, branchId),
+      getTransactionBonusExpense(date, branchId),
+    ]);
+    return firstLoginExpense + transactionExpense;
+  }
+
+  const query = {
+    creditedAt: buildCumulativeCreatedAtQuery(date),
+  };
+
+  if (branchId) {
+    query.branchId = branchId;
+  }
+
+  if (type) {
+    query.type = type;
+  }
+
+  const result = await BonusLedger.aggregate([
+    { $match: query },
+    { $group: { _id: null, amount: { $sum: '$amount' } } },
+  ]);
+
+  return result[0]?.amount || 0;
+}
+
+const getFirstLoginBonusExpense = async (date = null, branchId = null) => (
+  getCustomerFirstLoginBonusExpense(date, branchId)
+);
+
+const getTransactionBonusExpense = async (date = null, branchId = null) => {
+  const [ledgerExpense, fallbackExpense] = await Promise.all([
+    getBonusExpense(date, branchId, 'transaction'),
+    getUnledgeredTransactionBonusExpense(date, branchId),
+  ]);
+
+  return ledgerExpense + fallbackExpense;
+};
+
+async function getCustomerFirstLoginBonusExpense(date = null, branchId = null) {
+  const query = {
+    loginBonusCredited: true,
+    loginBonusCreditedAt: buildCumulativeCreatedAtQuery(date),
+  };
+
+  if (branchId) {
+    query.branchId = branchId;
+  }
+
+  const result = await Customer.aggregate([
+    { $match: query },
+    { $group: { _id: null, amount: { $sum: '$loginBonusTotalEarned' } } },
+  ]);
+
+  return result[0]?.amount || 0;
+}
+
+async function getUnledgeredTransactionBonusExpense(date = null, branchId = null) {
+  const query = {
+    transactionBonusTotalEarned: { $gt: 0 },
+    transactionBonusLastCreditedAt: buildCumulativeCreatedAtQuery(date),
+  };
+
+  if (branchId) {
+    query.branchId = branchId;
+  }
+
+  const customers = await Customer.find(query)
+    .select('_id transactionBonusTotalEarned')
+    .lean();
+  if (customers.length === 0) return 0;
+
+  const customerIds = customers.map((customer) => customer._id.toString());
+  const ledgerTotals = await BonusLedger.aggregate([
+    {
+      $match: {
+        type: 'transaction',
+        customerId: { $in: customerIds },
+      },
+    },
+    {
+      $group: {
+        _id: '$customerId',
+        amount: { $sum: '$amount' },
+      },
+    },
+  ]);
+  const ledgerTotalByCustomerId = new Map(
+    ledgerTotals.map((item) => [String(item._id), Number(item.amount || 0)])
+  );
+
+  return customers.reduce((sum, customer) => {
+    const totalEarned = Number(customer.transactionBonusTotalEarned || 0);
+    const ledgeredAmount = ledgerTotalByCustomerId.get(customer._id.toString()) || 0;
+    return sum + Math.max(totalEarned - ledgeredAmount, 0);
+  }, 0);
 }
 const deleteExpenditure = async (expenditureId) => {
   try {
@@ -1731,6 +1838,8 @@ async function getEcommerceDSDepositReport(date = null, branchId = null) {
     getFDAccountIncome,
     getAllSBandDSIncome,
     getAllExpenditure,
+    getFirstLoginBonusExpense,
+    getTransactionBonusExpense,
     deleteExpenditure,
     getProfit,
     getSBIncomeReport,

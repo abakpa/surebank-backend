@@ -1,5 +1,6 @@
 const EcommerceOrderService = require('../Service/index');
 const PaystackService = require('../../Paystack/Service/index');
+const EcommerceAuthService = require('../../EcommerceAuth/Service/index');
 const Cart = require('../../Cart/Model/index');
 const Product = require('../../Product/Model/index');
 const Customer = require('../../Customer/Model/index');
@@ -28,6 +29,122 @@ const resolvePaymentEmail = async ({ customerId, customerEmail, orderEmail }) =>
   if (isValidEmail(profileEmail)) return profileEmail;
 
   return buildFallbackEmail(customer || { _id: customerId });
+};
+
+const processVerifiedPaystackPayment = async (paystackData, source = 'PAYSTACK_RECONCILIATION', actorCustomerId = '') => {
+  if (!paystackData || paystackData.status !== 'success') {
+    throw new Error(`Payment not successful${paystackData?.status ? `: ${paystackData.status}` : ''}`);
+  }
+
+  const reference = paystackData.reference;
+  const metadata = paystackData.metadata || {};
+  const amount = Number(paystackData.amount || 0) / 100;
+
+  if (metadata.wallet_data) {
+    const result = await EcommerceAuthService.processWalletFundingFromPaystackData(
+      paystackData,
+      actorCustomerId ? { customerId: actorCustomerId } : {}
+    );
+    return {
+      type: result.paymentType || 'wallet',
+      message: result.alreadyProcessed ? 'Wallet funding already processed' : 'Wallet funding reconciled successfully',
+      result,
+    };
+  }
+
+  if (metadata.order_deposit_data) {
+    const depositData = metadata.order_deposit_data;
+    if (actorCustomerId && depositData.customerId?.toString() !== actorCustomerId.toString()) {
+      throw new Error('You are not allowed to verify this payment');
+    }
+    const result = await EcommerceOrderService.recordCustomerOrderDepositPayment(
+      depositData.orderNumber,
+      depositData.customerId,
+      amount,
+      reference,
+      source
+    );
+    return {
+      type: 'order_deposit',
+      message: 'Order deposit reconciled successfully',
+      result,
+    };
+  }
+
+  if (metadata.order_data) {
+    const orderData = metadata.order_data;
+    if (actorCustomerId && orderData.customerId?.toString() !== actorCustomerId.toString()) {
+      throw new Error('You are not allowed to verify this payment');
+    }
+
+    const existingOrder = await EcommerceOrderService.getOrderByReference(reference);
+    if (existingOrder) {
+      const alreadyPaid = existingOrder.installmentPlan?.payments?.some(
+        (payment) => payment.transactionRef === reference
+      );
+      if (!alreadyPaid && existingOrder.SBAccountNumber) {
+        try {
+          await EcommerceOrderService.creditSBAccountForOrderDirect(
+            existingOrder._id,
+            amount,
+            reference,
+            source
+          );
+        } catch (creditError) {
+          if (!String(creditError.message || '').includes('already been fully paid')) {
+            throw creditError;
+          }
+        }
+      }
+      return {
+        type: 'order',
+        message: 'Order payment already has an order record',
+        result: { order: await EcommerceOrderService.getOrderById(existingOrder._id) },
+      };
+    }
+
+    const order = await EcommerceOrderService.createOrder({
+      customerId: orderData.customerId,
+      accountNumber: orderData.accountNumber,
+      paymentType: orderData.paymentType,
+      installmentFrequency: orderData.paymentType === 'installment'
+        ? (orderData.installmentFrequency || 'flexible')
+        : orderData.installmentFrequency,
+      installmentDuration: orderData.paymentType === 'installment'
+        ? Number(orderData.installmentDuration || 0)
+        : orderData.installmentDuration,
+      shippingAddress: orderData.shippingAddress,
+      shippingCity: orderData.shippingCity,
+      shippingState: orderData.shippingState,
+      customerPhone: orderData.customerPhone,
+      customerEmail: orderData.customerEmail,
+      notes: orderData.notes,
+      paymentReference: reference
+    });
+
+    if (order.SBAccountNumber) {
+      try {
+        await EcommerceOrderService.creditSBAccountForOrderDirect(
+          order._id,
+          amount,
+          reference,
+          source
+        );
+      } catch (creditError) {
+        if (!String(creditError.message || '').includes('already been fully paid')) {
+          throw creditError;
+        }
+      }
+    }
+
+    return {
+      type: 'order',
+      message: 'Order payment reconciled successfully',
+      result: { order: await EcommerceOrderService.getOrderById(order._id) },
+    };
+  }
+
+  throw new Error('Payment metadata is missing supported transaction data');
 };
 
 const createOrder = async (req, res) => {
@@ -731,8 +848,30 @@ const verifyPayment = async (req, res) => {
 
     console.log('Verifying payment for reference:', reference);
 
-    // Verify payment with Paystack
-    const verificationResult = await PaystackService.verifyTransaction(reference);
+    // If Paystack webhook has already processed this reference, let the customer continue.
+    const preVerifiedOrder = await EcommerceOrderService.getOrderByReference(reference);
+    if (preVerifiedOrder?.paymentStatus === 'paid') {
+      const refreshedOrder = await EcommerceOrderService.getOrderById(preVerifiedOrder._id);
+      return res.status(200).json({
+        message: 'Payment already verified',
+        order: refreshedOrder
+      });
+    }
+
+    let verificationResult;
+    try {
+      verificationResult = await PaystackService.verifyTransaction(reference);
+    } catch (verifyError) {
+      const processedOrder = await EcommerceOrderService.getOrderByReference(reference);
+      if (processedOrder?.paymentStatus === 'paid') {
+        const refreshedOrder = await EcommerceOrderService.getOrderById(processedOrder._id);
+        return res.status(200).json({
+          message: 'Payment already verified',
+          order: refreshedOrder
+        });
+      }
+      throw verifyError;
+    }
 
     console.log('Paystack verification result:', verificationResult.data.status);
 
@@ -747,24 +886,15 @@ const verifyPayment = async (req, res) => {
     const walletPaymentAmount = Number(verificationResult.data.amount || 0) / 100;
 
     if (metadata.order_deposit_data) {
-      const depositData = metadata.order_deposit_data;
-      const order = await EcommerceOrderService.getOrderByNumber(depositData.orderNumber);
-
-      if (order.customerId?.toString() !== req.customer.customerId.toString()) {
-        return res.status(403).json({ message: 'You are not allowed to verify this payment' });
-      }
-
-      const result = await EcommerceOrderService.recordCustomerOrderDepositPayment(
-        order.orderNumber,
-        req.customer.customerId,
-        walletPaymentAmount,
-        reference,
-        'PAYSTACK_PAYMENT'
+      const processed = await processVerifiedPaystackPayment(
+        verificationResult.data,
+        'PAYSTACK_PAYMENT',
+        req.customer.customerId
       );
 
       return res.status(200).json({
-        message: 'Order deposit verified',
-        order: result.order,
+        message: processed.message,
+        order: processed.result.order,
         paymentDetails: {
           amount: walletPaymentAmount,
           reference,
@@ -792,12 +922,18 @@ const verifyPayment = async (req, res) => {
         (payment) => payment.transactionRef === reference
       );
       if (!alreadyPaid && existingOrder.SBAccountNumber) {
-        await EcommerceOrderService.creditSBAccountForOrderDirect(
-          existingOrder._id,
-          walletPaymentAmount,
-          reference,
-          'PAYSTACK_PAYMENT'
-        );
+        try {
+          await EcommerceOrderService.creditSBAccountForOrderDirect(
+            existingOrder._id,
+            walletPaymentAmount,
+            reference,
+            'PAYSTACK_PAYMENT'
+          );
+        } catch (creditError) {
+          if (!String(creditError.message || '').includes('already been fully paid')) {
+            throw creditError;
+          }
+        }
       }
       const refreshedOrder = await EcommerceOrderService.getOrderById(existingOrder._id);
       return res.status(200).json({
@@ -874,7 +1010,7 @@ const handlePaystackWebhook = async (req, res) => {
 
     // Verify webhook signature
     const hash = crypto.createHmac('sha512', secret)
-      .update(JSON.stringify(req.body))
+      .update(req.rawBody || JSON.stringify(req.body))
       .digest('hex');
 
     if (hash !== req.headers['x-paystack-signature']) {
@@ -888,15 +1024,10 @@ const handlePaystackWebhook = async (req, res) => {
       const metadata = event.data.metadata;
       const walletPaymentAmount = Number(event.data.amount || 0) / 100;
 
-      if (metadata && metadata.order_deposit_data) {
-        const depositData = metadata.order_deposit_data;
-        await EcommerceOrderService.recordCustomerOrderDepositPayment(
-          depositData.orderNumber,
-          depositData.customerId,
-          walletPaymentAmount,
-          reference,
-          'PAYSTACK_WEBHOOK'
-        );
+      if (metadata && metadata.wallet_data) {
+        await processVerifiedPaystackPayment(event.data, 'PAYSTACK_WEBHOOK');
+      } else if (metadata && metadata.order_deposit_data) {
+        await processVerifiedPaystackPayment(event.data, 'PAYSTACK_WEBHOOK');
       } else if (metadata && metadata.order_data) {
         const orderData = metadata.order_data;
 
@@ -954,6 +1085,33 @@ const handlePaystackWebhook = async (req, res) => {
   }
 };
 
+const reconcilePaystackPayment = async (req, res) => {
+  try {
+    const reference = String(req.body.reference || '').trim();
+    if (!reference) {
+      return res.status(400).json({ message: 'Payment reference is required' });
+    }
+
+    const verificationResult = await PaystackService.verifyTransaction(reference);
+    const processed = await processVerifiedPaystackPayment(
+      verificationResult.data,
+      `PAYSTACK_RECONCILIATION_${req.staff?.staffId || 'STAFF'}`
+    );
+
+    res.status(200).json({
+      message: processed.message,
+      type: processed.type,
+      reference,
+      amount: Number(verificationResult.data.amount || 0) / 100,
+      paidAt: verificationResult.data.paid_at,
+      result: processed.result,
+    });
+  } catch (error) {
+    console.error('Paystack reconciliation error:', error);
+    res.status(400).json({ message: error.message });
+  }
+};
+
 module.exports = {
   createOrder,
   getOrderById,
@@ -987,5 +1145,6 @@ module.exports = {
   processAutomaticPayments,
   initializePayment,
   verifyPayment,
-  handlePaystackWebhook
+  handlePaystackWebhook,
+  reconcilePaystackPayment
 };

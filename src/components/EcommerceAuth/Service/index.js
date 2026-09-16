@@ -13,6 +13,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
+const ReferralService = require('../../Referral/Service');
 
 const getDefaultBranch = async () => {
   const branch = await Branch.findOne({
@@ -52,7 +53,7 @@ const recordCustomerAppLogin = async (customer) => {
       existingLogin.accountManagerId = accountManagerId;
     }
     await existingLogin.save();
-    return;
+    return { isFirstLogin: false };
   }
 
   await Login.create({
@@ -63,6 +64,7 @@ const recordCustomerAppLogin = async (customer) => {
     firstLogin: now,
     lastLogin: now,
   });
+  return { isFirstLogin: true };
 };
 
 const checkExistingCustomer = async (phone) => {
@@ -283,6 +285,7 @@ const getDSTransactions = async (customerId = '') => {
 const registerEcommerceCustomer = async (customerData) => {
   const { firstName, lastName, address, password, email } = customerData;
   const phone = String(customerData.phone || '').replace(/\D/g, '');
+  const referralCode = String(customerData.referralCode || '').trim();
   const normalizedEmail = String(email || '').trim().toLowerCase();
   if (!/^\d{11}$/.test(phone)) {
     throw new Error('Phone number must be exactly 11 digits');
@@ -302,6 +305,11 @@ const registerEcommerceCustomer = async (customerData) => {
 
   // Get default branch for e-commerce customers
   const defaultBranch = await getDefaultBranch();
+  const referral = await ReferralService.resolveSignupReferral({
+    referralCode,
+    newCustomerPhone: phone,
+    defaultBranchId: defaultBranch._id.toString(),
+  });
 
   // Hash password
   const salt = await bcrypt.genSalt();
@@ -316,8 +324,11 @@ const registerEcommerceCustomer = async (customerData) => {
     address,
     password: hashedPassword,
     createdBy: 'ECOMMERCE_SYSTEM',
-    branchId: defaultBranch._id.toString(),
-    accountManagerId: ''
+    branchId: referral.branchId || defaultBranch._id.toString(),
+    accountManagerId: referral.accountManagerId || '',
+    referredBy: referral.referredBy,
+    referralCodeUsed: referral.referralCodeUsed,
+    referralAncestors: referral.referralAncestors
   });
 
   const newCustomer = await customer.save();
@@ -327,8 +338,8 @@ const registerEcommerceCustomer = async (customerData) => {
     customerId: newCustomer._id.toString(),
     accountNumber: phone,
     createdBy: 'ECOMMERCE_SYSTEM',
-    branchId: defaultBranch._id.toString(),
-    accountManagerId: '',
+    branchId: referral.branchId || defaultBranch._id.toString(),
+    accountManagerId: referral.accountManagerId || '',
     status: 'active',
     availableBalance: 0,
     ledgerBalance: 0
@@ -386,7 +397,10 @@ const loginEcommerceCustomer = async (phone, password) => {
     throw new Error('Invalid phone number or password');
   }
 
-  await recordCustomerAppLogin(customer);
+  const loginRecord = await recordCustomerAppLogin(customer);
+  const loginBonus = loginRecord?.isFirstLogin
+    ? await ReferralService.creditFirstLoginBonus(customer._id)
+    : { credited: false, reason: 'not_first_login' };
 
   // Generate token
   const token = jwt.sign(
@@ -408,7 +422,8 @@ const loginEcommerceCustomer = async (phone, password) => {
     accountNumber: customer.phone,
     SBAccountNumber: null,
     token,
-    requiresPasswordUpdate: customer.updatePassword !== 'false'
+    requiresPasswordUpdate: customer.updatePassword !== 'false',
+    loginBonus
   };
 };
 
@@ -469,7 +484,8 @@ const getCustomerWallet = async (customerId) => {
     customerId: customer._id.toString(),
     walletType: { $ne: 'sb_order_wallet' }
   }).lean();
-  const transactions = mainAccount
+  const transactions = await getWalletTransactions(account._id, customer._id);
+  const mainAccountTransactions = mainAccount
     ? await getWalletTransactions(mainAccount._id, customer._id, {
       includeEcommerceSBPayments: false,
       walletPackages: [],
@@ -501,6 +517,7 @@ const getCustomerWallet = async (customerId) => {
     account,
     mainAccount,
     transactions,
+    mainAccountTransactions,
     dsTransactions,
     dsAccounts
   };
@@ -836,23 +853,39 @@ const initializeDSAccountFunding = async (customerId, fundingData) => {
   };
 };
 
-const verifyWalletFunding = async (customerId, reference) => {
-  const verificationResult = await PaystackService.verifyTransaction(reference);
+const parsePaystackWalletData = (paystackData = {}) => {
+  const metadata = paystackData.metadata || {};
+  const rawWalletData = metadata.wallet_data;
+  if (typeof rawWalletData === 'string') {
+    try {
+      return JSON.parse(rawWalletData);
+    } catch {
+      return null;
+    }
+  }
+  return rawWalletData || null;
+};
 
-  if (verificationResult.data.status !== 'success') {
+const processWalletFundingFromPaystackData = async (paystackData = {}, options = {}) => {
+  if (paystackData.status !== 'success') {
     throw new Error('Payment not successful');
   }
 
-  const walletData = verificationResult.data.metadata?.wallet_data;
+  const reference = paystackData.reference;
+  if (!reference) {
+    throw new Error('Payment reference is required');
+  }
+
+  const walletData = parsePaystackWalletData(paystackData);
   if (!walletData || !['wallet', 'ds_package'].includes(walletData.fundingType)) {
     throw new Error('Invalid wallet payment metadata');
   }
 
-  if (walletData.customerId !== customerId.toString()) {
+  if (options.customerId && walletData.customerId !== options.customerId.toString()) {
     throw new Error('This wallet payment does not belong to the current customer');
   }
 
-  const customer = await Customer.findById(customerId);
+  const customer = await Customer.findById(walletData.customerId);
   if (!customer) {
     throw new Error('Customer not found');
   }
@@ -876,7 +909,7 @@ const verifyWalletFunding = async (customerId, reference) => {
     });
 
     if (!existingTransaction) {
-      const amount = Number(walletData.amount || (verificationResult.data.amount / 100));
+      const amount = Number(walletData.amount || (paystackData.amount / 100));
       await DSAccountService.saveDailyContribution({
         DSAccountNumber: dsAccount.DSAccountNumber,
         accountType: dsAccount.accountType,
@@ -911,11 +944,11 @@ const verifyWalletFunding = async (customerId, reference) => {
       alreadyProcessed: Boolean(existingTransaction),
       paymentType: 'ds_package',
       paymentDetails: {
-        amount: Number(walletData.amount || (verificationResult.data.amount / 100)),
+        amount: Number(walletData.amount || (paystackData.amount / 100)),
         paystackFee: Number(walletData.paystackFee || 0),
-        payableAmount: Number(walletData.payableAmount || (verificationResult.data.amount / 100)),
+        payableAmount: Number(walletData.payableAmount || (paystackData.amount / 100)),
         reference,
-        paidAt: verificationResult.data.paid_at
+        paidAt: paystackData.paid_at
       }
     };
   }
@@ -925,7 +958,10 @@ const verifyWalletFunding = async (customerId, reference) => {
   const legacyNarration = `Wallet Funding - Ref: ${reference}`;
   const existingTransaction = await AccountTransactionModel.findOne({
     accountTypeId: account._id.toString(),
-    narration: { $in: [narration, legacyNarration] }
+    $or: [
+      { transactionRef: reference },
+      { narration: { $in: [narration, legacyNarration] } }
+    ]
   });
 
   if (existingTransaction) {
@@ -937,7 +973,7 @@ const verifyWalletFunding = async (customerId, reference) => {
         autoPaidOrder = await EcommerceOrderService.payOrderItemFromWallet({
           orderNumber: walletData.autoPayOrderNumber,
           itemId: walletData.autoPayItemId,
-          customerId
+          customerId: customer._id.toString()
         });
       } catch (error) {
         autoPayError = error.message;
@@ -956,12 +992,12 @@ const verifyWalletFunding = async (customerId, reference) => {
       paymentDetails: {
         amount: existingTransaction.amount,
         reference,
-        paidAt: verificationResult.data.paid_at
+        paidAt: paystackData.paid_at
       }
     };
   }
 
-  const amount = Number(walletData.amount || (verificationResult.data.amount / 100));
+  const amount = Number(walletData.amount || (paystackData.amount / 100));
   const newAvailableBalance = Number(account.availableBalance || 0) + amount;
   const newLedgerBalance = Number(account.ledgerBalance || 0) + amount;
   const reportingActor = getReportingStaffId(
@@ -981,6 +1017,7 @@ const verifyWalletFunding = async (customerId, reference) => {
     accountTypeId: account._id.toString(),
     date: formatTransactionDate(),
     narration,
+    transactionRef: reference,
     package: 'Wallet',
     direction: 'Credit',
   });
@@ -999,25 +1036,32 @@ const verifyWalletFunding = async (customerId, reference) => {
     { new: true }
   );
 
-  if (customer.email !== verificationResult.data.customer?.email) {
-    customer.email = verificationResult.data.customer?.email || customer.email;
+  if (customer.email !== paystackData.customer?.email) {
+    customer.email = paystackData.customer?.email || customer.email;
     await customer.save();
   }
 
   let autoPaidOrder = null;
   let autoPayError = null;
+  let transactionBonus = null;
   if (walletData.autoPayOrderNumber && walletData.autoPayItemId) {
     try {
       const EcommerceOrderService = require('../../EcommerceOrder/Service/index');
       autoPaidOrder = await EcommerceOrderService.payOrderItemFromWallet({
         orderNumber: walletData.autoPayOrderNumber,
         itemId: walletData.autoPayItemId,
-        customerId
+        customerId: customer._id.toString()
       });
       updatedAccount = await Account.findById(account._id);
     } catch (error) {
       autoPayError = error.message;
     }
+  }
+
+  try {
+    transactionBonus = await ReferralService.creditTransactionBonusForDeposit(customer._id, amount);
+  } catch (error) {
+    transactionBonus = { credited: false, reason: error.message };
   }
 
   const transactions = await getWalletTransactions(account._id, customer._id);
@@ -1029,13 +1073,19 @@ const verifyWalletFunding = async (customerId, reference) => {
     transactions,
     autoPaidOrder,
     autoPayError,
+    transactionBonus,
     alreadyProcessed: false,
     paymentDetails: {
       amount,
       reference,
-      paidAt: verificationResult.data.paid_at
+      paidAt: paystackData.paid_at
     }
   };
+};
+
+const verifyWalletFunding = async (customerId, reference) => {
+  const verificationResult = await PaystackService.verifyTransaction(reference);
+  return await processWalletFundingFromPaystackData(verificationResult.data, { customerId });
 };
 
 const changePassword = async (customerId, currentPassword, newPassword) => {
@@ -1193,5 +1243,6 @@ module.exports = {
   updateCustomerDSAccountDailyAmount,
   initializeWalletFunding,
   initializeDSAccountFunding,
+  processWalletFundingFromPaystackData,
   verifyWalletFunding
 };

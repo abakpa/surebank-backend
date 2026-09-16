@@ -88,6 +88,17 @@ const orderItemSchema = new mongoose.Schema({
   profitReportedAt: {
     type: Date
   },
+  referralIncentiveCredited: {
+    type: Boolean,
+    default: false
+  },
+  referralIncentiveCreditedAt: {
+    type: Date
+  },
+  referralIncentivePool: {
+    type: Number,
+    default: 0
+  },
   paidAmount: {
     type: Number,
     default: 0
@@ -225,7 +236,18 @@ const ecommerceOrderSchema = new mongoose.Schema({
       type: Date,
       default: Date.now
     }
-  }]
+  }],
+  referralIncentiveCredited: {
+    type: Boolean,
+    default: false
+  },
+  referralIncentiveCreditedAt: {
+    type: Date
+  },
+  referralIncentivePool: {
+    type: Number,
+    default: 0
+  }
 }, { timestamps: true });
 
 const EcommerceOrder = mongoose.model('EcommerceOrder', ecommerceOrderSchema);
