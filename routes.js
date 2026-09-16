@@ -18,6 +18,7 @@ const expenditureRoutes = require('./src/components/Expenditure/Routes/index');
 const smsRoutes = require('./src/components/SMS/Routes/index');
 const customerWithdrawalRequestRoutes = require('./src/components/CustomerWithdrawalRequest/Routes/index');
 const analyticsRoutes = require('./src/components/Analytics/Routes/index');
+const referralRoutes = require('./src/components/Referral/Routes/index');
 
 // E-commerce routes
 const productRoutes = require('./src/components/Product/Routes/index');
@@ -45,6 +46,7 @@ router.use('/api/expenditure', expenditureRoutes);
 router.use('/api/sms', smsRoutes);
 router.use('/api/customerwithdrawalrequest', customerWithdrawalRequestRoutes);
 router.use('/api/analytics', analyticsRoutes);
+router.use('/api/referrals', referralRoutes);
 
 // E-commerce API routes
 router.use('/api/products', productRoutes);

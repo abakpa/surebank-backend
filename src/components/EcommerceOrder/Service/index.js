@@ -14,6 +14,7 @@ const Customer = require('../../Customer/Model/index');
 const Branch = require('../../Branch/Model/index');
 const ProductBranchStock = require('../../ProductBranchStock/Model/index');
 const generateUniqueAccountNumber = require('../../generateAccountNumber');
+const ReferralService = require('../../Referral/Service');
 
 const formatTransactionDate = (date = new Date()) => {
   return date.toLocaleString("en-GB", {
@@ -124,6 +125,19 @@ const updateSBAccountToSold = async (SBAccountNumber) => {
     console.log(`SBAccount ${SBAccountNumber} status updated to sold`);
   } catch (error) {
     console.error('Error updating SBAccount status:', error);
+  }
+};
+
+const creditReferralIfOrderPaid = async (order) => {
+  if (!order) {
+    return null;
+  }
+
+  try {
+    return await ReferralService.creditReferralIncentivesForOrder(order);
+  } catch (error) {
+    console.error('Error crediting referral incentive:', error.message);
+    return null;
   }
 };
 
@@ -974,7 +988,9 @@ const createEcommerceOrderFromActiveSBAccount = async ({ sbAccount, customerId, 
     ...(sbAccount.paymentReference ? { paymentReference: sbAccount.paymentReference } : {})
   });
 
-  return await order.save();
+  const savedOrder = await order.save();
+  await creditReferralIfOrderPaid(savedOrder);
+  return savedOrder;
 };
 
 const syncEcommerceOrderFromSBAccount = async (order) => {
@@ -2122,6 +2138,7 @@ const replaceInstallmentOrderItem = async ({
 
   const savedOrder = await order.save();
   await syncSBAccountItemsFromOrder(savedOrder);
+  await creditReferralIfOrderPaid(savedOrder);
   savedOrder.productChangePayment = {
     reversedAmount,
     paidAmount: autoPayment.paid ? autoPayment.amount : 0,
@@ -2376,6 +2393,7 @@ const updateOrderStatus = async (orderId, status, staff) => {
   order.status = status;
   order.processedBy = staff?.staffId;
   await order.save();
+  await creditReferralIfOrderPaid(order);
 
   return await decorateOrderProductAvailability(order);
 };
@@ -2432,6 +2450,7 @@ const updateOrderItemFulfillment = async (orderId, itemId, status, staff) => {
   order.processedBy = staff?.staffId;
   await order.save();
   await syncSBAccountItemsFromOrder(order);
+  await creditReferralIfOrderPaid(order);
 
   return await decorateOrderProductAvailability(order);
 };
@@ -2745,13 +2764,28 @@ const createOrderAndPayFromWallet = async ({
     paymentReference: transactionRef
   });
 
-  await recordFlexibleInstallmentOrderPayment(
-    order._id,
-    normalizedPaymentAmount,
-    transactionRef,
-    customerId.toString(),
-    { creditWallet: false }
-  );
+  if (paymentType === 'outright') {
+    await debitWalletForOrderPayment(order, normalizedPaymentAmount, transactionRef);
+    order.paymentStatus = 'paid';
+    order.status = 'paid';
+    order.paymentReferences = order.paymentReferences || [];
+    order.paymentReferences.push({
+      reference: transactionRef,
+      amount: normalizedPaymentAmount,
+      paymentType: 'outright'
+    });
+    markAllOrderItemsPaid(order);
+    await order.save();
+    await creditReferralIfOrderPaid(order);
+  } else {
+    await recordFlexibleInstallmentOrderPayment(
+      order._id,
+      normalizedPaymentAmount,
+      transactionRef,
+      customerId.toString(),
+      { creditWallet: false }
+    );
+  }
 
   return await EcommerceOrder.findById(order._id);
 };
@@ -3193,6 +3227,7 @@ const recordFlexibleInstallmentOrderPayment = async (orderId, amount, transactio
   }
 
   await order.save();
+  await creditReferralIfOrderPaid(order);
 
   return {
     order: await EcommerceOrder.findById(order._id),
@@ -3221,6 +3256,7 @@ const payOrderItemFromWallet = async ({ orderNumber, customerId, itemId }) => {
     item.paidAmount = subtotal;
     item.paymentStatus = 'paid';
     await order.save();
+    await creditReferralIfOrderPaid(order);
     return await decorateOrderProductAvailability(order);
   }
 
@@ -3255,6 +3291,7 @@ const payOrderItemFromWallet = async ({ orderNumber, customerId, itemId }) => {
 
   await order.save();
   await syncSBAccountItemsFromOrder(order);
+  await creditReferralIfOrderPaid(order);
 
   return await decorateOrderProductAvailability(await EcommerceOrder.findById(order._id));
 };
@@ -3779,6 +3816,7 @@ const payoffRemainingBalanceFromWallet = async (orderNumber, customerId) => {
     order.paymentStatus = 'paid';
     order.status = 'paid';
     await order.save();
+    await creditReferralIfOrderPaid(order);
     return await EcommerceOrder.findById(order._id);
   }
 
@@ -3802,6 +3840,7 @@ const payoffRemainingBalanceFromWallet = async (orderNumber, customerId) => {
   order.status = 'paid';
 
   await order.save();
+  await creditReferralIfOrderPaid(order);
 
   return await EcommerceOrder.findById(order._id);
 };
@@ -3863,7 +3902,9 @@ const recordInstallmentPayment = async (orderId, amount, transactionRef, staffId
     order.status = 'partially_paid';
   }
 
-  return await order.save();
+  const savedOrder = await order.save();
+  await creditReferralIfOrderPaid(savedOrder);
+  return savedOrder;
 };
 
 // Process automatic payments for due installments
@@ -3967,6 +4008,7 @@ const processAutomaticPayments = async () => {
       }
 
       await order.save();
+      await creditReferralIfOrderPaid(order);
     } catch (err) {
       results.errors.push({
         orderId: order._id,
@@ -4048,6 +4090,7 @@ const checkAndProcessPendingPayments = async (SBAccountNumber) => {
   }
 
   await order.save();
+  await creditReferralIfOrderPaid(order);
 
   return results;
 };
@@ -4071,6 +4114,7 @@ const recordOutrightPayment = async (orderId, transactionRef) => {
   existingOrder.status = 'paid';
   markAllOrderItemsPaid(existingOrder);
   await existingOrder.save();
+  await creditReferralIfOrderPaid(existingOrder);
 
   // Update SBAccount status to sold
   await updateSBAccountToSold(existingOrder.SBAccountNumber);

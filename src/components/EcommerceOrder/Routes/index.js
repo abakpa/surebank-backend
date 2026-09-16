@@ -28,6 +28,7 @@ router.get('/branch/:branchId', staffAuth, staffExceptProductManager, EcommerceO
 router.get('/product-demand', staffAuth, adminOnly, EcommerceOrderController.getProductDemandSummary);
 router.get('/product-sales', staffAuth, adminOnly, EcommerceOrderController.getProductSalesSummary);
 router.get('/product-demand/:productId', staffAuth, adminOnly, EcommerceOrderController.getProductDemandDetail);
+router.post('/paystack/reconcile', staffAuth, adminOnly, EcommerceOrderController.reconcilePaystackPayment);
 router.put('/staff/sb/:SBAccountNumber/items/:itemId/replace', staffAuth, staffExceptProductManager, EcommerceOrderController.replaceInstallmentOrderItemByStaff);
 router.get('/staff/:orderId/items/:itemId/receipt', staffAuth, staffExceptProductManager, EcommerceOrderController.getStaffOrderItemReceipt);
 

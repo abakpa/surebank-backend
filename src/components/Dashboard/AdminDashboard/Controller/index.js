@@ -274,6 +274,24 @@ const bcrypt = require('bcrypt')
             res.status(500).json({ message: error.message });
         }
       }
+      const getFirstLoginBonusExpense = async (req, res) => {
+        const {date,branchId} = req.body
+        try {
+            const expenditure = await accountTransactionService.getFirstLoginBonusExpense(date,branchId);
+            res.status(200).json(expenditure);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
+      const getTransactionBonusExpense = async (req, res) => {
+        const {date,branchId} = req.body
+        try {
+            const expenditure = await accountTransactionService.getTransactionBonusExpense(date,branchId);
+            res.status(200).json(expenditure);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
       const deleteExpenditure = async (req, res) => {
         // const {date,branchId} = req.body
         const expenditureId = req.params.id
@@ -438,6 +456,8 @@ const bcrypt = require('bcrypt')
     getFDAccountIncome,
     getAllSBandDSIncome,
     getAllExpenditure,
+    getFirstLoginBonusExpense,
+    getTransactionBonusExpense,
     deleteExpenditure,
     getProfit,
     getSBIncomeReport,

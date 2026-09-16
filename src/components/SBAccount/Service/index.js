@@ -13,6 +13,7 @@ const Customer = require('../../Customer/Model/index');
 const Staff = require('../../Staff/Model/index');
 const Branch = require('../../Branch/Model/index');
 const sendSMS = require('../../sendSMS');
+const ReferralService = require('../../Referral/Service');
 
 const getProductVariation = (product, variationId = '') => {
   if (!product || !variationId || !product.hasVariations || !Array.isArray(product.variations)) {
@@ -40,6 +41,17 @@ const getProductSellingPrice = (product, variationId = '') => {
   }
 
   return Number(product?.price || 0);
+};
+
+const tryCreditReferralForOrder = async (order) => {
+  if (!order) return null;
+
+  try {
+    return await ReferralService.creditReferralIncentivesForOrder(order);
+  } catch (error) {
+    console.error('Error crediting referral incentive after cost update:', error.message);
+    return { credited: false, reason: error.message };
+  }
 };
 
 const buildSBOrderWalletAccountNumber = (customer) => `${customer.phone}-SBW`;
@@ -994,12 +1006,48 @@ const updateCostPrice = async (details) => {
       if (!updatedcostPrice) {
         throw new Error('SBAccount not found or update failed');
       }
+      const linkedOrder = await updateLinkedOrderCostPrice({
+        SBAccountNumber,
+        costPrice: nextCostPrice,
+        profitAmount: profit,
+        editedBy,
+      });
+      await tryCreditReferralForOrder(linkedOrder);
   
       return { success: true, message: 'Cost price updated successfully', updatedcostPrice };
     // } catch (error) {
     //   throw new Error('An error occurred while updating the amount', error );
     // }
   };
+
+const updateLinkedOrderCostPrice = async ({ SBAccountNumber, costPrice, profitAmount, editedBy }) => {
+  const order = await EcommerceOrder.findOne({
+    SBAccountNumber,
+    status: { $ne: 'cancelled' }
+  }).sort({ updatedAt: -1, createdAt: -1 });
+
+  if (!order || !Array.isArray(order.items) || order.items.length === 0) {
+    return null;
+  }
+
+  if (order.items.length !== 1) {
+    return order;
+  }
+
+  const item = order.items[0];
+  const quantity = Math.max(1, Number(item.quantity || 1));
+  const costSubtotal = Number(costPrice || 0);
+  item.costPrice = Math.round((costSubtotal / quantity) * 100) / 100;
+  item.costSubtotal = costSubtotal;
+  item.profitAmount = Math.max(0, Number(profitAmount || (Number(item.subtotal || 0) - costSubtotal)));
+  item.requiresCostApproval = false;
+  item.costApprovedBy = editedBy;
+  item.costApprovedAt = new Date();
+  item.profitReported = false;
+  item.profitReportedAt = undefined;
+
+  return await order.save();
+};
 
 const updateSBAccountItemCostPrice = async ({ SBAccountNumber, itemId, costPrice, editedBy }) => {
   if (!SBAccountNumber) {
@@ -1054,7 +1102,45 @@ const updateSBAccountItemCostPrice = async ({ SBAccountNumber, itemId, costPrice
   sbaccount.editedBy = editedBy;
 
   await sbaccount.save();
+  const linkedOrder = await updateLinkedOrderItemCostPrice({
+    SBAccountNumber,
+    itemId,
+    costPrice: nextCostPrice,
+    costSubtotal,
+    profitAmount: sbaccount.items[itemIndex].profitAmount,
+    editedBy,
+  });
+  await tryCreditReferralForOrder(linkedOrder);
+
   return { success: true, message: 'Item cost price updated successfully', sbAccount: sbaccount };
+};
+
+const updateLinkedOrderItemCostPrice = async ({ SBAccountNumber, itemId, costPrice, costSubtotal, profitAmount, editedBy }) => {
+  const order = await EcommerceOrder.findOne({
+    SBAccountNumber,
+    status: { $ne: 'cancelled' }
+  }).sort({ updatedAt: -1, createdAt: -1 });
+
+  if (!order || !Array.isArray(order.items) || order.items.length === 0) {
+    return null;
+  }
+
+  const itemIndex = getItemIndexByIdOrIndex(order.items, itemId);
+  if (itemIndex === -1) {
+    return null;
+  }
+
+  const item = order.items[itemIndex];
+  item.costPrice = Number(costPrice || 0);
+  item.costSubtotal = Number(costSubtotal || 0);
+  item.profitAmount = Math.max(0, Number(profitAmount || 0));
+  item.requiresCostApproval = false;
+  item.costApprovedBy = editedBy;
+  item.costApprovedAt = new Date();
+  item.profitReported = false;
+  item.profitReportedAt = undefined;
+
+  return await order.save();
 };
 
 const updateLinkedOrderItemSellingPrice = async ({ SBAccountNumber, itemId, subtotal }) => {
@@ -1157,11 +1243,12 @@ const updateSBAccountItemSellingPrice = async ({ SBAccountNumber, itemId, sellin
   }
 
   await sbaccount.save();
-  await updateLinkedOrderItemSellingPrice({
+  const linkedOrder = await updateLinkedOrderItemSellingPrice({
     SBAccountNumber,
     itemId,
     subtotal: nextSubtotal
   });
+  await tryCreditReferralForOrder(linkedOrder);
 
   return { success: true, message: 'Item selling price updated successfully', sbAccount: sbaccount };
 };

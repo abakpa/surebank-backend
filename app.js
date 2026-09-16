@@ -15,7 +15,11 @@ const mongoURI = process.env.MONGO_URI
 
 mongoose.connect(mongoURI).then(()=>{console.log('MongoDb connected');initAllCronJobs();}).catch(err=>console.log(err))
 
-app.use(express.json());
+app.use(express.json({
+  verify: (req, res, buffer) => {
+    req.rawBody = buffer;
+  }
+}));
 app.use(express.urlencoded({ extended: true }));
 app.use(cors());
 
