@@ -36,6 +36,8 @@ router.post('/totalincome',staffAuth, AcountTransactionController.getAllSBandDSI
 router.post('/totalexpenditure',staffAuth, AcountTransactionController.getAllExpenditure);
 router.post('/firstloginbonusexpense',staffAuth, AcountTransactionController.getFirstLoginBonusExpense);
 router.post('/transactionbonusexpense',staffAuth, AcountTransactionController.getTransactionBonusExpense);
+router.post('/firstloginbonusexpensereport',staffAuth, AcountTransactionController.getFirstLoginBonusExpenseReport);
+router.post('/transactionbonusexpensereport',staffAuth, AcountTransactionController.getTransactionBonusExpenseReport);
 router.put('/deleteexpenditure/:id',staffAuth, AcountTransactionController.deleteExpenditure);
 router.post('/profit',staffAuth, AcountTransactionController.getProfit);
 router.post('/sbincomereport',staffAuth, AcountTransactionController.getSBIncomeReport);
