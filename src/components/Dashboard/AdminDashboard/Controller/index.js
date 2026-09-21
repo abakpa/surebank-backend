@@ -292,6 +292,24 @@ const bcrypt = require('bcrypt')
             res.status(500).json({ message: error.message });
         }
       }
+      const getFirstLoginBonusExpenseReport = async (req, res) => {
+        const {date,branchId} = req.body
+        try {
+            const report = await accountTransactionService.getFirstLoginBonusExpenseReport(date,branchId);
+            res.status(200).json(report);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
+      const getTransactionBonusExpenseReport = async (req, res) => {
+        const {date,branchId} = req.body
+        try {
+            const report = await accountTransactionService.getTransactionBonusExpenseReport(date,branchId);
+            res.status(200).json(report);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
       const deleteExpenditure = async (req, res) => {
         // const {date,branchId} = req.body
         const expenditureId = req.params.id
@@ -458,6 +476,8 @@ const bcrypt = require('bcrypt')
     getAllExpenditure,
     getFirstLoginBonusExpense,
     getTransactionBonusExpense,
+    getFirstLoginBonusExpenseReport,
+    getTransactionBonusExpenseReport,
     deleteExpenditure,
     getProfit,
     getSBIncomeReport,
