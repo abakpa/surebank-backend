@@ -9,6 +9,10 @@ const {
   getSBPackageItemSummary,
   getSBPackageCountValue,
 } = require('../../utils/sbPackageItemCount');
+const {
+  getDSNonPayingCustomers,
+  getSBNonPayingCustomers,
+} = require('../../utils/nonPayingCustomers');
 
 const normalizeDateInput = (dateInput) => {
   if (dateInput && typeof dateInput === 'object' && !Array.isArray(dateInput)) {
@@ -1075,6 +1079,11 @@ const getRepExpenditureReport = async (staff) => {
       return totalBalance = 0
     }
   }
+
+  const getRepNonPayingDSCustomers = async (period, staff) => getDSNonPayingCustomers({ period, accountManagerId: staff });
+
+  const getRepNonPayingSBCustomers = async (period, staff) => getSBNonPayingCustomers({ period, accountManagerId: staff });
+
 module.exports = {
     getAllRepDSAccount,
     getAllRepDSAccountWithdrawal,
@@ -1111,6 +1120,8 @@ module.exports = {
     getRepEcommerceDepositReport,
     getRepEcommerceDSDeposit,
     getRepEcommerceDSDepositReport,
+    getRepNonPayingDSCustomers,
+    getRepNonPayingSBCustomers,
     getAllFDPackage,
     getAllFDAccount,
     getDailyReversalTotal

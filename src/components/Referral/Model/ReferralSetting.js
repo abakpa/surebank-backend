@@ -23,11 +23,29 @@ const referralSettingSchema = new mongoose.Schema({
     type: Boolean,
     default: true,
   },
+  incentiveAmount: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
   incentivePercentage: {
     type: Number,
     default: 0,
     min: 0,
     max: 100,
+  },
+  productReferralEnabled: {
+    type: Boolean,
+    default: false,
+  },
+  referralQualifyingAmount: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+  sbReferralEnabled: {
+    type: Boolean,
+    default: false,
   },
   loginBonusEnabled: {
     type: Boolean,

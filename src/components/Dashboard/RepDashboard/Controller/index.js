@@ -343,6 +343,28 @@ const bcrypt = require('bcrypt')
                 }
               }
 
+              const getRepNonPayingDSCustomers = async (req, res) => {
+                const staff = req.staff.staffId;
+                const { period } = req.body;
+                try {
+                    const report = await accountTransactionService.getRepNonPayingDSCustomers(period, staff);
+                    res.status(200).json(report);
+                } catch (error) {
+                    res.status(500).json({ message: error.message });
+                }
+              }
+
+              const getRepNonPayingSBCustomers = async (req, res) => {
+                const staff = req.staff.staffId;
+                const { period } = req.body;
+                try {
+                    const report = await accountTransactionService.getRepNonPayingSBCustomers(period, staff);
+                    res.status(200).json(report);
+                } catch (error) {
+                    res.status(500).json({ message: error.message });
+                }
+              }
+
       module.exports = {
         getAllRepDSAccount,
         getAllRepDSAccountWithdrawal,
@@ -378,4 +400,6 @@ const bcrypt = require('bcrypt')
         getRepEcommerceDepositReport,
         getRepEcommerceDSDeposit,
         getRepEcommerceDSDepositReport,
+        getRepNonPayingDSCustomers,
+        getRepNonPayingSBCustomers,
       };

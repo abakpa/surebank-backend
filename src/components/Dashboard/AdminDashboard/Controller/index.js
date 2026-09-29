@@ -292,6 +292,15 @@ const bcrypt = require('bcrypt')
             res.status(500).json({ message: error.message });
         }
       }
+      const getReferralIncentiveExpense = async (req, res) => {
+        const {date,branchId} = req.body
+        try {
+            const expenditure = await accountTransactionService.getReferralIncentiveExpense(date,branchId);
+            res.status(200).json(expenditure);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
       const getFirstLoginBonusExpenseReport = async (req, res) => {
         const {date,branchId} = req.body
         try {
@@ -305,6 +314,15 @@ const bcrypt = require('bcrypt')
         const {date,branchId} = req.body
         try {
             const report = await accountTransactionService.getTransactionBonusExpenseReport(date,branchId);
+            res.status(200).json(report);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
+      const getReferralIncentiveExpenseReport = async (req, res) => {
+        const {date,branchId} = req.body
+        try {
+            const report = await accountTransactionService.getReferralIncentiveExpenseReport(date,branchId);
             res.status(200).json(report);
         } catch (error) {
             res.status(500).json({ message: error.message });
@@ -443,6 +461,26 @@ const bcrypt = require('bcrypt')
         }
       }
 
+      const getNonPayingDSCustomers = async (req, res) => {
+        const { period, branchId } = req.body;
+        try {
+            const report = await accountTransactionService.getNonPayingDSCustomers(period, branchId);
+            res.status(200).json(report);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
+
+      const getNonPayingSBCustomers = async (req, res) => {
+        const { period, branchId } = req.body;
+        try {
+            const report = await accountTransactionService.getNonPayingSBCustomers(period, branchId);
+            res.status(200).json(report);
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+      }
+
   module.exports = {
     getAllAvailableBalance,
     getAllDSAccount,
@@ -476,8 +514,10 @@ const bcrypt = require('bcrypt')
     getAllExpenditure,
     getFirstLoginBonusExpense,
     getTransactionBonusExpense,
+    getReferralIncentiveExpense,
     getFirstLoginBonusExpenseReport,
     getTransactionBonusExpenseReport,
+    getReferralIncentiveExpenseReport,
     deleteExpenditure,
     getProfit,
     getSBIncomeReport,
@@ -492,4 +532,6 @@ const bcrypt = require('bcrypt')
     getEcommerceDepositReport,
     getEcommerceDSDeposit,
     getEcommerceDSDepositReport,
+    getNonPayingDSCustomers,
+    getNonPayingSBCustomers,
   };

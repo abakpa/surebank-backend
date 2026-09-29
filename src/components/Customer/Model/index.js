@@ -67,6 +67,9 @@ const customerSchema = new mongoose.Schema({
     type: Number,
     default: 0,
   },
+  referralIncentiveTransferredAt: {
+    type: Date,
+  },
   loginBonusBalance: {
     type: Number,
     default: 0,
