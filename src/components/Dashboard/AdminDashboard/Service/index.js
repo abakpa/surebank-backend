@@ -1170,6 +1170,9 @@ async function getBonusExpense(date = null, branchId = null, type = null) {
   if (type === 'referral') {
     return getReferralIncentiveExpense(date, branchId);
   }
+  if (type === 'transaction') {
+    return getTransactionBonusLedgerExpense(date, branchId);
+  }
 
   if (!type) {
     const [firstLoginExpense, transactionExpense, referralExpense] = await Promise.all([
@@ -1200,6 +1203,34 @@ async function getBonusExpense(date = null, branchId = null, type = null) {
   return result[0]?.amount || 0;
 }
 
+const buildTransactionBonusLedgerQuery = (date = null, branchId = null) => {
+  const query = {
+    type: 'transaction',
+    creditedAt: buildCumulativeCreatedAtQuery(date),
+    $or: [
+      { narration: { $regex: ECOMMERCE_DEPOSIT_NARRATION_PATTERN } },
+      { narration: '' },
+      { narration: null },
+      { narration: { $exists: false } },
+    ],
+  };
+
+  if (branchId) {
+    query.branchId = branchId;
+  }
+
+  return query;
+};
+
+async function getTransactionBonusLedgerExpense(date = null, branchId = null) {
+  const result = await BonusLedger.aggregate([
+    { $match: buildTransactionBonusLedgerQuery(date, branchId) },
+    { $group: { _id: null, amount: { $sum: '$amount' } } },
+  ]);
+
+  return result[0]?.amount || 0;
+}
+
 const getFirstLoginBonusExpense = async (date = null, branchId = null) => (
   getCustomerFirstLoginBonusExpense(date, branchId)
 );
@@ -1207,13 +1238,12 @@ const getFirstLoginBonusExpense = async (date = null, branchId = null) => (
 const getTransactionBonusExpense = async (date = null, branchId = null) => {
   await safelyCreditPendingTransactionBonuses();
 
-  const [ledgerExpense, fallbackExpense, customerExpense] = await Promise.all([
-    getBonusExpense(date, branchId, 'transaction'),
+  const [ledgerExpense, fallbackExpense] = await Promise.all([
+    getTransactionBonusLedgerExpense(date, branchId),
     getUnledgeredTransactionBonusExpense(date, branchId),
-    getCustomerTransactionBonusExpense(date, branchId),
   ]);
 
-  return Math.max(ledgerExpense + fallbackExpense, customerExpense);
+  return ledgerExpense + fallbackExpense;
 };
 
 async function getReferralIncentiveExpense(date = null, branchId = null) {
@@ -1271,48 +1301,37 @@ async function getCustomerFirstLoginBonusExpense(date = null, branchId = null) {
 }
 
 async function getUnledgeredTransactionBonusExpense(date = null, branchId = null) {
-  const query = {
-    transactionBonusTotalEarned: { $gt: 0 },
-  };
-  if (hasDateFilter(date)) {
-    query.transactionBonusLastCreditedAt = buildCumulativeCreatedAtQuery(date);
-  }
+  const setting = await ReferralSetting.findOne({ key: 'default' }).lean();
+  const percentage = Number(setting?.transactionBonusPercentage || 0);
+  if (!setting?.transactionBonusEnabled || percentage <= 0) return 0;
 
-  if (branchId) {
-    query.branchId = branchId;
-  }
-
-  const customers = await Customer.find(query)
-    .select('_id transactionBonusTotalEarned')
-    .lean();
-  if (customers.length === 0) return 0;
-
-  const customerIds = customers.map((customer) => customer._id.toString());
-  const ledgerTotalQuery = {
-    type: 'transaction',
-    customerId: { $in: customerIds },
-    creditedAt: buildCumulativeCreatedAtQuery(date),
-  };
-  if (branchId) {
-    ledgerTotalQuery.branchId = branchId;
-  }
-  const ledgerTotals = await BonusLedger.aggregate([
-    { $match: ledgerTotalQuery },
-    {
-      $group: {
-        _id: '$customerId',
-        amount: { $sum: '$amount' },
-      },
-    },
+  const [transactions, ledgers] = await Promise.all([
+    AccountTransaction.find(buildEcommerceDepositTransactionQuery({ date, branchId }))
+      .select('_id transactionRef amount narration')
+      .lean(),
+    BonusLedger.find(buildTransactionBonusLedgerQuery(date, branchId))
+      .select('transactionRef amount')
+      .lean(),
   ]);
-  const ledgerTotalByCustomerId = new Map(
-    ledgerTotals.map((item) => [String(item._id), Number(item.amount || 0)])
-  );
 
-  return customers.reduce((sum, customer) => {
-    const totalEarned = Number(customer.transactionBonusTotalEarned || 0);
-    const ledgeredAmount = ledgerTotalByCustomerId.get(customer._id.toString()) || 0;
-    return sum + Math.max(totalEarned - ledgeredAmount, 0);
+  const ledgerRefs = new Set(
+    ledgers
+      .map((ledger) => String(ledger.transactionRef || '').trim())
+      .filter(Boolean)
+  );
+  let legacyLedgerAmount = ledgers
+    .filter((ledger) => !String(ledger.transactionRef || '').trim())
+    .reduce((sum, ledger) => sum + Number(ledger.amount || 0), 0);
+
+  return transactions.reduce((sum, transaction) => {
+    const transactionRef = String(transaction.transactionRef || transaction._id || '').trim();
+    const expectedBonus = Math.round(((Number(transaction.amount || 0) * percentage) / 100) * 100) / 100;
+    if (expectedBonus <= 0 || (transactionRef && ledgerRefs.has(transactionRef))) return sum;
+    if (legacyLedgerAmount >= expectedBonus) {
+      legacyLedgerAmount -= expectedBonus;
+      return sum;
+    }
+    return sum + expectedBonus;
   }, 0);
 }
 
@@ -1377,32 +1396,14 @@ async function getTransactionBonusExpenseReport(date = null, branchId = null) {
 
   const setting = await ReferralSetting.findOne({ key: 'default' }).lean();
   const fallbackPercentage = Number(setting?.transactionBonusPercentage || 0);
-  const query = {
-    creditedAt: buildCumulativeCreatedAtQuery(date),
-    type: 'transaction',
-  };
-
-  if (branchId) {
-    query.branchId = branchId;
-  }
+  const query = buildTransactionBonusLedgerQuery(date, branchId);
 
   const ledgers = await BonusLedger.find(query)
     .sort({ creditedAt: -1, createdAt: -1 })
     .lean();
 
   const ledgerCustomerIds = [...new Set(ledgers.map((ledger) => String(ledger.customerId || '')).filter(Boolean))];
-  const fallbackQuery = {
-    transactionBonusTotalEarned: { $gt: 0 },
-  };
-  if (hasDateFilter(date)) {
-    fallbackQuery.transactionBonusLastCreditedAt = buildCumulativeCreatedAtQuery(date);
-  }
-  if (branchId) {
-    fallbackQuery.branchId = branchId;
-  }
-  const fallbackCustomers = await Customer.find(fallbackQuery)
-    .select('_id firstName lastName phone branchId accountManagerId transactionBonusTotalEarned transactionBonusLastCreditedAt')
-    .lean();
+  const fallbackCustomers = [];
 
   const customerIds = [...new Set([
     ...ledgerCustomerIds,

@@ -12,8 +12,12 @@ const BonusLedger = require('../Model/BonusLedger');
 const normalizePhoneNumber = (value = '') => String(value || '').replace(/\D/g, '');
 const roundMoney = (value = 0) => Math.round(Number(value || 0) * 100) / 100;
 const isValidObjectIdString = (value = '') => /^[a-f\d]{24}$/i.test(String(value || ''));
-const TRANSACTION_BONUS_DEPOSIT_NARRATION_PATTERN = /^(Wallet Funding|SB Order Wallet Funding|Order Payment to Wallet|SB Order Wallet Deposit|Deposited by .* for Order)/i;
+const ECOMMERCE_TRANSACTION_BONUS_DEPOSIT_NARRATION_PATTERN = /^(Wallet Funding|SB Order Wallet Funding|Order Payment to Wallet)/i;
+const SB_PAID_WALLET_FUNDING_NARRATION_PATTERN = /^(Wallet Funding|SB Order Wallet Funding|Order Payment to Wallet|SB Order Wallet Deposit|Deposited by .* for Order)/i;
 const BONUS_TRANSFER_NARRATION_PATTERN = /(Bonus|Incentive) Transfer to Wallet/i;
+const isEcommerceTransactionBonusSource = (source = {}) => (
+  ECOMMERCE_TRANSACTION_BONUS_DEPOSIT_NARRATION_PATTERN.test(String(source.narration || ''))
+);
 
 const formatTransactionDate = (date = new Date()) => {
   return date.toLocaleString('en-GB', {
@@ -491,7 +495,7 @@ const getCustomerCumulativeSBPaidAmount = async (customerId) => {
           customerId: normalizedCustomerId,
           package: 'Wallet',
           direction: 'Credit',
-          narration: TRANSACTION_BONUS_DEPOSIT_NARRATION_PATTERN,
+          narration: SB_PAID_WALLET_FUNDING_NARRATION_PATTERN,
         },
       },
       { $match: { narration: { $not: BONUS_TRANSFER_NARRATION_PATTERN } } },
@@ -922,6 +926,9 @@ const creditTransactionBonusForDeposit = async (customerId, depositAmount = 0, s
   if (!Number.isFinite(normalizedDepositAmount) || normalizedDepositAmount <= 0) {
     return { credited: false, reason: 'invalid_deposit_amount' };
   }
+  if (!isEcommerceTransactionBonusSource(source)) {
+    return { credited: false, reason: 'not_ecommerce_transaction' };
+  }
 
   const setting = await getReferralSetting();
   const percentage = Number(setting.transactionBonusPercentage || 0);
@@ -1020,7 +1027,7 @@ const creditPendingTransactionBonusesForCustomer = async (customerId) => {
       customerId: normalizedCustomerId,
       package: 'Wallet',
       direction: 'Credit',
-      narration: TRANSACTION_BONUS_DEPOSIT_NARRATION_PATTERN,
+      narration: ECOMMERCE_TRANSACTION_BONUS_DEPOSIT_NARRATION_PATTERN,
     })
       .sort({ createdAt: 1 })
       .lean(),
@@ -1084,7 +1091,7 @@ const creditPendingTransactionBonuses = async () => {
   const transactions = await AccountTransaction.find({
     package: 'Wallet',
     direction: 'Credit',
-    narration: TRANSACTION_BONUS_DEPOSIT_NARRATION_PATTERN,
+    narration: ECOMMERCE_TRANSACTION_BONUS_DEPOSIT_NARRATION_PATTERN,
   }).select('customerId narration').lean();
   const customerIds = [...new Set(
     transactions
