@@ -12,8 +12,12 @@ const BonusLedger = require('../Model/BonusLedger');
 const normalizePhoneNumber = (value = '') => String(value || '').replace(/\D/g, '');
 const roundMoney = (value = 0) => Math.round(Number(value || 0) * 100) / 100;
 const isValidObjectIdString = (value = '') => /^[a-f\d]{24}$/i.test(String(value || ''));
-const TRANSACTION_BONUS_DEPOSIT_NARRATION_PATTERN = /^(Wallet Funding|SB Order Wallet Funding|Order Payment to Wallet|SB Order Wallet Deposit|Deposited by .* for Order)/i;
+const ECOMMERCE_TRANSACTION_BONUS_DEPOSIT_NARRATION_PATTERN = /^(Wallet Funding|SB Order Wallet Funding|Order Payment to Wallet)/i;
+const SB_PAID_WALLET_FUNDING_NARRATION_PATTERN = /^(Wallet Funding|SB Order Wallet Funding|Order Payment to Wallet|SB Order Wallet Deposit|Deposited by .* for Order)/i;
 const BONUS_TRANSFER_NARRATION_PATTERN = /(Bonus|Incentive) Transfer to Wallet/i;
+const isEcommerceTransactionBonusSource = (source = {}) => (
+  ECOMMERCE_TRANSACTION_BONUS_DEPOSIT_NARRATION_PATTERN.test(String(source.narration || ''))
+);
 
 const formatTransactionDate = (date = new Date()) => {
   return date.toLocaleString('en-GB', {
@@ -491,7 +495,7 @@ const getCustomerCumulativeSBPaidAmount = async (customerId) => {
           customerId: normalizedCustomerId,
           package: 'Wallet',
           direction: 'Credit',
-          narration: TRANSACTION_BONUS_DEPOSIT_NARRATION_PATTERN,
+          narration: SB_PAID_WALLET_FUNDING_NARRATION_PATTERN,
         },
       },
       { $match: { narration: { $not: BONUS_TRANSFER_NARRATION_PATTERN } } },
@@ -922,6 +926,9 @@ const creditTransactionBonusForDeposit = async (customerId, depositAmount = 0, s
   if (!Number.isFinite(normalizedDepositAmount) || normalizedDepositAmount <= 0) {
     return { credited: false, reason: 'invalid_deposit_amount' };
   }
+  if (!isEcommerceTransactionBonusSource(source)) {
+    return { credited: false, reason: 'not_ecommerce_transaction' };
+  }
 
   const setting = await getReferralSetting();
   const percentage = Number(setting.transactionBonusPercentage || 0);
@@ -935,30 +942,69 @@ const creditTransactionBonusForDeposit = async (customerId, depositAmount = 0, s
   }
 
   const transactionRef = String(source.transactionRef || source.reference || '').trim();
-  if (transactionRef) {
-    const existingLedger = await BonusLedger.findOne({
-      type: 'transaction',
-      customerId: customerId.toString(),
-      transactionRef,
-    }).lean();
-
-    if (existingLedger) {
-      const customer = await Customer.findById(customerId).select('-password').lean();
-      return {
-        credited: false,
-        reason: 'already_credited',
-        amount: roundMoney(existingLedger.amount || 0),
-        percentage: Number(existingLedger.percentage || percentage),
-        depositAmount: roundMoney(existingLedger.depositAmount || normalizedDepositAmount),
-        transactionBonusBalance: roundMoney(customer?.transactionBonusBalance || 0),
-        transactionBonusTotalEarned: roundMoney(customer?.transactionBonusTotalEarned || 0),
-        transactionBonusLastCreditedAt: customer?.transactionBonusLastCreditedAt || existingLedger.creditedAt || null,
-      };
-    }
+  if (!transactionRef) {
+    return { credited: false, reason: 'missing_transaction_reference' };
   }
 
   const creditedAt = new Date();
-  const customer = await Customer.findByIdAndUpdate(
+  const existingLedger = await BonusLedger.findOne({
+    type: 'transaction',
+    customerId: customerId.toString(),
+    transactionRef,
+  }).lean();
+  if (existingLedger) {
+    const customer = await Customer.findById(customerId).select('-password').lean();
+    return {
+      credited: false,
+      reason: 'already_credited',
+      amount: roundMoney(existingLedger.amount || 0),
+      percentage: Number(existingLedger.percentage || percentage),
+      depositAmount: roundMoney(existingLedger.depositAmount || normalizedDepositAmount),
+      transactionBonusBalance: roundMoney(customer?.transactionBonusBalance || 0),
+      transactionBonusTotalEarned: roundMoney(customer?.transactionBonusTotalEarned || 0),
+      transactionBonusLastCreditedAt: customer?.transactionBonusLastCreditedAt || existingLedger.creditedAt || null,
+    };
+  }
+
+  let customer = await Customer.findById(customerId).select('-password');
+  if (!customer) {
+    throw new Error('Customer not found');
+  }
+
+  const ledgerResult = await BonusLedger.updateOne(
+    { type: 'transaction', customerId: customer._id.toString(), transactionRef },
+    {
+      $setOnInsert: {
+        type: 'transaction',
+        customerId: customer._id.toString(),
+        amount,
+        depositAmount: normalizedDepositAmount,
+        percentage,
+        transactionRef,
+        narration: source.narration || '',
+        branchId: customer.branchId || '',
+        accountManagerId: customer.accountManagerId || '',
+        creditedAt,
+      },
+    },
+    { upsert: true }
+  );
+
+  if (ledgerResult.upsertedCount <= 0) {
+    customer = await Customer.findById(customerId).select('-password');
+    return {
+      credited: false,
+      reason: 'already_credited',
+      amount,
+      percentage,
+      depositAmount: normalizedDepositAmount,
+      transactionBonusBalance: roundMoney(customer?.transactionBonusBalance || 0),
+      transactionBonusTotalEarned: roundMoney(customer?.transactionBonusTotalEarned || 0),
+      transactionBonusLastCreditedAt: customer?.transactionBonusLastCreditedAt || creditedAt,
+    };
+  }
+
+  customer = await Customer.findByIdAndUpdate(
     customerId,
     {
       $inc: {
@@ -971,23 +1017,6 @@ const creditTransactionBonusForDeposit = async (customerId, depositAmount = 0, s
     },
     { new: true }
   ).select('-password');
-
-  if (!customer) {
-    throw new Error('Customer not found');
-  }
-
-  await BonusLedger.create({
-    type: 'transaction',
-    customerId: customer._id.toString(),
-    amount,
-    depositAmount: normalizedDepositAmount,
-    percentage,
-    transactionRef,
-    narration: source.narration || '',
-    branchId: customer.branchId || '',
-    accountManagerId: customer.accountManagerId || '',
-    creditedAt,
-  });
 
   return {
     credited: true,
@@ -1020,7 +1049,7 @@ const creditPendingTransactionBonusesForCustomer = async (customerId) => {
       customerId: normalizedCustomerId,
       package: 'Wallet',
       direction: 'Credit',
-      narration: TRANSACTION_BONUS_DEPOSIT_NARRATION_PATTERN,
+      narration: ECOMMERCE_TRANSACTION_BONUS_DEPOSIT_NARRATION_PATTERN,
     })
       .sort({ createdAt: 1 })
       .lean(),
@@ -1084,7 +1113,7 @@ const creditPendingTransactionBonuses = async () => {
   const transactions = await AccountTransaction.find({
     package: 'Wallet',
     direction: 'Credit',
-    narration: TRANSACTION_BONUS_DEPOSIT_NARRATION_PATTERN,
+    narration: ECOMMERCE_TRANSACTION_BONUS_DEPOSIT_NARRATION_PATTERN,
   }).select('customerId narration').lean();
   const customerIds = [...new Set(
     transactions
