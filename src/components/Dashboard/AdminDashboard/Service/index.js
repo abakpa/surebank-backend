@@ -12,11 +12,17 @@ const Branch = require('../../../Branch/Model');
 const Customer = require('../../../Customer/Model');
 const Staff = require('../../../Staff/Model');
 const BonusLedger = require('../../../Referral/Model/BonusLedger');
+const ReferralLedger = require('../../../Referral/Model/ReferralLedger');
 const ReferralSetting = require('../../../Referral/Model/ReferralSetting');
+const ReferralService = require('../../../Referral/Service');
 const {
   getSBPackageItemSummary,
   getSBPackageCountValue,
 } = require('../../utils/sbPackageItemCount');
+const {
+  getDSNonPayingCustomers,
+  getSBNonPayingCustomers,
+} = require('../../utils/nonPayingCustomers');
 
 const normalizeDateInput = (dateInput) => {
   if (dateInput && typeof dateInput === 'object' && !Array.isArray(dateInput)) {
@@ -28,6 +34,11 @@ const normalizeDateInput = (dateInput) => {
   }
 
   return { date: dateInput || '', startDate: '', endDate: '' };
+};
+
+const hasDateFilter = (dateInput) => {
+  const { date, startDate, endDate } = normalizeDateInput(dateInput);
+  return Boolean(date || startDate || endDate);
 };
 
 const getStartOfDay = (value) => {
@@ -117,6 +128,24 @@ const buildStaffTransactionHistoryQuery = (createdBy) => ({
     }
   ]
 });
+
+const safelyCreditPendingTransactionBonuses = async () => {
+  try {
+    return await ReferralService.creditPendingTransactionBonuses();
+  } catch (error) {
+    console.error('Failed to credit pending transaction bonuses:', error);
+    return { checked: 0, credited: 0, error: error.message };
+  }
+};
+
+const safelyCreditPendingSBReferralIncentives = async () => {
+  try {
+    return await ReferralService.creditPendingSBReferralIncentives();
+  } catch (error) {
+    console.error('Failed to credit pending SB referral incentives:', error);
+    return { checked: 0, credited: 0, error: error.message };
+  }
+};
 
 const buildEcommerceDepositTransactionQuery = ({ date = null, branchId = null, createdBy = null } = {}) => {
   const query = {
@@ -1138,13 +1167,17 @@ async function getBonusExpense(date = null, branchId = null, type = null) {
   if (type === 'first_login') {
     return getFirstLoginBonusExpense(date, branchId);
   }
+  if (type === 'referral') {
+    return getReferralIncentiveExpense(date, branchId);
+  }
 
   if (!type) {
-    const [firstLoginExpense, transactionExpense] = await Promise.all([
+    const [firstLoginExpense, transactionExpense, referralExpense] = await Promise.all([
       getFirstLoginBonusExpense(date, branchId),
       getTransactionBonusExpense(date, branchId),
+      getReferralIncentiveExpense(date, branchId),
     ]);
-    return firstLoginExpense + transactionExpense;
+    return firstLoginExpense + transactionExpense + referralExpense;
   }
 
   const query = {
@@ -1172,13 +1205,52 @@ const getFirstLoginBonusExpense = async (date = null, branchId = null) => (
 );
 
 const getTransactionBonusExpense = async (date = null, branchId = null) => {
-  const [ledgerExpense, fallbackExpense] = await Promise.all([
+  await safelyCreditPendingTransactionBonuses();
+
+  const [ledgerExpense, fallbackExpense, customerExpense] = await Promise.all([
     getBonusExpense(date, branchId, 'transaction'),
     getUnledgeredTransactionBonusExpense(date, branchId),
+    getCustomerTransactionBonusExpense(date, branchId),
   ]);
 
-  return ledgerExpense + fallbackExpense;
+  return Math.max(ledgerExpense + fallbackExpense, customerExpense);
 };
+
+async function getReferralIncentiveExpense(date = null, branchId = null) {
+  await safelyCreditPendingSBReferralIncentives();
+
+  const query = {
+    incentiveType: 'sb_qualification',
+    creditedAt: buildCumulativeCreatedAtQuery(date),
+  };
+
+  if (!branchId) {
+    const result = await ReferralLedger.aggregate([
+      { $match: query },
+      { $group: { _id: null, amount: { $sum: '$amount' } } },
+    ]);
+    return result[0]?.amount || 0;
+  }
+
+  const ledgers = await ReferralLedger.find(query).select('beneficiaryCustomerId branchId amount').lean();
+  if (ledgers.length === 0) return 0;
+
+  const customerIds = [...new Set(
+    ledgers
+      .filter((ledger) => !ledger.branchId)
+      .map((ledger) => String(ledger.beneficiaryCustomerId || ''))
+      .filter(Boolean)
+  )];
+  const customers = customerIds.length
+    ? await Customer.find({ _id: { $in: customerIds } }).select('_id branchId').lean()
+    : [];
+  const customerBranchMap = new Map(customers.map((customer) => [customer._id.toString(), String(customer.branchId || '')]));
+
+  return ledgers.reduce((sum, ledger) => {
+    const resolvedBranchId = String(ledger.branchId || customerBranchMap.get(String(ledger.beneficiaryCustomerId || '')) || '');
+    return resolvedBranchId === String(branchId) ? sum + Number(ledger.amount || 0) : sum;
+  }, 0);
+}
 
 async function getCustomerFirstLoginBonusExpense(date = null, branchId = null) {
   const query = {
@@ -1201,8 +1273,10 @@ async function getCustomerFirstLoginBonusExpense(date = null, branchId = null) {
 async function getUnledgeredTransactionBonusExpense(date = null, branchId = null) {
   const query = {
     transactionBonusTotalEarned: { $gt: 0 },
-    transactionBonusLastCreditedAt: buildCumulativeCreatedAtQuery(date),
   };
+  if (hasDateFilter(date)) {
+    query.transactionBonusLastCreditedAt = buildCumulativeCreatedAtQuery(date);
+  }
 
   if (branchId) {
     query.branchId = branchId;
@@ -1214,13 +1288,16 @@ async function getUnledgeredTransactionBonusExpense(date = null, branchId = null
   if (customers.length === 0) return 0;
 
   const customerIds = customers.map((customer) => customer._id.toString());
+  const ledgerTotalQuery = {
+    type: 'transaction',
+    customerId: { $in: customerIds },
+    creditedAt: buildCumulativeCreatedAtQuery(date),
+  };
+  if (branchId) {
+    ledgerTotalQuery.branchId = branchId;
+  }
   const ledgerTotals = await BonusLedger.aggregate([
-    {
-      $match: {
-        type: 'transaction',
-        customerId: { $in: customerIds },
-      },
-    },
+    { $match: ledgerTotalQuery },
     {
       $group: {
         _id: '$customerId',
@@ -1237,6 +1314,26 @@ async function getUnledgeredTransactionBonusExpense(date = null, branchId = null
     const ledgeredAmount = ledgerTotalByCustomerId.get(customer._id.toString()) || 0;
     return sum + Math.max(totalEarned - ledgeredAmount, 0);
   }, 0);
+}
+
+async function getCustomerTransactionBonusExpense(date = null, branchId = null) {
+  const query = {
+    transactionBonusTotalEarned: { $gt: 0 },
+  };
+  if (hasDateFilter(date)) {
+    query.transactionBonusLastCreditedAt = buildCumulativeCreatedAtQuery(date);
+  }
+
+  if (branchId) {
+    query.branchId = branchId;
+  }
+
+  const result = await Customer.aggregate([
+    { $match: query },
+    { $group: { _id: null, amount: { $sum: '$transactionBonusTotalEarned' } } },
+  ]);
+
+  return result[0]?.amount || 0;
 }
 
 async function getFirstLoginBonusExpenseReport(date = null, branchId = null) {
@@ -1276,6 +1373,8 @@ async function getFirstLoginBonusExpenseReport(date = null, branchId = null) {
 }
 
 async function getTransactionBonusExpenseReport(date = null, branchId = null) {
+  await safelyCreditPendingTransactionBonuses();
+
   const setting = await ReferralSetting.findOne({ key: 'default' }).lean();
   const fallbackPercentage = Number(setting?.transactionBonusPercentage || 0);
   const query = {
@@ -1294,8 +1393,10 @@ async function getTransactionBonusExpenseReport(date = null, branchId = null) {
   const ledgerCustomerIds = [...new Set(ledgers.map((ledger) => String(ledger.customerId || '')).filter(Boolean))];
   const fallbackQuery = {
     transactionBonusTotalEarned: { $gt: 0 },
-    transactionBonusLastCreditedAt: buildCumulativeCreatedAtQuery(date),
   };
+  if (hasDateFilter(date)) {
+    fallbackQuery.transactionBonusLastCreditedAt = buildCumulativeCreatedAtQuery(date);
+  }
   if (branchId) {
     fallbackQuery.branchId = branchId;
   }
@@ -1316,17 +1417,21 @@ async function getTransactionBonusExpenseReport(date = null, branchId = null) {
     ...fallbackCustomers.map((customer) => String(customer.accountManagerId || '')).filter(isValidObjectId),
   ])];
 
+  const scopedLedgerTotalQuery = {
+    type: 'transaction',
+    customerId: { $in: fallbackCustomers.map((customer) => customer._id.toString()) },
+    creditedAt: buildCumulativeCreatedAtQuery(date),
+  };
+  if (branchId) {
+    scopedLedgerTotalQuery.branchId = branchId;
+  }
+
   const [customers, branches, staffList, ledgerTotals] = await Promise.all([
     customerIds.length ? Customer.find({ _id: { $in: customerIds } }).select('_id firstName lastName phone').lean() : [],
     branchIds.length ? Branch.find({ _id: { $in: branchIds } }).select('_id name').lean() : [],
     staffIds.length ? Staff.find({ _id: { $in: staffIds } }).select('_id firstName lastName').lean() : [],
     fallbackCustomers.length ? BonusLedger.aggregate([
-      {
-        $match: {
-          type: 'transaction',
-          customerId: { $in: fallbackCustomers.map((customer) => customer._id.toString()) },
-        },
-      },
+      { $match: scopedLedgerTotalQuery },
       { $group: { _id: '$customerId', amount: { $sum: '$amount' } } },
     ]) : [],
   ]);
@@ -1377,6 +1482,69 @@ async function getTransactionBonusExpenseReport(date = null, branchId = null) {
 
   return [...ledgerRows, ...fallbackRows].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
 }
+
+async function getReferralIncentiveExpenseReport(date = null, branchId = null) {
+  await safelyCreditPendingSBReferralIncentives();
+
+  const query = {
+    incentiveType: 'sb_qualification',
+    creditedAt: buildCumulativeCreatedAtQuery(date),
+  };
+
+  if (branchId) {
+    query.$or = [
+      { branchId },
+      { branchId: { $in: ['', null] } },
+      { branchId: { $exists: false } },
+    ];
+  }
+
+  const ledgers = await ReferralLedger.find(query)
+    .sort({ creditedAt: -1, createdAt: -1 })
+    .lean();
+
+  const beneficiaryIds = [...new Set(ledgers.map((ledger) => String(ledger.beneficiaryCustomerId || '')).filter(Boolean))];
+  const buyerIds = [...new Set(ledgers.map((ledger) => String(ledger.buyerCustomerId || '')).filter(Boolean))];
+  const customerIds = [...new Set([...beneficiaryIds, ...buyerIds])];
+  const staffIds = [...new Set(ledgers.map((ledger) => String(ledger.accountManagerId || '')).filter(isValidObjectId))];
+  const branchIds = [...new Set(ledgers.map((ledger) => String(ledger.branchId || '')).filter(Boolean))];
+
+  const [customers, branches, staffList] = await Promise.all([
+    customerIds.length ? Customer.find({ _id: { $in: customerIds } }).select('_id firstName lastName phone branchId accountManagerId').lean() : [],
+    branchIds.length ? Branch.find({ _id: { $in: branchIds } }).select('_id name').lean() : [],
+    staffIds.length ? Staff.find({ _id: { $in: staffIds } }).select('_id firstName lastName').lean() : [],
+  ]);
+
+  const customerMap = new Map(customers.map((customer) => [customer._id.toString(), customer]));
+  const branchMap = new Map(branches.map((branch) => [branch._id.toString(), branch]));
+  const staffMap = new Map(staffList.map((staff) => [staff._id.toString(), staff]));
+
+  return ledgers
+    .map((ledger) => {
+      const beneficiary = customerMap.get(String(ledger.beneficiaryCustomerId || '')) || null;
+      const buyer = customerMap.get(String(ledger.buyerCustomerId || '')) || null;
+      const resolvedBranchId = String(ledger.branchId || beneficiary?.branchId || '');
+
+      if (branchId && resolvedBranchId !== String(branchId)) {
+        return null;
+      }
+
+      return {
+        _id: ledger._id,
+        customerName: formatCustomerName(beneficiary),
+        phone: beneficiary?.phone || 'N/A',
+        bonusType: 'SB Referral Incentive',
+        amount: Number(ledger.amount || 0),
+        referredCustomerName: formatCustomerName(buyer),
+        referredCustomerPhone: buyer?.phone || 'N/A',
+        qualifyingAmount: Number(ledger.purchaseAmount || 0),
+        date: ledger.creditedAt || ledger.createdAt,
+        branchName: branchMap.get(resolvedBranchId)?.name || 'N/A',
+        staffName: formatStaffName(staffMap.get(String(ledger.accountManagerId || beneficiary?.accountManagerId || '')) || null),
+      };
+    })
+    .filter(Boolean);
+}
 const deleteExpenditure = async (expenditureId) => {
   try {
     const result = await Expenditure.findByIdAndUpdate(
@@ -1397,27 +1565,12 @@ const deleteExpenditure = async (expenditureId) => {
 };
 
 async function getProfit(date = null, branchId = null) {
-    // Use today's date if none is provided
-    const endDate = date ? new Date(date) : new Date();
-    endDate.setHours(23, 59, 59, 999); // Include the full day
+    const [income, expenditure] = await Promise.all([
+      getAllSBandDSIncome(date, branchId),
+      getAllExpenditure(date, branchId),
+    ]);
 
-    // Build query with date filter
-    const query = {
-      createdAt: { $lte: endDate },
-    };
-
-    // Optionally filter by branch
-    if (branchId) {
-      query.branchId = branchId;
-    }
-
-    // Total income already includes ecommerce income (from getAllSBandDSIncome)
-    const income = await getAllSBandDSIncome(date,branchId)
-    const expenditure = await getAllExpenditure(date,branchId)
-
-    const profit = income - expenditure
-
-    return profit;
+    return income - expenditure;
 }
 const getSBIncomeReport = async () => {
     try {
@@ -1941,6 +2094,10 @@ async function getEcommerceDSDepositReport(date = null, branchId = null) {
   }
 }
 
+const getNonPayingDSCustomers = async (period, branchId) => getDSNonPayingCustomers({ period, branchId });
+
+const getNonPayingSBCustomers = async (period, branchId) => getSBNonPayingCustomers({ period, branchId });
+
   module.exports = {
     getAllAvailableBalance,
     getAllDSAccount,
@@ -1980,8 +2137,10 @@ async function getEcommerceDSDepositReport(date = null, branchId = null) {
     getAllExpenditure,
     getFirstLoginBonusExpense,
     getTransactionBonusExpense,
+    getReferralIncentiveExpense,
     getFirstLoginBonusExpenseReport,
     getTransactionBonusExpenseReport,
+    getReferralIncentiveExpenseReport,
     deleteExpenditure,
     getProfit,
     getSBIncomeReport,
@@ -1996,4 +2155,6 @@ async function getEcommerceDSDepositReport(date = null, branchId = null) {
     getEcommerceDepositReport,
     getEcommerceDSDeposit,
     getEcommerceDSDepositReport,
+    getNonPayingDSCustomers,
+    getNonPayingSBCustomers,
   };

@@ -31,6 +31,8 @@ router.post('/branchecommercedeposit', staffAuth, AcountTransactionController.ge
 router.post('/branchecommercedepositreport', staffAuth, AcountTransactionController.getBranchEcommerceDepositReport);
 router.post('/branchecommercedsdeposit', staffAuth, AcountTransactionController.getBranchEcommerceDSDeposit);
 router.post('/branchecommercedsdepositreport', staffAuth, AcountTransactionController.getBranchEcommerceDSDepositReport);
+router.post('/branchnonpayingds', staffAuth, AcountTransactionController.getBranchNonPayingDSCustomers);
+router.post('/branchnonpayingsb', staffAuth, AcountTransactionController.getBranchNonPayingSBCustomers);
 router.post('/branchfd', staffAuth, AcountTransactionController.getAllFDAccount);
 router.post('/branchfdreport', staffAuth, AcountTransactionController.getAllFDTransaction);
 router.post('/branchfdinterestincome', staffAuth, AcountTransactionController.getAllFDInterestIncome);

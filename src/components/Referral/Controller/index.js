@@ -12,7 +12,11 @@ const getAdminSummary = async (req, res) => {
 const updateSettings = async (req, res) => {
   try {
     const result = await ReferralService.updateReferralSettings({
+      incentiveAmount: req.body.incentiveAmount,
       incentivePercentage: req.body.incentivePercentage,
+      productReferralEnabled: req.body.productReferralEnabled,
+      referralQualifyingAmount: req.body.referralQualifyingAmount,
+      sbReferralEnabled: req.body.sbReferralEnabled,
       enabled: req.body.enabled,
       loginBonusEnabled: req.body.loginBonusEnabled,
       loginBonusAmount: req.body.loginBonusAmount,

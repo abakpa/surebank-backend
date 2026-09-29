@@ -11,6 +11,10 @@ const {
   getSBPackageItemSummary,
   getSBPackageCountValue,
 } = require('../../utils/sbPackageItemCount');
+const {
+  getDSNonPayingCustomers,
+  getSBNonPayingCustomers,
+} = require('../../utils/nonPayingCustomers');
 
 const normalizeDateInput = (dateInput) => {
   if (dateInput && typeof dateInput === 'object' && !Array.isArray(dateInput)) {
@@ -1359,6 +1363,23 @@ const getBranchEcommerceDSDepositReport = async (date = null, staff) => {
     };
   });
 };
+
+const getManagerBranchId = async (staff) => {
+  const manager = await Staff.findById(staff).select('branchId').lean();
+  return manager?.branchId || null;
+};
+
+const getBranchNonPayingDSCustomers = async (period, staff) => {
+  const branchId = await getManagerBranchId(staff);
+  if (!branchId) return { count: 0, periodDays: 14, customers: [] };
+  return getDSNonPayingCustomers({ period, branchId });
+};
+
+const getBranchNonPayingSBCustomers = async (period, staff) => {
+  const branchId = await getManagerBranchId(staff);
+  if (!branchId) return { count: 0, periodDays: 14, customers: [] };
+  return getSBNonPayingCustomers({ period, branchId });
+};
 module.exports = {
     getAllBranchDSAccount,
     getAllBranchDSAccountWithdrawal,
@@ -1400,5 +1421,7 @@ module.exports = {
     getBranchEcommerceDepositReport,
     getBranchEcommerceDSDeposit,
     getBranchEcommerceDSDepositReport,
+    getBranchNonPayingDSCustomers,
+    getBranchNonPayingSBCustomers,
     getDailyReversalTotal,
   };

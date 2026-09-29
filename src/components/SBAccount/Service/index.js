@@ -1380,7 +1380,8 @@ const getAccountByAccountNumber = async (accountNumber) => {
 
       const sbNewBalance = await SBAccount.findByIdAndUpdate(SBAccountId, {
         balance: sbaccount.balance + contributionInput.amount,
-      });
+      }, { new: true });
+      await tryCreditReferralForOrder(sbNewBalance || sbaccount);
       // const message = `Your account has been credited with NGN${contributionInput.amount}, Date:${sbNewBalance.createdAt} Bal:${sbNewBalance.balance}`
       // await sendSMS(sbaccount.accountNumber,message)
       return { data: newContribution, message: "deposit successful" };
@@ -1819,6 +1820,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
 
       sbaccount.items[itemIndex].paidAmount = itemAmount;
       await sbaccount.save();
+      await tryCreditReferralForOrder(sbaccount);
 
       return {
         sbAccount: sbaccount,

@@ -967,6 +967,7 @@ const processWalletFundingFromPaystackData = async (paystackData = {}, options =
   if (existingTransaction) {
     let autoPaidOrder = null;
     let autoPayError = null;
+    let transactionBonus = null;
     if (walletData.autoPayOrderNumber && walletData.autoPayItemId) {
       try {
         const EcommerceOrderService = require('../../EcommerceOrder/Service/index');
@@ -980,6 +981,19 @@ const processWalletFundingFromPaystackData = async (paystackData = {}, options =
       }
     }
 
+    try {
+      transactionBonus = await ReferralService.creditTransactionBonusForDeposit(
+        customer._id,
+        existingTransaction.amount,
+        {
+          transactionRef: existingTransaction.transactionRef || reference,
+          narration: existingTransaction.narration || '',
+        }
+      );
+    } catch (error) {
+      transactionBonus = { credited: false, reason: error.message };
+    }
+
     const refreshedAccount = await Account.findById(account._id);
     const transactions = await getWalletTransactions(account._id, customer._id);
     return {
@@ -988,6 +1002,7 @@ const processWalletFundingFromPaystackData = async (paystackData = {}, options =
       transactions,
       autoPaidOrder,
       autoPayError,
+      transactionBonus,
       alreadyProcessed: true,
       paymentDetails: {
         amount: existingTransaction.amount,
@@ -1044,6 +1059,7 @@ const processWalletFundingFromPaystackData = async (paystackData = {}, options =
   let autoPaidOrder = null;
   let autoPayError = null;
   let transactionBonus = null;
+  let sbReferralIncentive = null;
   if (walletData.autoPayOrderNumber && walletData.autoPayItemId) {
     try {
       const EcommerceOrderService = require('../../EcommerceOrder/Service/index');
@@ -1059,9 +1075,20 @@ const processWalletFundingFromPaystackData = async (paystackData = {}, options =
   }
 
   try {
-    transactionBonus = await ReferralService.creditTransactionBonusForDeposit(customer._id, amount);
+    transactionBonus = await ReferralService.creditTransactionBonusForDeposit(customer._id, amount, {
+      transactionRef: reference,
+      narration,
+    });
   } catch (error) {
     transactionBonus = { credited: false, reason: error.message };
+  }
+
+  try {
+    sbReferralIncentive = await ReferralService.creditReferralIncentivesForCustomer(customer._id, {
+      sourceOrderNumber: 'SB Order Wallet Funding',
+    });
+  } catch (error) {
+    sbReferralIncentive = { credited: false, reason: error.message };
   }
 
   const transactions = await getWalletTransactions(account._id, customer._id);
@@ -1074,6 +1101,7 @@ const processWalletFundingFromPaystackData = async (paystackData = {}, options =
     autoPaidOrder,
     autoPayError,
     transactionBonus,
+    sbReferralIncentive,
     alreadyProcessed: false,
     paymentDetails: {
       amount,

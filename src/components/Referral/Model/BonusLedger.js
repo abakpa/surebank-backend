@@ -23,6 +23,14 @@ const bonusLedgerSchema = new mongoose.Schema({
     type: Number,
     default: 0,
   },
+  transactionRef: {
+    type: String,
+    default: '',
+  },
+  narration: {
+    type: String,
+    default: '',
+  },
   branchId: {
     type: String,
     ref: 'Branch',

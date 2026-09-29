@@ -31,6 +31,8 @@ router.post('/repecommercedeposit', staffAuth, AcountTransactionController.getRe
 router.post('/repecommercedepositreport', staffAuth, AcountTransactionController.getRepEcommerceDepositReport);
 router.post('/repecommercedsdeposit', staffAuth, AcountTransactionController.getRepEcommerceDSDeposit);
 router.post('/repecommercedsdepositreport', staffAuth, AcountTransactionController.getRepEcommerceDSDepositReport);
+router.post('/repnonpayingds', staffAuth, AcountTransactionController.getRepNonPayingDSCustomers);
+router.post('/repnonpayingsb', staffAuth, AcountTransactionController.getRepNonPayingSBCustomers);
 router.post('/repfdpackage', staffAuth, AcountTransactionController.getAllFDPackage);
 router.post('/repfd', staffAuth, AcountTransactionController.getAllFDAccount);
 

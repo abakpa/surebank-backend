@@ -36,8 +36,10 @@ router.post('/totalincome',staffAuth, AcountTransactionController.getAllSBandDSI
 router.post('/totalexpenditure',staffAuth, AcountTransactionController.getAllExpenditure);
 router.post('/firstloginbonusexpense',staffAuth, AcountTransactionController.getFirstLoginBonusExpense);
 router.post('/transactionbonusexpense',staffAuth, AcountTransactionController.getTransactionBonusExpense);
+router.post('/referralincentiveexpense',staffAuth, AcountTransactionController.getReferralIncentiveExpense);
 router.post('/firstloginbonusexpensereport',staffAuth, AcountTransactionController.getFirstLoginBonusExpenseReport);
 router.post('/transactionbonusexpensereport',staffAuth, AcountTransactionController.getTransactionBonusExpenseReport);
+router.post('/referralincentiveexpensereport',staffAuth, AcountTransactionController.getReferralIncentiveExpenseReport);
 router.put('/deleteexpenditure/:id',staffAuth, AcountTransactionController.deleteExpenditure);
 router.post('/profit',staffAuth, AcountTransactionController.getProfit);
 router.post('/sbincomereport',staffAuth, AcountTransactionController.getSBIncomeReport);
@@ -52,6 +54,8 @@ router.post('/ecommercedeposit', staffAuth, AcountTransactionController.getEcomm
 router.post('/ecommercedepositreport', staffAuth, AcountTransactionController.getEcommerceDepositReport);
 router.post('/ecommercedsdeposit', staffAuth, AcountTransactionController.getEcommerceDSDeposit);
 router.post('/ecommercedsdepositreport', staffAuth, AcountTransactionController.getEcommerceDSDepositReport);
+router.post('/nonpayingds', staffAuth, AcountTransactionController.getNonPayingDSCustomers);
+router.post('/nonpayingsb', staffAuth, AcountTransactionController.getNonPayingSBCustomers);
 
 
 module.exports = router;

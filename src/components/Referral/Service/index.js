@@ -2,6 +2,9 @@ const Customer = require('../../Customer/Model');
 const EcommerceOrder = require('../../EcommerceOrder/Model');
 const Account = require('../../Account/Model');
 const AccountTransactionService = require('../../AccountTransaction/Service');
+const AccountTransaction = require('../../AccountTransaction/Model');
+const SBAccount = require('../../SBAccount/Model');
+const Order = require('../../SBAccount/Model/order');
 const ReferralSetting = require('../Model/ReferralSetting');
 const ReferralLedger = require('../Model/ReferralLedger');
 const BonusLedger = require('../Model/BonusLedger');
@@ -9,6 +12,8 @@ const BonusLedger = require('../Model/BonusLedger');
 const normalizePhoneNumber = (value = '') => String(value || '').replace(/\D/g, '');
 const roundMoney = (value = 0) => Math.round(Number(value || 0) * 100) / 100;
 const isValidObjectIdString = (value = '') => /^[a-f\d]{24}$/i.test(String(value || ''));
+const TRANSACTION_BONUS_DEPOSIT_NARRATION_PATTERN = /^(Wallet Funding|SB Order Wallet Funding|Order Payment to Wallet|SB Order Wallet Deposit|Deposited by .* for Order)/i;
+const BONUS_TRANSFER_NARRATION_PATTERN = /(Bonus|Incentive) Transfer to Wallet/i;
 
 const formatTransactionDate = (date = new Date()) => {
   return date.toLocaleString('en-GB', {
@@ -78,7 +83,11 @@ const getReferralSetting = async () => {
     setting = await ReferralSetting.create({
       key: 'default',
       enabled: true,
+      incentiveAmount: 0,
       incentivePercentage: 0,
+      productReferralEnabled: false,
+      referralQualifyingAmount: 0,
+      sbReferralEnabled: false,
       loginBonusEnabled: false,
       loginBonusAmount: 0,
       transactionBonusEnabled: false,
@@ -177,7 +186,11 @@ const resolveSignupReferral = async ({ referralCode = '', newCustomerPhone = '',
 };
 
 const updateReferralSettings = async ({
+  incentiveAmount,
   incentivePercentage,
+  productReferralEnabled,
+  referralQualifyingAmount,
+  sbReferralEnabled,
   enabled,
   loginBonusEnabled,
   loginBonusAmount,
@@ -186,9 +199,17 @@ const updateReferralSettings = async ({
   rootCustomerIds = [],
   staffId = '',
 }) => {
+  const normalizedIncentiveAmount = roundMoney(incentiveAmount || 0);
+  if (!Number.isFinite(normalizedIncentiveAmount) || normalizedIncentiveAmount < 0) {
+    throw new Error('Referral incentive amount must be zero or greater');
+  }
   const percentage = Number(incentivePercentage || 0);
   if (!Number.isFinite(percentage) || percentage < 0 || percentage > 100) {
-    throw new Error('Referral incentive percentage must be between 0 and 100');
+    throw new Error('Product referral incentive percentage must be between 0 and 100');
+  }
+  const normalizedReferralQualifyingAmount = roundMoney(referralQualifyingAmount || 0);
+  if (!Number.isFinite(normalizedReferralQualifyingAmount) || normalizedReferralQualifyingAmount < 0) {
+    throw new Error('Referral qualifying amount must be zero or greater');
   }
   const normalizedLoginBonusAmount = roundMoney(loginBonusAmount || 0);
   if (!Number.isFinite(normalizedLoginBonusAmount) || normalizedLoginBonusAmount < 0) {
@@ -232,7 +253,11 @@ const updateReferralSettings = async ({
     {
       $set: {
         enabled: Boolean(enabled),
+        incentiveAmount: normalizedIncentiveAmount,
         incentivePercentage: percentage,
+        productReferralEnabled: Boolean(productReferralEnabled),
+        referralQualifyingAmount: normalizedReferralQualifyingAmount,
+        sbReferralEnabled: Boolean(sbReferralEnabled),
         loginBonusEnabled: Boolean(loginBonusEnabled),
         loginBonusAmount: normalizedLoginBonusAmount,
         transactionBonusEnabled: Boolean(transactionBonusEnabled),
@@ -305,7 +330,11 @@ const getReferralAdminSummary = async (providedSetting = null, options = {}) => 
   return {
     settings: {
       enabled: Boolean(setting.enabled),
+      incentiveAmount: roundMoney(setting.incentiveAmount || 0),
       incentivePercentage: Number(setting.incentivePercentage || 0),
+      productReferralEnabled: Boolean(setting.productReferralEnabled),
+      referralQualifyingAmount: roundMoney(setting.referralQualifyingAmount || 0),
+      sbReferralEnabled: Boolean(setting.sbReferralEnabled),
       loginBonusEnabled: Boolean(setting.loginBonusEnabled),
       loginBonusAmount: roundMoney(setting.loginBonusAmount || 0),
       transactionBonusEnabled: Boolean(setting.transactionBonusEnabled),
@@ -326,23 +355,50 @@ const getReferralAdminSummary = async (providedSetting = null, options = {}) => 
 };
 
 const getCustomerReferralSummary = async (customerId) => {
-  const customer = await Customer.findById(customerId).select('-password').lean();
+  let customer = await Customer.findById(customerId).select('-password').lean();
   if (!customer) {
     throw new Error('Customer not found');
   }
 
-  const [recentEarnings, referralCount] = await Promise.all([
+  await creditPendingTransactionBonusesForCustomer(customerId);
+  await creditPendingSBReferralIncentives({ referrerCustomerId: customerId.toString() });
+  if (customer.referredBy) {
+    await creditReferralIncentivesForCustomer(customerId, { sourceOrderNumber: 'SB Referral Qualification' });
+  }
+  customer = await Customer.findById(customerId).select('-password').lean();
+
+  const [recentEarnings, referralCount, sbReferralTotalResult, productReferralTotalResult] = await Promise.all([
     ReferralLedger.find({ beneficiaryCustomerId: customerId.toString() })
       .sort({ creditedAt: -1, createdAt: -1 })
       .limit(10)
       .lean(),
     Customer.countDocuments({ referredBy: customerId.toString() }),
+    ReferralLedger.aggregate([
+      {
+        $match: {
+          beneficiaryCustomerId: customerId.toString(),
+          incentiveType: 'sb_qualification',
+        },
+      },
+      { $group: { _id: null, amount: { $sum: '$amount' } } },
+    ]),
+    ReferralLedger.aggregate([
+      {
+        $match: {
+          beneficiaryCustomerId: customerId.toString(),
+          incentiveType: 'product',
+        },
+      },
+      { $group: { _id: null, amount: { $sum: '$amount' } } },
+    ]),
   ]);
 
   return {
     referralCode: customer.phone,
     referralIncentiveBalance: roundMoney(customer.referralIncentiveBalance || 0),
     referralIncentiveTotalEarned: roundMoney(customer.referralIncentiveTotalEarned || 0),
+    sbReferralIncentiveTotalEarned: roundMoney(sbReferralTotalResult[0]?.amount || 0),
+    productReferralIncentiveTotalEarned: roundMoney(productReferralTotalResult[0]?.amount || 0),
     loginBonusBalance: roundMoney(customer.loginBonusBalance || 0),
     loginBonusTotalEarned: roundMoney(customer.loginBonusTotalEarned || 0),
     loginBonusCredited: Boolean(customer.loginBonusCredited),
@@ -352,6 +408,7 @@ const getCustomerReferralSummary = async (customerId) => {
     transactionBonusTotalEarned: roundMoney(customer.transactionBonusTotalEarned || 0),
     transactionBonusLastCreditedAt: customer.transactionBonusLastCreditedAt || null,
     transactionBonusTransferredAt: customer.transactionBonusTransferredAt || null,
+    referralIncentiveTransferredAt: customer.referralIncentiveTransferredAt || null,
     referralCount,
     recentEarnings,
   };
@@ -377,6 +434,88 @@ const buildCreditChain = async (buyerCustomerId, setting) => {
   if (buyer.referredBy) addCustomerId(buyer.referredBy);
 
   return chain;
+};
+
+const buildDirectReferrerChain = async (buyerCustomerId) => {
+  const buyer = await Customer.findById(buyerCustomerId).select('referredBy').lean();
+  return buyer?.referredBy ? [String(buyer.referredBy)] : [];
+};
+
+const getItemPaidAmount = (item = {}) => {
+  const subtotal = Number(item.subtotal || 0);
+  const paidAmount = Number(item.paidAmount || 0);
+  if (item.paymentStatus === 'paid' || ['delivered', 'completed'].includes(item.fulfillmentStatus || '')) {
+    return subtotal > 0 ? subtotal : paidAmount;
+  }
+  return paidAmount;
+};
+
+const getEcommerceOrderPaidAmount = (order = {}) => {
+  const totalAmount = Number(order.totalAmount || 0);
+  const totalPaid = Number(order.installmentPlan?.totalPaid || 0);
+  const itemPaid = (order.items || []).reduce((sum, item) => sum + getItemPaidAmount(item), 0);
+  if (order.paymentStatus === 'paid' || ['paid', 'delivered', 'completed'].includes(order.status || '')) {
+    return totalAmount > 0 ? totalAmount : Math.max(totalPaid, itemPaid);
+  }
+  return Math.max(totalPaid, itemPaid);
+};
+
+const getSBAccountPaidAmount = (account = {}) => {
+  const sellingPrice = Number(account.sellingPrice || 0);
+  const balance = Number(account.balance || 0);
+  const itemPaid = (account.items || []).reduce((sum, item) => sum + getItemPaidAmount(item), 0);
+  if (['sold', 'completed'].includes(account.status || '')) {
+    return sellingPrice > 0 ? sellingPrice : Math.max(balance, itemPaid);
+  }
+  return Math.max(balance, itemPaid);
+};
+
+const getCustomerCumulativeSBPaidAmount = async (customerId) => {
+  const normalizedCustomerId = String(customerId || '');
+  if (!normalizedCustomerId) return 0;
+
+  const [transactionTotal, walletFundingTotal, ecommerceOrders, sbAccounts, oldOrders] = await Promise.all([
+    AccountTransaction.aggregate([
+      {
+        $match: {
+          customerId: normalizedCustomerId,
+          package: 'SB',
+          direction: 'Credit',
+        },
+      },
+      { $group: { _id: null, amount: { $sum: '$amount' } } },
+    ]),
+    AccountTransaction.aggregate([
+      {
+        $match: {
+          customerId: normalizedCustomerId,
+          package: 'Wallet',
+          direction: 'Credit',
+          narration: TRANSACTION_BONUS_DEPOSIT_NARRATION_PATTERN,
+        },
+      },
+      { $match: { narration: { $not: BONUS_TRANSFER_NARRATION_PATTERN } } },
+      { $group: { _id: null, amount: { $sum: '$amount' } } },
+    ]),
+    EcommerceOrder.find({ customerId: normalizedCustomerId, status: { $ne: 'cancelled' } })
+      .select('totalAmount installmentPlan.totalPaid paymentStatus status items')
+      .lean(),
+    SBAccount.find({ customerId: normalizedCustomerId, status: { $ne: 'cancelled' } })
+      .select('sellingPrice balance status items')
+      .lean(),
+    Order.find({ customerId: normalizedCustomerId, status: { $ne: 'cancelled' } })
+      .select('sellingPrice balance status items')
+      .lean(),
+  ]);
+
+  const transactionAmount = roundMoney(Number(transactionTotal[0]?.amount || 0) + Number(walletFundingTotal[0]?.amount || 0));
+  const modelAmount = roundMoney(
+    ecommerceOrders.reduce((sum, order) => sum + getEcommerceOrderPaidAmount(order), 0)
+    + sbAccounts.reduce((sum, account) => sum + getSBAccountPaidAmount(account), 0)
+    + oldOrders.reduce((sum, order) => sum + getSBAccountPaidAmount(order), 0)
+  );
+
+  return Math.max(transactionAmount, modelAmount);
 };
 
 const isOrderFullyPaidForReferral = (order) => {
@@ -453,7 +592,7 @@ const getEligibleReferralItems = (order) => {
 
 const creditReferralForPurchase = async ({ order, purchase, setting, chain }) => {
   const percentage = Number(setting.incentivePercentage || 0);
-  if (!setting.enabled || percentage <= 0) {
+  if (!setting.enabled || !setting.productReferralEnabled || percentage <= 0) {
     return { credited: false, reason: 'referral_disabled' };
   }
 
@@ -499,7 +638,10 @@ const creditReferralForPurchase = async ({ order, purchase, setting, chain }) =>
       incentivePercentage: percentage,
       incentivePool,
       amount,
+      incentiveType: 'product',
       status: 'credited',
+      branchId: '',
+      accountManagerId: '',
       creditedAt: new Date(),
     };
   }).filter((entry) => entry.amount > 0);
@@ -542,7 +684,7 @@ const creditReferralForPurchase = async ({ order, purchase, setting, chain }) =>
   return { credited: insertedLedgers.length > 0, incentivePool, beneficiaries: insertedLedgers.length };
 };
 
-const creditReferralIncentivesForOrder = async (order) => {
+const creditProductReferralIncentivesForOrder = async (order) => {
   if (!order) {
     return { credited: false, reason: 'order_not_eligible' };
   }
@@ -588,15 +730,140 @@ const creditReferralIncentivesForOrder = async (order) => {
   };
 };
 
+const creditReferralIncentivesForCustomer = async (customerId, source = {}) => {
+  const buyerCustomerId = String(customerId || '');
+  if (!buyerCustomerId) {
+    return { credited: false, reason: 'customer_not_eligible' };
+  }
+  const setting = await getReferralSetting();
+  const incentiveAmount = roundMoney(setting.incentiveAmount || 0);
+  const qualifyingAmount = roundMoney(setting.referralQualifyingAmount || 0);
+  if (!setting.enabled || !setting.sbReferralEnabled || incentiveAmount <= 0) {
+    return { credited: false, reason: 'referral_disabled' };
+  }
+  if (qualifyingAmount <= 0) {
+    return { credited: false, reason: 'qualifying_amount_not_set' };
+  }
+
+  const chain = await buildDirectReferrerChain(buyerCustomerId);
+  if (chain.length === 0) {
+    return { credited: false, reason: 'no_direct_referrer' };
+  }
+
+  const sbPaidAmount = await getCustomerCumulativeSBPaidAmount(buyerCustomerId);
+  if (sbPaidAmount < qualifyingAmount) {
+    return { credited: false, reason: 'sb_qualifying_amount_not_reached', sbPaidAmount, qualifyingAmount };
+  }
+
+  const beneficiaryCustomerId = chain[0];
+  const sourceOrderId = `SB_REFERRAL:${buyerCustomerId}`;
+  const existingLedger = await ReferralLedger.findOne({ sourceOrderId, beneficiaryCustomerId }).lean();
+  if (existingLedger) {
+    return { credited: false, reason: 'already_credited', sbPaidAmount, qualifyingAmount };
+  }
+
+  const beneficiary = await Customer.findById(beneficiaryCustomerId).select('branchId accountManagerId').lean();
+  if (!beneficiary) {
+    return { credited: false, reason: 'referrer_not_found' };
+  }
+
+  const incentivePool = incentiveAmount;
+  if (incentivePool <= 0) {
+    return { credited: false, reason: 'empty_pool' };
+  }
+
+  const creditedAt = new Date();
+  const ledgerEntry = {
+    beneficiaryCustomerId,
+    buyerCustomerId,
+    sourceOrderId,
+    sourceOrderNumber: source.orderNumber || source.SBAccountNumber || source.sourceOrderNumber || 'SB Referral Qualification',
+    sourceItemId: '',
+    productName: 'SB Referral Qualification',
+    chainLevel: 1,
+    purchaseAmount: sbPaidAmount,
+    incentivePercentage: 0,
+    incentivePool,
+    amount: incentivePool,
+    incentiveType: 'sb_qualification',
+    status: 'credited',
+    branchId: beneficiary.branchId || '',
+    accountManagerId: beneficiary.accountManagerId || '',
+    creditedAt,
+  };
+
+  const result = await ReferralLedger.updateOne(
+    { sourceOrderId, beneficiaryCustomerId },
+    { $setOnInsert: ledgerEntry },
+    { upsert: true }
+  );
+
+  if (result.upsertedCount <= 0) {
+    return { credited: false, reason: 'already_credited', sbPaidAmount, qualifyingAmount };
+  }
+
+  await Customer.findByIdAndUpdate(beneficiaryCustomerId, {
+    $inc: {
+      referralIncentiveBalance: incentivePool,
+      referralIncentiveTotalEarned: incentivePool,
+    },
+  });
+
+  return { credited: true, incentivePool, beneficiaries: 1, products: 0, sbPaidAmount, qualifyingAmount };
+};
+
+const creditPendingSBReferralIncentives = async ({ referrerCustomerId = '' } = {}) => {
+  const query = {
+    referredBy: { $exists: true, $ne: '' },
+  };
+
+  if (referrerCustomerId) {
+    query.referredBy = String(referrerCustomerId);
+  }
+
+  const referredCustomers = await Customer.find(query).select('_id').lean();
+  const results = [];
+
+  for (const referredCustomer of referredCustomers) {
+    results.push(await creditReferralIncentivesForCustomer(referredCustomer._id.toString(), {
+      sourceOrderNumber: 'SB Referral Qualification',
+    }));
+  }
+
+  return {
+    checked: referredCustomers.length,
+    credited: results.filter((result) => result.credited).length,
+    results,
+  };
+};
+
+const creditReferralIncentivesForOrder = async (order) => {
+  if (!order) {
+    return { credited: false, reason: 'order_not_eligible' };
+  }
+
+  const [product, sbQualification] = await Promise.all([
+    creditProductReferralIncentivesForOrder(order),
+    creditReferralIncentivesForCustomer(order.customerId?.toString(), {
+    orderNumber: order.orderNumber,
+    SBAccountNumber: order.SBAccountNumber,
+    }),
+  ]);
+
+  return {
+    credited: Boolean(product.credited || sbQualification.credited),
+    product,
+    sbQualification,
+    incentivePool: roundMoney(Number(product.incentivePool || 0) + Number(sbQualification.incentivePool || 0)),
+    beneficiaries: Number(product.beneficiaries || 0) + Number(sbQualification.beneficiaries || 0),
+    reason: product.credited || sbQualification.credited ? undefined : `${product.reason || 'product_not_credited'}; ${sbQualification.reason || 'sb_not_credited'}`,
+  };
+};
+
 const creditPaidOrderByNumber = async (orderNumber = '') => {
   const order = await EcommerceOrder.findOne({ orderNumber: String(orderNumber || '').trim() });
   if (!order) {
     throw new Error('Order not found');
-  }
-
-  const eligiblePaidItems = getEligibleReferralItems(order);
-  if (!isOrderFullyPaidForReferral(order) && eligiblePaidItems.length === 0) {
-    throw new Error('Referral incentives can only be credited after a product is fully paid');
   }
 
   return await creditReferralIncentivesForOrder(order);
@@ -650,7 +917,7 @@ const creditFirstLoginBonus = async (customerId) => {
   };
 };
 
-const creditTransactionBonusForDeposit = async (customerId, depositAmount = 0) => {
+const creditTransactionBonusForDeposit = async (customerId, depositAmount = 0, source = {}) => {
   const normalizedDepositAmount = roundMoney(depositAmount || 0);
   if (!Number.isFinite(normalizedDepositAmount) || normalizedDepositAmount <= 0) {
     return { credited: false, reason: 'invalid_deposit_amount' };
@@ -665,6 +932,29 @@ const creditTransactionBonusForDeposit = async (customerId, depositAmount = 0) =
   const amount = roundMoney((normalizedDepositAmount * percentage) / 100);
   if (amount <= 0) {
     return { credited: false, reason: 'transaction_bonus_zero' };
+  }
+
+  const transactionRef = String(source.transactionRef || source.reference || '').trim();
+  if (transactionRef) {
+    const existingLedger = await BonusLedger.findOne({
+      type: 'transaction',
+      customerId: customerId.toString(),
+      transactionRef,
+    }).lean();
+
+    if (existingLedger) {
+      const customer = await Customer.findById(customerId).select('-password').lean();
+      return {
+        credited: false,
+        reason: 'already_credited',
+        amount: roundMoney(existingLedger.amount || 0),
+        percentage: Number(existingLedger.percentage || percentage),
+        depositAmount: roundMoney(existingLedger.depositAmount || normalizedDepositAmount),
+        transactionBonusBalance: roundMoney(customer?.transactionBonusBalance || 0),
+        transactionBonusTotalEarned: roundMoney(customer?.transactionBonusTotalEarned || 0),
+        transactionBonusLastCreditedAt: customer?.transactionBonusLastCreditedAt || existingLedger.creditedAt || null,
+      };
+    }
   }
 
   const creditedAt = new Date();
@@ -692,6 +982,8 @@ const creditTransactionBonusForDeposit = async (customerId, depositAmount = 0) =
     amount,
     depositAmount: normalizedDepositAmount,
     percentage,
+    transactionRef,
+    narration: source.narration || '',
     branchId: customer.branchId || '',
     accountManagerId: customer.accountManagerId || '',
     creditedAt,
@@ -705,6 +997,112 @@ const creditTransactionBonusForDeposit = async (customerId, depositAmount = 0) =
     transactionBonusBalance: roundMoney(customer.transactionBonusBalance || 0),
     transactionBonusTotalEarned: roundMoney(customer.transactionBonusTotalEarned || 0),
     transactionBonusLastCreditedAt: customer.transactionBonusLastCreditedAt || creditedAt,
+  };
+};
+
+const creditPendingTransactionBonusesForCustomer = async (customerId) => {
+  const normalizedCustomerId = String(customerId || '');
+  if (!normalizedCustomerId) {
+    return { checked: 0, credited: 0, reason: 'customer_not_eligible', results: [] };
+  }
+  if (!isValidObjectIdString(normalizedCustomerId)) {
+    return { checked: 0, credited: 0, reason: 'invalid_customer_id', results: [] };
+  }
+
+  const setting = await getReferralSetting();
+  const percentage = Number(setting.transactionBonusPercentage || 0);
+  if (!setting.transactionBonusEnabled || percentage <= 0) {
+    return { checked: 0, credited: 0, reason: 'transaction_bonus_disabled', results: [] };
+  }
+
+  const [transactions, existingLedgers] = await Promise.all([
+    AccountTransaction.find({
+      customerId: normalizedCustomerId,
+      package: 'Wallet',
+      direction: 'Credit',
+      narration: TRANSACTION_BONUS_DEPOSIT_NARRATION_PATTERN,
+    })
+      .sort({ createdAt: 1 })
+      .lean(),
+    BonusLedger.find({
+      type: 'transaction',
+      customerId: normalizedCustomerId,
+    }).lean(),
+  ]);
+
+  const depositTransactions = transactions.filter((transaction) => (
+    !BONUS_TRANSFER_NARRATION_PATTERN.test(String(transaction.narration || ''))
+    && Number(transaction.amount || 0) > 0
+  ));
+  const ledgerRefs = new Set(
+    existingLedgers
+      .map((ledger) => String(ledger.transactionRef || '').trim())
+      .filter(Boolean)
+  );
+  let legacyLedgerAmount = roundMoney(
+    existingLedgers
+      .filter((ledger) => !String(ledger.transactionRef || '').trim())
+      .reduce((sum, ledger) => sum + Number(ledger.amount || 0), 0)
+  );
+  const results = [];
+
+  for (const transaction of depositTransactions) {
+    const transactionRef = String(transaction.transactionRef || transaction._id || '').trim();
+    const expectedBonusAmount = roundMoney((Number(transaction.amount || 0) * percentage) / 100);
+    if (expectedBonusAmount <= 0) continue;
+
+    if (transactionRef && ledgerRefs.has(transactionRef)) {
+      results.push({ credited: false, reason: 'already_credited', transactionRef });
+      continue;
+    }
+
+    if (legacyLedgerAmount >= expectedBonusAmount) {
+      legacyLedgerAmount = roundMoney(legacyLedgerAmount - expectedBonusAmount);
+      results.push({ credited: false, reason: 'covered_by_legacy_ledger', transactionRef });
+      continue;
+    }
+
+    const result = await creditTransactionBonusForDeposit(normalizedCustomerId, transaction.amount, {
+      transactionRef,
+      narration: transaction.narration || '',
+    });
+    results.push(result);
+
+    if (transactionRef && result.credited) {
+      ledgerRefs.add(transactionRef);
+    }
+  }
+
+  return {
+    checked: depositTransactions.length,
+    credited: results.filter((result) => result.credited).length,
+    results,
+  };
+};
+
+const creditPendingTransactionBonuses = async () => {
+  const transactions = await AccountTransaction.find({
+    package: 'Wallet',
+    direction: 'Credit',
+    narration: TRANSACTION_BONUS_DEPOSIT_NARRATION_PATTERN,
+  }).select('customerId narration').lean();
+  const customerIds = [...new Set(
+    transactions
+      .filter((transaction) => !BONUS_TRANSFER_NARRATION_PATTERN.test(String(transaction.narration || '')))
+      .map((transaction) => String(transaction.customerId || ''))
+      .filter(isValidObjectIdString)
+      .filter(Boolean)
+  )];
+  const results = [];
+
+  for (const customerId of customerIds) {
+    results.push(await creditPendingTransactionBonusesForCustomer(customerId));
+  }
+
+  return {
+    checked: customerIds.length,
+    credited: results.reduce((sum, result) => sum + Number(result.credited || 0), 0),
+    results,
   };
 };
 
@@ -728,6 +1126,7 @@ const transferReferralIncentiveToWallet = async (customerId, requestedAmount = 0
   }
 
   const account = await ensureCustomerSBOrderWallet(customer);
+  const transferredAt = new Date();
   const debitedCustomer = await Customer.findOneAndUpdate(
     {
       _id: customer._id,
@@ -735,6 +1134,7 @@ const transferReferralIncentiveToWallet = async (customerId, requestedAmount = 0
     },
     {
       $inc: { referralIncentiveBalance: -amount },
+      $set: { referralIncentiveTransferredAt: transferredAt },
     },
     { new: true }
   ).select('-password');
@@ -793,6 +1193,7 @@ const transferReferralIncentiveToWallet = async (customerId, requestedAmount = 0
       transferredAmount: amount,
       referralIncentiveBalance: roundMoney(debitedCustomer.referralIncentiveBalance || 0),
       referralIncentiveTotalEarned: roundMoney(debitedCustomer.referralIncentiveTotalEarned || 0),
+      referralIncentiveTransferredAt: debitedCustomer.referralIncentiveTransferredAt || transferredAt,
       account: updatedAccount,
       transaction: transaction.newTransaction,
     };
@@ -807,6 +1208,7 @@ const transferReferralIncentiveToWallet = async (customerId, requestedAmount = 0
     }
     await Customer.findByIdAndUpdate(customer._id, {
       $inc: { referralIncentiveBalance: amount },
+      $unset: { referralIncentiveTransferredAt: '' },
     });
     throw error;
   }
@@ -1040,6 +1442,10 @@ module.exports = {
   searchCustomers,
   creditFirstLoginBonus,
   creditTransactionBonusForDeposit,
+  creditPendingTransactionBonusesForCustomer,
+  creditPendingTransactionBonuses,
+  creditReferralIncentivesForCustomer,
+  creditPendingSBReferralIncentives,
   creditReferralIncentivesForOrder,
   creditPaidOrderByNumber,
   transferReferralIncentiveToWallet,
