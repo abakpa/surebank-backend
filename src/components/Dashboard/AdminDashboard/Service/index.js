@@ -1225,6 +1225,18 @@ const buildTransactionBonusLedgerQuery = (date = null, branchId = null) => {
 async function getTransactionBonusLedgerExpense(date = null, branchId = null) {
   const result = await BonusLedger.aggregate([
     { $match: buildTransactionBonusLedgerQuery(date, branchId) },
+    {
+      $group: {
+        _id: {
+          $cond: [
+            { $gt: [{ $strLenCP: { $ifNull: ['$transactionRef', ''] } }, 0] },
+            '$transactionRef',
+            '$_id',
+          ],
+        },
+        amount: { $first: '$amount' },
+      },
+    },
     { $group: { _id: null, amount: { $sum: '$amount' } } },
   ]);
 
@@ -1394,8 +1406,6 @@ async function getFirstLoginBonusExpenseReport(date = null, branchId = null) {
 async function getTransactionBonusExpenseReport(date = null, branchId = null) {
   await safelyCreditPendingTransactionBonuses();
 
-  const setting = await ReferralSetting.findOne({ key: 'default' }).lean();
-  const fallbackPercentage = Number(setting?.transactionBonusPercentage || 0);
   const query = buildTransactionBonusLedgerQuery(date, branchId);
 
   const ledgers = await BonusLedger.find(query)
@@ -1403,48 +1413,32 @@ async function getTransactionBonusExpenseReport(date = null, branchId = null) {
     .lean();
 
   const ledgerCustomerIds = [...new Set(ledgers.map((ledger) => String(ledger.customerId || '')).filter(Boolean))];
-  const fallbackCustomers = [];
+  const uniqueLedgers = [];
+  const seenLedgerKeys = new Set();
+  ledgers.forEach((ledger) => {
+    const referenceKey = String(ledger.transactionRef || '').trim();
+    const fallbackKey = `${ledger.customerId || ''}:${ledger.depositAmount || 0}:${ledger.amount || 0}:${new Date(ledger.creditedAt || ledger.createdAt || 0).getTime()}`;
+    const ledgerKey = referenceKey || fallbackKey;
+    if (seenLedgerKeys.has(ledgerKey)) return;
+    seenLedgerKeys.add(ledgerKey);
+    uniqueLedgers.push(ledger);
+  });
 
-  const customerIds = [...new Set([
-    ...ledgerCustomerIds,
-    ...fallbackCustomers.map((customer) => customer._id.toString()),
-  ])];
-  const branchIds = [...new Set([
-    ...ledgers.map((ledger) => String(ledger.branchId || '')).filter(Boolean),
-    ...fallbackCustomers.map((customer) => String(customer.branchId || '')).filter(Boolean),
-  ])];
-  const staffIds = [...new Set([
-    ...ledgers.map((ledger) => String(ledger.accountManagerId || '')).filter(isValidObjectId),
-    ...fallbackCustomers.map((customer) => String(customer.accountManagerId || '')).filter(isValidObjectId),
-  ])];
+  const customerIds = [...new Set(ledgerCustomerIds)];
+  const branchIds = [...new Set(uniqueLedgers.map((ledger) => String(ledger.branchId || '')).filter(Boolean))];
+  const staffIds = [...new Set(uniqueLedgers.map((ledger) => String(ledger.accountManagerId || '')).filter(isValidObjectId))];
 
-  const scopedLedgerTotalQuery = {
-    type: 'transaction',
-    customerId: { $in: fallbackCustomers.map((customer) => customer._id.toString()) },
-    creditedAt: buildCumulativeCreatedAtQuery(date),
-  };
-  if (branchId) {
-    scopedLedgerTotalQuery.branchId = branchId;
-  }
-
-  const [customers, branches, staffList, ledgerTotals] = await Promise.all([
+  const [customers, branches, staffList] = await Promise.all([
     customerIds.length ? Customer.find({ _id: { $in: customerIds } }).select('_id firstName lastName phone').lean() : [],
     branchIds.length ? Branch.find({ _id: { $in: branchIds } }).select('_id name').lean() : [],
     staffIds.length ? Staff.find({ _id: { $in: staffIds } }).select('_id firstName lastName').lean() : [],
-    fallbackCustomers.length ? BonusLedger.aggregate([
-      { $match: scopedLedgerTotalQuery },
-      { $group: { _id: '$customerId', amount: { $sum: '$amount' } } },
-    ]) : [],
   ]);
 
   const customerMap = new Map(customers.map((customer) => [customer._id.toString(), customer]));
   const branchMap = new Map(branches.map((branch) => [branch._id.toString(), branch]));
   const staffMap = new Map(staffList.map((staff) => [staff._id.toString(), staff]));
-  const ledgerTotalByCustomerId = new Map(
-    ledgerTotals.map((item) => [String(item._id), Number(item.amount || 0)])
-  );
 
-  const ledgerRows = ledgers.map((ledger) => ({
+  const ledgerRows = uniqueLedgers.map((ledger) => ({
     _id: ledger._id,
     customerName: formatCustomerName(customerMap.get(String(ledger.customerId || '')) || null),
     phone: customerMap.get(String(ledger.customerId || ''))?.phone || 'N/A',
@@ -1457,31 +1451,7 @@ async function getTransactionBonusExpenseReport(date = null, branchId = null) {
     staffName: formatStaffName(staffMap.get(String(ledger.accountManagerId || '')) || null),
   }));
 
-  const fallbackRows = fallbackCustomers
-    .map((customer) => {
-      const ledgeredAmount = ledgerTotalByCustomerId.get(customer._id.toString()) || 0;
-      const unledgeredAmount = Math.max(Number(customer.transactionBonusTotalEarned || 0) - ledgeredAmount, 0);
-      if (unledgeredAmount <= 0) return null;
-      const inferredDepositAmount = fallbackPercentage > 0
-        ? Math.round((unledgeredAmount / fallbackPercentage) * 100 * 100) / 100
-        : 0;
-
-      return {
-        _id: `transaction-unledgered-${customer._id}`,
-        customerName: formatCustomerName(customer),
-        phone: customer.phone || 'N/A',
-        bonusType: 'Transaction Bonus',
-        amount: unledgeredAmount,
-        depositAmount: inferredDepositAmount,
-        percentage: fallbackPercentage,
-        date: customer.transactionBonusLastCreditedAt,
-        branchName: branchMap.get(String(customer.branchId || ''))?.name || 'N/A',
-        staffName: formatStaffName(staffMap.get(String(customer.accountManagerId || '')) || null),
-      };
-    })
-    .filter(Boolean);
-
-  return [...ledgerRows, ...fallbackRows].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+  return ledgerRows.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
 }
 
 async function getReferralIncentiveExpenseReport(date = null, branchId = null) {
