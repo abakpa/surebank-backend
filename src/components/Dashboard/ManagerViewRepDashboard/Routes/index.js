@@ -3,6 +3,17 @@ const router = express.Router();
 const AcountTransactionController = require('../Controller/index');
 const {staffAuth} = require('../../../Middleware/index')
 
+// Use the same rep withdrawal calculation as the rep's own dashboard.
+router.post('/repfwwithdrawal/:id', staffAuth, async (req, res) => {
+  try {
+    const service = require('../../RepDashboard/Service');
+    const total = await service.getAllRepFreeToWithdrawWithdrawal(req.body.date, req.params.id);
+    res.json(total);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // router.post('/', staffAuth, customerController.registerCustomer);
 router.post('/repds/:id',staffAuth, AcountTransactionController.getAllRepDSAccount);
 router.post('/repsb/:id',staffAuth, AcountTransactionController.getAllRepSBAccount);

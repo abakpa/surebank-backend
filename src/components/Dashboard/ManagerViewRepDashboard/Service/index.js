@@ -96,7 +96,11 @@ const buildStaffSBContributionQuery = (filters = {}) => ({
 
 const buildStaffTransactionHistoryQuery = (createdBy) => ({
   createdBy,
-  excludeFromStaffStats: STAFF_STATS_QUERY_FILTER,
+  // Customer requests remain auditable even though they are excluded from totals.
+  $and: [{ $or: [
+    { excludeFromStaffStats: STAFF_STATS_QUERY_FILTER },
+    { package: 'SB', direction: 'Credit', transactionRef: /^SB_ITEM_REQUEST_/ }
+  ] }],
   $or: [
     {
       package: { $in: ['SB', 'DS', 'FD'] },
@@ -156,7 +160,7 @@ async function getAllRepDSAccount(date = null, staff) {
 }
 async function getAllRepDSAccountWithdrawal(date = null, staff) {
    
-    let query = { package: 'DS', direction: 'Debit',createdBy:staff, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
+    let query = { package: 'DS', direction: 'Debit',$or: [{ createdBy: staff }, { transactionOwnerId: staff }, { accountManagerId: staff }], excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
 
      // Filter by date if provided or default to today
      const endDate = date ? new Date(date) : new Date();
@@ -371,7 +375,7 @@ async function getAllRepDailyDSAccountChargeByDate(date = null, staff) {
 }
 async function getAllRepDailyDSAccountWithdrawalByDate(date = null, staff) {
  
-    let query = { package: 'DS', direction: 'Debit',createdBy:staff, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
+    let query = { package: 'DS', direction: 'Debit',$or: [{ createdBy: staff }, { transactionOwnerId: staff }, { accountManagerId: staff }], excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
   
     const targetDate = date ? new Date(date) : new Date();
 
@@ -450,7 +454,7 @@ async function getAllRepDailySBAccountWithdrawal(date = null, staff) {
 }
 async function getAllRepDailyDSAccountWithdrawal(date = null, staff) {
   
-    let query = { package: 'DS', direction: 'Debit',createdBy:staff, excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
+    let query = { package: 'DS', direction: 'Debit',$or: [{ createdBy: staff }, { transactionOwnerId: staff }, { accountManagerId: staff }], excludeFromStaffStats: STAFF_STATS_QUERY_FILTER };
   
     const targetDate = date ? new Date(date) : new Date();
 

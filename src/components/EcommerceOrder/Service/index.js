@@ -868,11 +868,11 @@ const getStaffDisplayName = async (staffId) => {
 };
 
 const getReportingStaffId = (accountManagerId, fallbackActor) => {
-  if (accountManagerId && accountManagerId !== 'ECOMMERCE_SYSTEM') {
-    return accountManagerId;
+  if (fallbackActor) {
+    return fallbackActor;
   }
 
-  return fallbackActor;
+  return accountManagerId || 'ECOMMERCE_SYSTEM';
 };
 
 const resolveOrderOwnership = async ({ customerId, accountNumber, branchId }) => {
@@ -2672,7 +2672,8 @@ const debitWalletForOrderPayment = async (order, amount, transactionRef, options
   }
 
   const customerActor = order.customerId?.toString() || account.customerId;
-  const reportingActor = getReportingStaffId(account.accountManagerId, customerActor);
+  const transactionActor = options.createdBy || customerActor;
+  const reportingActor = getReportingStaffId(account.accountManagerId, transactionActor);
   const productName = String(options.productName || '').trim();
   const debitNarration = productName
     ? `Debited from wallet for ${productName}`
@@ -2682,7 +2683,7 @@ const debitWalletForOrderPayment = async (order, amount, transactionRef, options
 
   await AccountTransaction.DepositTransactionAccount({
     createdBy: reportingActor,
-    transactionOwnerId: customerActor,
+    transactionOwnerId: transactionActor,
     customerId: account.customerId,
     amount,
     balance: newAvailableBalance,
@@ -2955,7 +2956,10 @@ const payReplacementItemFromWalletIfFullyFunded = async (order, item, actor) => 
   }
 
   const transactionRef = `ITEM_REPLACEMENT_PAYMENT_${order.orderNumber}_${item._id || item.productId}_${Date.now()}`;
-  await debitWalletForOrderPayment(order, amount, transactionRef, { productName: item.productName });
+  await debitWalletForOrderPayment(order, amount, transactionRef, {
+    createdBy: actor,
+    productName: item.productName,
+  });
   await creditSBAccountWithoutLedgerImpact(order, amount, transactionRef, actor);
 
   return { paid: true, amount };
@@ -3077,7 +3081,10 @@ const settleOrderItemPaymentFromSBAccount = async (order, item, staff) => {
   }
 
   if (sbAccount.accountMode === 'multi_item') {
-    await debitWalletForOrderPayment(order, amountDue, transactionRef, { productName: item.productName });
+    await debitWalletForOrderPayment(order, amountDue, transactionRef, {
+      createdBy: source,
+      productName: item.productName,
+    });
 
     await AccountTransaction.DepositTransactionAccount({
       createdBy: source,
@@ -3103,7 +3110,10 @@ const settleOrderItemPaymentFromSBAccount = async (order, item, staff) => {
   const sbBalance = Number(sbAccount.balance || 0);
   if (sbBalance < amountDue) {
     const shortfall = amountDue - sbBalance;
-    await debitWalletForOrderPayment(order, shortfall, transactionRef, { productName: item.productName });
+    await debitWalletForOrderPayment(order, shortfall, transactionRef, {
+      createdBy: source,
+      productName: item.productName,
+    });
     sbAccount = await creditSBAccountWithoutLedgerImpact(order, shortfall, transactionRef, source);
   }
 
@@ -3189,7 +3199,9 @@ const recordFlexibleInstallmentOrderPayment = async (orderId, amount, transactio
   }
 
   if (options.creditWallet !== false) {
-    await creditWalletForOrderPayment(order, paymentAmount, transactionRef);
+    await creditWalletForOrderPayment(order, paymentAmount, transactionRef, {
+      createdBy: source,
+    });
   }
 
   order.installmentPlan.payments.push({
@@ -3266,7 +3278,10 @@ const payOrderItemFromWallet = async ({ orderNumber, customerId, itemId }) => {
   }
 
   const transactionRef = `ITEM_PAYMENT_${order.orderNumber}_${item._id}_${Date.now()}`;
-  await debitWalletForOrderPayment(order, amountDue, transactionRef, { productName: item.productName });
+  await debitWalletForOrderPayment(order, amountDue, transactionRef, {
+    createdBy: customerId.toString(),
+    productName: item.productName,
+  });
   await creditSBAccountWithoutLedgerImpact(order, amountDue, transactionRef, customerId.toString());
 
   item.paidAmount = subtotal;
@@ -3477,7 +3492,8 @@ const getProductActionRequests = async (staff) => {
       'items.paymentStatus': 'paid'
     }).lean(),
     SBAccount.find({
-      createdBy: { $ne: 'ECOMMERCE_SYSTEM' },
+      // Reps can request items on ecommerce-created SB accounts too.
+      // Paid, undelivered items are deduplicated against ecommerce below.
       status: { $ne: 'sold' },
       items: { $exists: true, $ne: [] }
     }).lean()
@@ -3670,10 +3686,14 @@ const recordBackofficeSBAccountPayment = async (SBAccountNumber, customerId, amo
   const orderLike = await buildOrderFromSBAccount(sbAccount);
 
   if (options.creditWallet !== false) {
-    await creditWalletForOrderPayment(orderLike, paymentAmount, transactionRef);
+    await creditWalletForOrderPayment(orderLike, paymentAmount, transactionRef, {
+      createdBy: source,
+    });
   }
 
-  await debitWalletForOrderPayment(orderLike, paymentAmount, transactionRef);
+  await debitWalletForOrderPayment(orderLike, paymentAmount, transactionRef, {
+    createdBy: source,
+  });
   const updatedSBAccount = await creditSBAccountWithoutLedgerImpact(orderLike, paymentAmount, transactionRef, source);
 
   if (Number(updatedSBAccount.balance || 0) >= Number(updatedSBAccount.sellingPrice || 0)) {

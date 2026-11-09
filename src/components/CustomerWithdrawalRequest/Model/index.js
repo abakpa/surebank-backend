@@ -15,6 +15,8 @@ const customerWithdrawalRequestSchema = new mongoose.Schema({
     required: true 
 },
 
+  payoutAccountId: { type: String },
+  dsTransferredAtRequest: { type: Boolean, default: false },
   accountManagerId: {
     type: String,
     required: true,

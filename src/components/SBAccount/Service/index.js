@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Account = require('../../Account/Model');
 const  generateUniqueAccountNumber  = require('../../generateAccountNumber');
 const SBAccount = require('../Model/index');
@@ -1143,11 +1144,11 @@ const updateLinkedOrderItemCostPrice = async ({ SBAccountNumber, itemId, costPri
   return await order.save();
 };
 
-const updateLinkedOrderItemSellingPrice = async ({ SBAccountNumber, itemId, subtotal }) => {
+const updateLinkedOrderItemSellingPrice = async ({ SBAccountNumber, itemId, subtotal, paidAmount, session }) => {
   const order = await EcommerceOrder.findOne({
     SBAccountNumber,
     status: { $ne: 'cancelled' }
-  }).sort({ updatedAt: -1, createdAt: -1 });
+  }).sort({ updatedAt: -1, createdAt: -1 }).session(session || null);
 
   if (!order || !Array.isArray(order.items) || order.items.length === 0) {
     return null;
@@ -1162,6 +1163,7 @@ const updateLinkedOrderItemSellingPrice = async ({ SBAccountNumber, itemId, subt
   const quantity = Math.max(1, Number(item.quantity || 1));
   const unitPrice = Math.round((subtotal / quantity) * 100) / 100;
 
+  if (paidAmount !== undefined) item.paidAmount = paidAmount;
   item.price = unitPrice;
   item.subtotal = subtotal;
   item.profitAmount = Math.max(0, subtotal - Number(item.costSubtotal || 0));
@@ -1190,7 +1192,7 @@ const updateLinkedOrderItemSellingPrice = async ({ SBAccountNumber, itemId, subt
     order.status = remainingBalance <= 0 ? 'paid' : totalPaid > 0 ? 'partially_paid' : 'pending';
   }
 
-  return await order.save();
+  return await order.save({ session });
 };
 
 const updateSBAccountItemSellingPrice = async ({ SBAccountNumber, itemId, sellingPrice, editedBy }) => {
@@ -1198,7 +1200,14 @@ const updateSBAccountItemSellingPrice = async ({ SBAccountNumber, itemId, sellin
     throw new Error('Invalid account number');
   }
 
-  const sbaccount = await SBAccount.findOne({ SBAccountNumber });
+  const original = await SBAccount.findOne({ SBAccountNumber });
+  if (!original) throw new Error('SBAccount not found');
+  const wallet = await ensureSBOrderWalletForSBAccount(original);
+  const session = await mongoose.startSession();
+  let result;
+  try {
+  await session.withTransaction(async () => {
+  const sbaccount = await SBAccount.findOne({ SBAccountNumber }).session(session);
   if (!sbaccount) {
     throw new Error('SBAccount not found');
   }
@@ -1225,13 +1234,38 @@ const updateSBAccountItemSellingPrice = async ({ SBAccountNumber, itemId, sellin
   const paidAmount = Number(item.paidAmount || 0);
   const costSubtotal = Number(item.costSubtotal || 0);
 
-  if (nextSubtotal < paidAmount) {
-    throw new Error('Selling price cannot be less than the amount already paid for this item');
-  }
   if (costSubtotal > 0 && nextSubtotal < costSubtotal) {
     throw new Error('Selling price cannot be less than approved cost price');
   }
 
+  const previousSubtotal = Number(item.subtotal || 0);
+  const refund = Math.round(Math.max(0, paidAmount - nextSubtotal) * 100) / 100;
+  const transactionRef = `SB_PRICE_ADJUSTMENT_${sbaccount._id}_${itemIndex}_${Date.now()}`;
+  const audit = {
+    createdBy: editedBy, transactionOwnerId: editedBy,
+    customerId: sbaccount.customerId, branchId: sbaccount.branchId,
+    accountManagerId: sbaccount.accountManagerId || editedBy,
+    date: new Date().toISOString(), transactionRef, excludeFromStaffStats: true,
+  };
+  if (refund > 0) {
+    if (!wallet) throw new Error('Customer SB Order Wallet not found');
+    const updatedWallet = await Account.findByIdAndUpdate(wallet._id, {
+      $inc: { availableBalance: refund, ledgerBalance: refund }
+    }, { new: true, session });
+    if (!updatedWallet) throw new Error('Customer SB Order Wallet not found');
+    await AccountTransactionModel.create([{ ...audit,
+      accountNumber: updatedWallet.accountNumber, accountTypeId: updatedWallet._id,
+      package: 'Wallet', direction: 'Credit', amount: refund, balance: updatedWallet.availableBalance,
+      narration: `Price adjustment refund for ${item.productName}: ${previousSubtotal} to ${nextSubtotal}`,
+    }], { session, ordered: true });
+    sbaccount.items[itemIndex].paidAmount = nextSubtotal;
+  }
+  await AccountTransactionModel.create([{ ...audit,
+    accountNumber: sbaccount.accountNumber, accountTypeId: sbaccount._id,
+    package: 'SB', direction: 'Adjustment', amount: Math.abs(nextSubtotal - previousSubtotal),
+    balance: sbaccount.balance || 0,
+    narration: `Item price changed for ${item.productName}: ${previousSubtotal} to ${nextSubtotal}; wallet refund ${refund}`,
+  }], { session, ordered: true });
   sbaccount.items[itemIndex].price = nextUnitPrice;
   sbaccount.items[itemIndex].subtotal = nextSubtotal;
   sbaccount.items[itemIndex].profitAmount = Math.max(0, nextSubtotal - costSubtotal);
@@ -1242,15 +1276,22 @@ const updateSBAccountItemSellingPrice = async ({ SBAccountNumber, itemId, sellin
     sbaccount.status = 'booked';
   }
 
-  await sbaccount.save();
+  await sbaccount.save({ session });
   const linkedOrder = await updateLinkedOrderItemSellingPrice({
     SBAccountNumber,
     itemId,
-    subtotal: nextSubtotal
+    subtotal: nextSubtotal,
+    paidAmount: Number(sbaccount.items[itemIndex].paidAmount || 0),
+    session
   });
-  await tryCreditReferralForOrder(linkedOrder);
 
-  return { success: true, message: 'Item selling price updated successfully', sbAccount: sbaccount };
+
+  result = { success: true, message: refund > 0 ? `Item price updated; ₦${refund.toLocaleString()} refunded to SB Order Wallet` : 'Item selling price updated successfully', sbAccount: sbaccount };
+  });
+  return result;
+  } finally {
+    await session.endSession();
+  }
 };
 
 const getAccountByAccountNumber = async (accountNumber) => {
@@ -1615,7 +1656,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
       }
       const isMultiItemAccount = sbaccount.accountMode === 'multi_item';
       const itemIsPaidFromSBWallet = Number(item.paidAmount || 0) >= itemAmount;
-      if (!isMultiItemAccount && Number(sbaccount.balance || 0) < itemAmount) {
+      if (!isMultiItemAccount && !itemIsPaidFromSBWallet && Number(sbaccount.balance || 0) < itemAmount) {
         throw new Error('Insufficient amount for item price');
       }
       if (isMultiItemAccount && !itemIsPaidFromSBWallet) {
@@ -1643,7 +1684,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
         minute: "2-digit",
         hour12: true,
       });
-      const newBalance = isMultiItemAccount
+      const newBalance = (isMultiItemAccount || itemIsPaidFromSBWallet)
         ? Number(sbaccount.balance || 0)
         : Number(sbaccount.balance || 0) - itemAmount;
       const itemProfit = calculateExactSBItemProfit(deliveryItem) || calculateSBItemProfit(sbaccount, itemAmount);
@@ -1690,7 +1731,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
         sbaccount.balance = newBalance;
         if (sbaccount.items.every((orderItem) => ['delivered', 'completed'].includes(orderItem.fulfillmentStatus))) {
           sbaccount.status = 'sold';
-          if (!isMultiItemAccount) {
+          if (!isMultiItemAccount && !itemIsPaidFromSBWallet) {
             await transferSBExcessBalanceToWallet({
               sbaccount,
               walletAccount: account,
@@ -1702,7 +1743,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
           }
         }
 
-        if (!isMultiItemAccount) {
+        if (!isMultiItemAccount && !itemIsPaidFromSBWallet) {
           await Account.findOneAndUpdate(
             { _id: account._id },
             { $set: { ledgerBalance: Number(account.ledgerBalance || 0) - itemAmount } }
@@ -1718,8 +1759,8 @@ const getAccountByAccountNumber = async (accountNumber) => {
     };
 
     const requestSBAccountItemFromWallet = async ({ SBAccountNumber, itemId, createdBy, requesterRole }) => {
-      if (!['Agent', 'OnlineRep', 'Rep'].includes(requesterRole)) {
-        throw new Error('Only reps can submit customer requests');
+      if (!['Admin', 'Agent', 'OnlineRep', 'Rep'].includes(requesterRole)) {
+        throw new Error('Only admins and reps can submit customer requests');
       }
 
       const sbaccount = await SBAccount.findOne({ SBAccountNumber });
@@ -1761,6 +1802,14 @@ const getAccountByAccountNumber = async (accountNumber) => {
       }
       if (Number(walletAccount.availableBalance || 0) < itemAmount) {
         throw new Error(`Insufficient wallet balance. Available: ₦${Number(walletAccount.availableBalance || 0).toLocaleString()}, Required: ₦${itemAmount.toLocaleString()}`);
+      }
+
+      // Validate delivery cost before charging an admin's immediate request.
+      if (requesterRole === 'Admin') {
+        await hydrateSBItemCostFromProduct(sbaccount, itemIndex, createdBy);
+        if (Number(sbaccount.items[itemIndex].costSubtotal || 0) <= 0 || sbaccount.items[itemIndex].requiresCostApproval) {
+          throw new Error('Approve item cost before requesting delivery');
+        }
       }
 
       const currentDate = new Date();
@@ -1807,6 +1856,7 @@ const getAccountByAccountNumber = async (accountNumber) => {
         date: formattedDate,
         package: "SB",
         narration: `Customer request reserved from SB Order Wallet for ${item.productName} - ${requestRef}`,
+        excludeFromStaffStats: true,
         transactionRef: requestRef,
         direction: "Credit",
       });
@@ -1821,6 +1871,12 @@ const getAccountByAccountNumber = async (accountNumber) => {
       sbaccount.items[itemIndex].paidAmount = itemAmount;
       await sbaccount.save();
       await tryCreditReferralForOrder(sbaccount);
+
+      if (requesterRole === 'Admin') {
+        const delivered = await markSBAccountItemDelivered({ SBAccountNumber, itemId, createdBy });
+        return { ...delivered, message: 'Customer request submitted and item delivered successfully' };
+      }
+
 
       return {
         sbAccount: sbaccount,

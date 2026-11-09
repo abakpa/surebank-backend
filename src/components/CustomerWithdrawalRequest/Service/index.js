@@ -30,7 +30,10 @@ const getPendingWithdrawalAmount = async ({ customerId, accountTypeId }) => {
         {
             $match: {
                 customerId: String(customerId || ''),
-                accountTypeId: String(accountTypeId || ''),
+                $or: [
+                    { accountTypeId: String(accountTypeId || '') },
+                    { payoutAccountId: String(accountTypeId || '') },
+                ],
                 status: { $in: ACTIVE_REQUEST_STATUSES },
             },
         },
@@ -229,7 +232,52 @@ const createStaffCustomerWithdrawalRequest = async (withdrawalData, staff = {}) 
         packageNumber: dsaccount.DSAccountNumber,
     });
 
-    return CustomerWithdrawalRequest({
+    const session = await mongoose.startSession();
+    let request;
+    try {
+        await session.withTransaction(async () => {
+            // Recheck inside the transaction so concurrent requests cannot move funds twice.
+            const active = await CustomerWithdrawalRequestModel.findOne({
+                customerId: dsaccount.customerId,
+                accountTypeId: dsaccount._id.toString(),
+                status: { $in: ACTIVE_REQUEST_STATUSES },
+            }).session(session);
+            if (active) throw new Error('There is already a pending withdrawal request for this DS package');
+            const currentDS = await DSAccount.findById(dsaccount._id).session(session);
+            const contribution = Number(currentDS?.totalContribution || 0);
+            if (!currentDS || currentDS.status === 'closed' || contribution < amount) {
+                throw new Error('Insufficient active DS package balance');
+            }
+            const wallet = await Account.findOne({
+                customerId: dsaccount.customerId,
+                walletType: 'free_to_withdraw',
+            }).session(session);
+            if (!wallet) throw new Error('Customer Free To Withdraw wallet not found');
+            const nextBalance = Number(wallet.availableBalance || 0) + contribution;
+            const audit = {
+                customerId: dsaccount.customerId,
+                amount: contribution,
+                createdBy: staff.staffId,
+                transactionOwnerId: staff.staffId,
+                accountManagerId: dsaccount.accountManagerId || staff.staffId,
+                branchId: dsaccount.branchId,
+                date: formatTransactionDate(),
+                package: 'DS',
+                excludeFromStaffStats: true,
+            };
+            await AccountTransaction.create([
+                { ...audit, accountNumber: dsaccount.accountNumber, accountTypeId: dsaccount._id.toString(),
+                  balance: 0, direction: 'Moved', narration: 'DS balance moved to Free To Withdraw for withdrawal request' },
+                { ...audit, accountNumber: wallet.accountNumber, accountTypeId: wallet._id.toString(),
+                  balance: nextBalance, direction: 'Transfer', narration: 'From DS account for withdrawal request' },
+            ], { session, ordered: true });
+            await Account.updateOne({ _id: wallet._id }, { $inc: { availableBalance: contribution } }, { session });
+            await DSAccount.updateOne({ _id: currentDS._id }, {
+                $set: { totalContribution: 0, totalCount: 0, hasBeenCharged: 'false' },
+            }, { session });
+            [request] = await CustomerWithdrawalRequestModel.create([{
+        payoutAccountId: wallet._id.toString(),
+        dsTransferredAtRequest: true,
         accountNumber: dsaccount.accountNumber,
         customerId: dsaccount.customerId,
         accountManagerId: dsaccount.accountManagerId || staff.staffId,
@@ -244,7 +292,12 @@ const createStaffCustomerWithdrawalRequest = async (withdrawalData, staff = {}) 
         date: new Date(),
         amount,
         ...settlementBankDetails,
-    });
+    }], { session, ordered: true });
+        });
+        return request;
+    } finally {
+        await session.endSession();
+    }
 };
 
 const statusOrder = {
@@ -355,12 +408,12 @@ const getCustomersWithdrawalRequestForCustomer = async (customerId) => {
 }
 const completeWithdrawalRequestDebit = async (currentRequest, adminId) => {
     const amount = Number(currentRequest.amount || 0);
-    const shouldDebitAvailableBalance = /free\s*to\s*withdraw/i.test(currentRequest.package || '');
-    const shouldDebitDSPackage = String(currentRequest.package || '').toLowerCase() === 'ds';
+    const shouldDebitAvailableBalance = currentRequest.dsTransferredAtRequest || /free\s*to\s*withdraw/i.test(currentRequest.package || '');
+    const shouldDebitDSPackage = !currentRequest.dsTransferredAtRequest && String(currentRequest.package || '').toLowerCase() === 'ds';
 
     if (shouldDebitAvailableBalance) {
         const account = await Account.findOne({
-            _id: currentRequest.accountTypeId,
+            _id: currentRequest.payoutAccountId || currentRequest.accountTypeId,
             customerId: currentRequest.customerId,
         });
 
@@ -385,7 +438,7 @@ const completeWithdrawalRequestDebit = async (currentRequest, adminId) => {
             amount,
             balance: newAvailableBalance,
             createdBy: adminId,
-            transactionOwnerId: adminId,
+            transactionOwnerId: currentRequest.requestedBy || currentRequest.accountManagerId || adminId,
             narration: 'Withdrawal',
             accountTypeId: account._id.toString(),
             accountManagerId: account.accountManagerId || currentRequest.accountManagerId,
@@ -438,7 +491,7 @@ const completeWithdrawalRequestDebit = async (currentRequest, adminId) => {
             amount,
             balance: newBalance,
             createdBy: adminId,
-            transactionOwnerId: adminId,
+            transactionOwnerId: currentRequest.requestedBy || currentRequest.accountManagerId || adminId,
             narration: 'DS package withdrawal request paid',
             accountTypeId: dsaccount._id.toString(),
             accountManagerId: dsaccount.accountManagerId || currentRequest.accountManagerId,
@@ -455,7 +508,7 @@ const completeWithdrawalRequestDebit = async (currentRequest, adminId) => {
                 amount: newBalance,
                 balance: 0,
                 createdBy: adminId,
-                transactionOwnerId: adminId,
+                transactionOwnerId: currentRequest.requestedBy || currentRequest.accountManagerId || adminId,
                 narration: 'Moved',
                 accountTypeId: dsaccount._id.toString(),
                 accountManagerId: dsaccount.accountManagerId || currentRequest.accountManagerId,
@@ -471,7 +524,7 @@ const completeWithdrawalRequestDebit = async (currentRequest, adminId) => {
                 amount: newBalance,
                 balance: Number(account.availableBalance || 0) + newBalance,
                 createdBy: adminId,
-                transactionOwnerId: adminId,
+                transactionOwnerId: currentRequest.requestedBy || currentRequest.accountManagerId || adminId,
                 narration: 'From DS account',
                 accountTypeId: account._id.toString(),
                 accountManagerId: account.accountManagerId || currentRequest.accountManagerId,
